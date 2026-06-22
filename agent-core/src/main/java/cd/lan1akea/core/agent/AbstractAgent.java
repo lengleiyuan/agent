@@ -149,40 +149,52 @@ public abstract class AbstractAgent implements Agent, ObservableAgent, Streamabl
     @Override
     public Mono<ChatResponse> chat(List<Msg> messages, GenerateOptions options) {
         ensureBuilt();
-        GenerateOptions opts = resolveOptions(options);
-        LoopContext ctx = createLoopContext(messages, opts, false);
+        // 从 Reactor Context 读取租户信息（由调用方通过 .contextWrite 注入）
+        return Mono.deferContextual(ctxView -> {
+            String tenantId = ctxView.getOrDefault("tenantId", null);
+            String userId = ctxView.getOrDefault("userId", null);
+            String sessId = ctxView.getOrDefault("sessionId", currentSessionId);
 
-        return middlewareChain.applyBefore(ctx)
-            .flatMap(this::executeChat)
-            .flatMap(middlewareChain::applyAfter)
-            .flatMap(response -> {
-                // 持久化最后轮次到会话
-                if (currentSessionId != null && sessionStore != null) {
-                    persistTurn(ctx, response);
-                }
-                return Mono.just(response);
-            })
-            .doOnSuccess(r -> eventSource.emit(AgentEventType.COMPLETED, name).subscribe())
-            .doOnError(e -> eventSource.emit(AgentEventType.ERROR, name).subscribe());
+            GenerateOptions opts = resolveOptions(options);
+            LoopContext ctx = createLoopContext(messages, opts, false, tenantId, userId, sessId);
+
+            return middlewareChain.applyBefore(ctx)
+                .flatMap(this::executeChat)
+                .flatMap(middlewareChain::applyAfter)
+                .flatMap(response -> {
+                    if (sessId != null && sessionStore != null) {
+                        persistTurn(ctx, response);
+                    }
+                    return Mono.just(response);
+                })
+                .doOnSuccess(r -> eventSource.emit(AgentEventType.COMPLETED, name).subscribe())
+                .doOnError(e -> eventSource.emit(AgentEventType.ERROR, name).subscribe());
+        });
     }
 
     @Override
     public Flux<ChatStreamChunk> stream(List<Msg> messages, GenerateOptions options) {
         ensureBuilt();
-        GenerateOptions opts = resolveOptions(options);
-        if (opts != null && !opts.isStream()) {
-            opts = GenerateOptions.builder()
-                .temperature(opts.getTemperature())
-                .maxTokens(opts.getMaxTokens())
-                .stream(true)
-                .toolChoice(opts.getToolChoice())
-                .build();
-        }
-        LoopContext ctx = createLoopContext(messages, opts, true);
-        return middlewareChain.applyBefore(ctx)
-            .flatMapMany(this::executeStream)
-            .doOnComplete(() -> eventSource.emit(AgentEventType.COMPLETED, name).subscribe())
-            .doOnError(e -> eventSource.emit(AgentEventType.ERROR, name).subscribe());
+        return Flux.deferContextual(ctxView -> {
+            String tenantId = ctxView.getOrDefault("tenantId", null);
+            String userId = ctxView.getOrDefault("userId", null);
+            String sessId = ctxView.getOrDefault("sessionId", currentSessionId);
+
+            GenerateOptions opts = resolveOptions(options);
+            if (opts != null && !opts.isStream()) {
+                opts = GenerateOptions.builder()
+                    .temperature(opts.getTemperature())
+                    .maxTokens(opts.getMaxTokens())
+                    .stream(true)
+                    .toolChoice(opts.getToolChoice())
+                    .build();
+            }
+            LoopContext ctx = createLoopContext(messages, opts, true, tenantId, userId, sessId);
+            return middlewareChain.applyBefore(ctx)
+                .flatMapMany(this::executeStream)
+                .doOnComplete(() -> eventSource.emit(AgentEventType.COMPLETED, name).subscribe())
+                .doOnError(e -> eventSource.emit(AgentEventType.ERROR, name).subscribe());
+        });
     }
 
     // ========================================================================
@@ -199,7 +211,7 @@ public abstract class AbstractAgent implements Agent, ObservableAgent, Streamabl
         if (sessionStore == null) {
             this.currentSessionId = IdGenerator.nextIdStr();
             return Mono.just(new Session(
-                new SessionId(this.currentSessionId),
+            new SessionId(this.currentSessionId),
                 0, name, SessionState.ACTIVE, null, null, null));
         }
 
@@ -235,43 +247,35 @@ public abstract class AbstractAgent implements Agent, ObservableAgent, Streamabl
     }
 
     protected LoopContext createLoopContext(List<Msg> messages,
-                                             GenerateOptions options, boolean stream) {
-        // 注入 ToolExecutor 的上下文提供者
+                                             GenerateOptions options, boolean stream,
+                                             String tenantId, String userId, String sessionId) {
+        // 注入 ToolExecutor 的上下文提供者（使用真实租户/用户信息）
         ToolExecutionContextProvider contextProvider = () ->
-            new ToolExecutionContext(
-                currentSessionId != null ? "0" : null, // tenantId
-                null, // userId
-                currentSessionId,
-                name);
+            new ToolExecutionContext(tenantId, userId, sessionId, name);
 
-        // 重建 ToolExecutor（注入权限和上下文）
+        // 重建 ToolExecutor（注入真实权限和上下文）
         ToolExecutor ctxToolExecutor = new ToolExecutor(
             toolRegistry, new DefaultToolEmitter(), toolValidator,
             permissionEngine, contextProvider);
 
-        // 重建 ReActLoop（使用新 ToolExecutor）
+        // 重建 ReActLoop
         ReActLoop ctxReActLoop = new ReActLoop(model, ctxToolExecutor,
             hookDispatcher, toolRegistry);
-
-        // 用新的 ReActLoop 替换（反射设置，简化处理）
         try {
             java.lang.reflect.Field loopField = AbstractAgent.class.getDeclaredField("reActLoop");
             loopField.setAccessible(true);
             loopField.set(this, ctxReActLoop);
-        } catch (Exception ignored) {
-            // 反射失败不影响主流程
-        }
+        } catch (Exception ignored) {}
 
         return LoopContext.builder()
             .agentName(name)
-            .tenantId(currentSessionId != null ? "0" : null)
-            .userId(null)
-            .sessionId(currentSessionId)
+            .tenantId(tenantId)
+            .userId(userId)
+            .sessionId(sessionId)
             .messages(messages)
             .generateOptions(options)
             .maxIterations(config.getExecutionConfig().getMaxIterations())
             .stream(stream)
-            // 注入所有子系统
             .sessionStore(sessionStore)
             .summaryService(summaryService)
             .permissionEngine(permissionEngine)

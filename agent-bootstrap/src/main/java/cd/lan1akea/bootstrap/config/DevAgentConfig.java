@@ -7,7 +7,6 @@ import cd.lan1akea.core.formatter.OpenAiMessageFormatter;
 import cd.lan1akea.core.hook.HookChain;
 import cd.lan1akea.core.hook.impl.LoggingHook;
 import cd.lan1akea.core.hook.impl.AuditHook;
-import cd.lan1akea.core.hook.impl.ContentFilterHook;
 import cd.lan1akea.core.hook.impl.RateLimitHook;
 import cd.lan1akea.core.middleware.MiddlewareChain;
 import cd.lan1akea.core.middleware.LoggingMiddleware;

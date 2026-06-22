@@ -1,6 +1,7 @@
 package cd.lan1akea.core.tool;
 
 import cd.lan1akea.core.exception.ToolExecutionException;
+import java.util.List;
 import cd.lan1akea.core.tenant.PermissionDecision;
 import cd.lan1akea.core.tenant.PermissionEngine;
 import reactor.core.publisher.Mono;
@@ -49,13 +50,28 @@ public class ToolExecutor {
      * @return Mono&lt;ToolResult&gt; 执行结果
      */
     public Mono<ToolResult> execute(ToolCallParam callParam) {
+        return execute(callParam, null);
+    }
+
+    /**
+     * 执行工具调用（租户感知）。
+     *
+     * @param callParam 调用参数
+     * @param tenantId  租户ID（null 则仅查全局工具）
+     * @return Mono&lt;ToolResult&gt; 执行结果
+     */
+    public Mono<ToolResult> execute(ToolCallParam callParam, String tenantId) {
         return Mono.defer(() -> {
-            // 1. 查找工具
-            Tool tool = registry.get(callParam.getToolName());
+            // 1. 查找工具（租户感知）
+            Tool tool = registry.getForTenant(tenantId, callParam.getToolName());
             if (tool == null) {
+                List<String> names = tenantId != null
+                    ? registry.getToolsForTenant(tenantId).stream().map(Tool::getName).toList()
+                    : registry.getToolNames();
                 return Mono.just(ToolResult.failure(
                     "工具不存在: " + callParam.getToolName()
-                    + "。可用工具: " + String.join(", ", registry.getToolNames())));
+                    + "。租户 [" + (tenantId != null ? tenantId : "global") + "] 可用工具: "
+                    + String.join(", ", names)));
             }
 
             // 2. 权限校验

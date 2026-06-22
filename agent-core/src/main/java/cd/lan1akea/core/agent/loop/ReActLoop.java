@@ -134,7 +134,7 @@ public class ReActLoop {
                     return Mono.just(buildInterruptedResponse(result.getInterruptReason()));
                 }
                 // 调用 LLM
-                List<ToolSchema> schemas = toolRegistry.getAllSchemas();
+                List<ToolSchema> schemas = toolRegistry.getSchemasForTenant(ctx.getTenantId());
                 return model.chatWithTools(ctx.getMessages(), schemas, ctx.getGenerateOptions());
             })
             .flatMap(response -> {
@@ -157,7 +157,7 @@ public class ReActLoop {
 
     protected Flux<ChatStreamChunk> reasoningStepStream(LoopContext ctx) {
         HookContext hookCtx = buildHookContext(ctx);
-        List<ToolSchema> schemas = toolRegistry.getAllSchemas();
+        List<ToolSchema> schemas = toolRegistry.getSchemasForTenant(ctx.getTenantId());
         ReasoningEvent preEvent = new ReasoningEvent(HookEventType.PRE_REASONING);
         return hookDispatcher.dispatch(HookEventType.PRE_REASONING, preEvent, hookCtx)
             .thenMany(model.stream(ctx.getMessages(), ctx.getGenerateOptions()));
@@ -217,7 +217,7 @@ public class ReActLoop {
                         "工具调用被 Hook 阻止: " + result.getAbortReason()));
                 }
                 // 权限校验已在 ToolExecutor 中完成
-                return toolExecutor.execute(param);
+                return toolExecutor.execute(param, ctx.getTenantId());
             })
             .onErrorResume(ToolSuspendException.class, e -> {
                 // 工具暂停 → InterruptHook

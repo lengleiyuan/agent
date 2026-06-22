@@ -26,8 +26,13 @@ public class SseEventParser {
             .filter(line -> line.startsWith("data:"))
             .map(line -> line.substring(5).trim())
             .filter(data -> !"[DONE]".equals(data))
-            .map(this::parseChunk)
-            .filter(chunk -> chunk != null);
+            .handle((json, sink) -> {
+                ChatStreamChunk chunk = parseChunk(json);
+                if (chunk != null) {
+                    sink.next(chunk);
+                }
+                // null chunk silently skipped
+            });
     }
 
     @SuppressWarnings("unchecked")
