@@ -98,7 +98,7 @@ public abstract class AbstractAgent implements Agent, ObservableAgent, Streamabl
 
         // ReActLoop — 构建时一次性创建
         this.reActLoop = new ReActLoop(model, toolExecutor, hookDispatcher, toolRegistry,
-            sessionStore, summaryService, memory, eventBus, hookRecorder, contextWindow);
+            sessionStore, eventBus, hookRecorder);
     }
 
     // ========================================================================

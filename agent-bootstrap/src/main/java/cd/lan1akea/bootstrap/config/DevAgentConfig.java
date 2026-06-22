@@ -68,14 +68,27 @@ public class DevAgentConfig {
         };
     }
 
-    /** Hook 链（含具体实现） */
+    /** Hook 链（含完整预处理链） */
     @Bean
     @ConditionalOnMissingBean(HookChain.class)
     public HookChain hookChain() {
         HookChain chain = new HookChain();
+        // PreReasoning 链（按 priority 顺序执行）:
+        // priority=5: 上下文压缩
+        chain.register(new cd.lan1akea.core.hook.impl.ContextCompressionHook(
+            new cd.lan1akea.core.session.SessionSummaryService(),
+            new cd.lan1akea.core.model.ModelContextWindow("echo-model", 8000, 4000)));
+        // priority=10: 记忆检索
+        chain.register(new cd.lan1akea.core.hook.impl.MemoryEnrichmentHook(
+            new cd.lan1akea.core.memory.InMemoryMemory()));
+        // priority=50: 内容过滤
+        chain.register(new cd.lan1akea.core.hook.impl.ContentFilterHook());
+        // priority=100(default): 日志
         chain.register(new LoggingHook("DevLogger"));
+        // PostToolCall: 审计
         chain.register(new AuditHook("DevAudit"));
-        chain.register(new RateLimitHook(20, 60_000)); // 每分钟最多20次工具调用
+        // PreToolCall: 频率限制 (priority=10, 最高优先级)
+        chain.register(new RateLimitHook(20, 60_000));
         return chain;
     }
 
