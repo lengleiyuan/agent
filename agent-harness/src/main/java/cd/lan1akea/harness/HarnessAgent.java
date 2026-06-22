@@ -3,9 +3,8 @@ package cd.lan1akea.harness;
 import cd.lan1akea.core.agent.AbstractAgent;
 import cd.lan1akea.core.agent.Agent;
 import cd.lan1akea.core.message.Msg;
-import cd.lan1akea.core.model.ChatResponse;
 import cd.lan1akea.core.model.ChatStreamChunk;
-import cd.lan1akea.core.model.GenerateOptions;
+import cd.lan1akea.core.model.ChatResponse;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -47,13 +46,13 @@ public class HarnessAgent implements Agent {
     public String getName() { return delegate.getName(); }
 
     @Override
-    public Mono<ChatResponse> chat(List<Msg> messages, GenerateOptions options) {
-        return delegate.chat(messages, options);
+    public Mono<ChatResponse> chat(List<Msg> messages) {
+        return delegate.chat(messages);
     }
 
     @Override
-    public Flux<ChatStreamChunk> stream(List<Msg> messages, GenerateOptions options) {
-        return delegate.stream(messages, options);
+    public Flux<ChatStreamChunk> stream(List<Msg> messages) {
+        return delegate.stream(messages);
     }
 
     /**

@@ -62,7 +62,7 @@ public class AgentTool implements Tool {
 
         // 构造用户消息并发送给子 Agent
         Msg userMsg = UserMessage.of(input);
-        return agent.chat(List.of(userMsg), null)
+        return agent.chat(List.of(userMsg))
             .map(response -> ToolResult.success(
                 JsonUtils.toCompactJson(response.getMessage())))
             .onErrorResume(e ->

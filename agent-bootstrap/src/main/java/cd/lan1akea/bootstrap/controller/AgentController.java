@@ -37,7 +37,7 @@ public class AgentController {
             return Mono.error(new IllegalArgumentException("message不能为空"));
         }
         Msg userMsg = UserMessage.of(message);
-        return defaultAgent.chat(List.of(userMsg), null);
+        return defaultAgent.chat(List.of(userMsg));
     }
 
     /**
@@ -50,6 +50,6 @@ public class AgentController {
             return Flux.error(new IllegalArgumentException("message不能为空"));
         }
         Msg userMsg = UserMessage.of(message);
-        return defaultAgent.stream(List.of(userMsg), null);
+        return defaultAgent.stream(List.of(userMsg));
     }
 }
