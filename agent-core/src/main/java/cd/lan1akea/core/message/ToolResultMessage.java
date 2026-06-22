@@ -1,5 +1,6 @@
 package cd.lan1akea.core.message;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -24,9 +25,9 @@ public class ToolResultMessage extends Msg {
      * @return ToolResultMessage 实例
      */
     public static ToolResultMessage of(String toolUseId, String result, boolean isError) {
-        return (ToolResultMessage) Msg.builder(MsgRole.TOOL)
-            .addToolResult(toolUseId, result, isError)
-            .build();
+        return new ToolResultMessage(
+            List.of(new ToolResultBlock(toolUseId, result, isError)),
+            Collections.emptyMap());
     }
 
     /**

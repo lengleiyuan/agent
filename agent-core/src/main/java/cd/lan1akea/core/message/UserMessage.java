@@ -1,5 +1,6 @@
 package cd.lan1akea.core.message;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -22,9 +23,7 @@ public class UserMessage extends Msg {
      * @return UserMessage 实例
      */
     public static UserMessage of(String text) {
-        return (UserMessage) Msg.builder(MsgRole.USER)
-            .addText(text)
-            .build();
+        return new UserMessage(List.of(new TextBlock(text)), Collections.emptyMap());
     }
 
     /**

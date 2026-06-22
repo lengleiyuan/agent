@@ -181,7 +181,7 @@ public class ReActLoop {
     }
 
     protected ChatResponse buildInterruptedResponse(String interruptReason) {
-        AssistantMessage msg = (AssistantMessage) Msg.builder(MsgRole.ASSISTANT)
+        Msg msg = Msg.builder(MsgRole.ASSISTANT)
             .addText("[执行已中断: " + interruptReason + "]")
             .putMetadata(MessageMetadataKeys.INTERRUPT_ID, interruptReason)
             .build();

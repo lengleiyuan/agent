@@ -143,9 +143,9 @@ public class OpenAIChatModel extends ChatModelBase {
             completionTokens = ((Number) usage.getOrDefault("completion_tokens", 0)).intValue();
         }
 
-        cd.lan1akea.core.message.AssistantMessage assistantMsg =
-            (cd.lan1akea.core.message.AssistantMessage) builder.build();
-        return new ChatResponse(assistantMsg,
+        cd.lan1akea.core.message.Msg msgResult =
+            builder.build();
+        return new ChatResponse(msgResult,
             new ChatUsage(promptTokens, completionTokens),
             finishReason, getModelName());
     }

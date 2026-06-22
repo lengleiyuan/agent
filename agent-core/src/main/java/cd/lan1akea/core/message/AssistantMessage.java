@@ -1,5 +1,6 @@
 package cd.lan1akea.core.message;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -22,9 +23,7 @@ public class AssistantMessage extends Msg {
  * @return AssistantMessage 实例
      */
     public static AssistantMessage of(String text) {
-        return (AssistantMessage) Msg.builder(MsgRole.ASSISTANT)
-            .addText(text)
-            .build();
+        return new AssistantMessage(List.of(new TextBlock(text)), Collections.emptyMap());
     }
 
     /**

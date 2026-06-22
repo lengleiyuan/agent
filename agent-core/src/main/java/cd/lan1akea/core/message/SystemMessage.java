@@ -1,5 +1,6 @@
 package cd.lan1akea.core.message;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -23,9 +24,7 @@ public class SystemMessage extends Msg {
      * @return SystemMessage 实例
      */
     public static SystemMessage of(String systemPrompt) {
-        return (SystemMessage) Msg.builder(MsgRole.SYSTEM)
-            .addText(systemPrompt)
-            .build();
+        return new SystemMessage(List.of(new TextBlock(systemPrompt)), Collections.emptyMap());
     }
 
     /**
