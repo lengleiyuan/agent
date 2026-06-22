@@ -101,7 +101,7 @@ public abstract class AbstractAgent implements Agent, ObservableAgent, Streamabl
      * 构建 Agent，子类可在此进行额外的初始化验证。
      * 构建后状态变为 built=true，不可重复构建。
      */
-    protected final Mono<Void> build() {
+    public final Mono<Void> build() {
         if (built) {
             return Mono.error(new AgentConfigurationException(
                 "Agent [" + name + "] 已构建，不可重复构建"));
