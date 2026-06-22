@@ -2,133 +2,166 @@ package cd.lan1akea.core.agent;
 
 import cd.lan1akea.core.agent.config.AgentConfig;
 import cd.lan1akea.core.agent.config.AgentExecutionConfig;
-import cd.lan1akea.core.agent.loop.ReActLoop;
 import cd.lan1akea.core.agent.loop.LoopContext;
+import cd.lan1akea.core.agent.loop.ReActLoop;
 import cd.lan1akea.core.event.EventBus;
 import cd.lan1akea.core.event.DomainEvent;
 import cd.lan1akea.core.exception.AgentConfigurationException;
 import cd.lan1akea.core.hook.HookChain;
 import cd.lan1akea.core.hook.HookDispatcher;
+import cd.lan1akea.core.hook.recorder.HookRecorder;
+import cd.lan1akea.core.memory.Memory;
+import cd.lan1akea.core.memory.InMemoryMemory;
 import cd.lan1akea.core.middleware.MiddlewareChain;
-import cd.lan1akea.core.model.ChatModel;
-import cd.lan1akea.core.model.ChatResponse;
-import cd.lan1akea.core.model.ChatStreamChunk;
-import cd.lan1akea.core.model.GenerateOptions;
+import cd.lan1akea.core.model.*;
 import cd.lan1akea.core.message.Msg;
-import cd.lan1akea.core.session.SessionStore;
-import cd.lan1akea.core.tool.ToolRegistry;
-import cd.lan1akea.core.tool.ToolExecutor;
-import cd.lan1akea.core.util.ValidationUtils;
+import cd.lan1akea.core.session.*;
+import cd.lan1akea.core.shutdown.GracefulShutdown;
+import cd.lan1akea.core.state.CheckpointService;
+import cd.lan1akea.core.state.InMemoryStateStore;
+import cd.lan1akea.core.tenant.*;
+import cd.lan1akea.core.tool.*;
+import cd.lan1akea.core.util.IdGenerator;
+import cd.lan1akea.core.workspace.Workspace;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.util.List;
 
 /**
- * Agent 抽象基类（模板方法模式）。
+ * Agent 抽象基类（完整版）。
  * <p>
  * 封装 Agent 的完整生命周期：
  * <ol>
- * <li>构建（build）—— 注入模型、工具、Hook链、中间件链</li>
- * <li>执行（chat/stream）—— 经由 MiddlewareChain → ReActLoop → HookChain</li>
+ * <li>构建（build）— 注入所有子系统：模型、工具、Hook链、中间件、权限、记忆、会话存储</li>
+ * <li>执行（chat/stream）— 经由 MiddlewareChain → ReActLoop → HookChain → 持久化</li>
+ * <li>关闭（shutdown）— 保存状态、释放资源</li>
  * </ol>
- * 子类可覆写钩子方法定制行为。
  * </p>
  */
 public abstract class AbstractAgent implements Agent, ObservableAgent, StreamableAgent, CallableAgent {
 
-    /** Agent 名称 */
+    // === 核心组件 ===
     protected final String name;
-
-    /** Agent 配置 */
     protected final AgentConfig config;
-
-    /** 聊天模型 */
     protected final ChatModel model;
-
-    /** 工具注册表 */
     protected final ToolRegistry toolRegistry;
-
-    /** 工具执行器 */
     protected final ToolExecutor toolExecutor;
-
-    /** Hook 链 */
     protected final HookChain hookChain;
-
-    /** Hook 调度器 */
     protected final HookDispatcher hookDispatcher;
-
-    /** 中间件链 */
     protected final MiddlewareChain middlewareChain;
-
-    /** 事件总线 */
     protected final EventBus eventBus;
-
-    /** 事件源 */
     protected final AgentEventSource eventSource;
-
-    /** ReAct 循环引擎 */
     protected final ReActLoop reActLoop;
 
-    /** 会话存储（可选） */
+    // === 子系统 ===
     protected SessionStore sessionStore;
+    protected SessionSummaryService summaryService;
+    protected PermissionEngine permissionEngine;
+    protected Memory memory;
+    protected Workspace workspace;
+    protected ModelContextWindow contextWindow;
+    protected ToolValidator toolValidator;
+    protected HookRecorder hookRecorder;
+    protected GracefulShutdown gracefulShutdown;
+    protected CheckpointService checkpointService;
 
-    /** 是否已构建 */
+    // === 状态 ===
     private volatile boolean built = false;
+    private String currentSessionId;
 
     protected AbstractAgent(AgentConfig config) {
-        ValidationUtils.notNull(config, "AgentConfig");
-        ValidationUtils.notNull(config.getModel(), "ChatModel");
+        cd.lan1akea.core.util.ValidationUtils.notNull(config, "AgentConfig");
+        cd.lan1akea.core.util.ValidationUtils.notNull(config.getModel(), "ChatModel");
 
         this.config = config;
         this.name = config.getName();
         this.model = config.getModel();
+
+        // 工具系统
         this.toolRegistry = config.getToolRegistry() != null
             ? config.getToolRegistry() : new ToolRegistry();
-        this.toolExecutor = new ToolExecutor(this.toolRegistry);
+        this.toolValidator = new ToolValidator();
+        this.toolExecutor = new ToolExecutor(toolRegistry, new DefaultToolEmitter(),
+            toolValidator, null, null);
+
+        // Hook 系统
         this.hookChain = config.getHookChain() != null
             ? config.getHookChain() : new HookChain();
         this.hookDispatcher = new HookDispatcher(this.hookChain);
+        this.hookRecorder = new HookRecorder();
+
+        // 中间件
         this.middlewareChain = config.getMiddlewareChain() != null
             ? config.getMiddlewareChain() : new MiddlewareChain();
+
+        // 事件总线
         this.eventBus = new EventBus();
         this.eventSource = new AgentEventSource(eventBus);
+
+        // 默认子系统（可被 setter 覆盖）
         this.sessionStore = config.getSessionStore();
+        this.summaryService = new SessionSummaryService();
+        this.memory = new InMemoryMemory();
+        this.contextWindow = new ModelContextWindow(model.getModelName(), 8000, 4000);
+        this.gracefulShutdown = new GracefulShutdown(Duration.ofSeconds(30));
+
+        // ReAct 循环
         this.reActLoop = createReActLoop();
     }
 
-    /**
-     * 构建 Agent，子类可在此进行额外的初始化验证。
-     * 构建后状态变为 built=true，不可重复构建。
-     */
+    // === 构建生命周期 ===
+
     public final Mono<Void> build() {
         if (built) {
             return Mono.error(new AgentConfigurationException(
                 "Agent [" + name + "] 已构建，不可重复构建"));
         }
         built = true;
+
+        // 注册停机钩子
+        gracefulShutdown.register(new cd.lan1akea.core.shutdown.ShutdownHook() {
+            @Override
+            public String getName() { return name + "-shutdown"; }
+            @Override
+            public Mono<Void> onShutdown() {
+                return shutdown();
+            }
+        });
+
+        // 注册事件类型
+        for (AgentEventType type : AgentEventType.values()) {
+            eventBus.subscribe("agent:" + type.name().toLowerCase());
+        }
+        eventBus.subscribe("hook:*");
+
         return eventSource.emit(AgentEventType.CREATED, name)
             .then(doBuild());
     }
 
-    /**
-     * 子类扩展构建过程。
-     */
-    protected Mono<Void> doBuild() {
-        return Mono.empty();
-    }
+    protected Mono<Void> doBuild() { return Mono.empty(); }
 
-    // === 核心执行 ===
+    // ========================================================================
+    // 核心执行
+    // ========================================================================
 
     @Override
     public Mono<ChatResponse> chat(List<Msg> messages, GenerateOptions options) {
         ensureBuilt();
-    GenerateOptions opts = resolveOptions(options);
+        GenerateOptions opts = resolveOptions(options);
         LoopContext ctx = createLoopContext(messages, opts, false);
 
         return middlewareChain.applyBefore(ctx)
             .flatMap(this::executeChat)
             .flatMap(middlewareChain::applyAfter)
+            .flatMap(response -> {
+                // 持久化最后轮次到会话
+                if (currentSessionId != null && sessionStore != null) {
+                    persistTurn(ctx, response);
+                }
+                return Mono.just(response);
+            })
             .doOnSuccess(r -> eventSource.emit(AgentEventType.COMPLETED, name).subscribe())
             .doOnError(e -> eventSource.emit(AgentEventType.ERROR, name).subscribe());
     }
@@ -145,61 +178,109 @@ public abstract class AbstractAgent implements Agent, ObservableAgent, Streamabl
                 .toolChoice(opts.getToolChoice())
                 .build();
         }
-
         LoopContext ctx = createLoopContext(messages, opts, true);
         return middlewareChain.applyBefore(ctx)
-            .flatMapMany(c -> executeStream(c))
+            .flatMapMany(this::executeStream)
             .doOnComplete(() -> eventSource.emit(AgentEventType.COMPLETED, name).subscribe())
             .doOnError(e -> eventSource.emit(AgentEventType.ERROR, name).subscribe());
     }
 
+    // ========================================================================
+    // 会话管理
+    // ========================================================================
+
     /**
-     * 执行单次对话的主流程。
+     * 创建或恢复会话。
+     *
+     * @param sessionId 会话ID（null 则创建新会话）
+     * @return Mono&lt;Session&gt;
      */
+    public Mono<Session> openSession(String sessionId) {
+        if (sessionStore == null) {
+            this.currentSessionId = IdGenerator.nextIdStr();
+            return Mono.just(new Session(
+                new SessionId(this.currentSessionId),
+                0, name, SessionState.ACTIVE, null, null, null));
+        }
+
+        if (sessionId != null) {
+            SessionId sid = new SessionId(sessionId);
+            return sessionStore.findById(sid)
+                .switchIfEmpty(Mono.defer(() -> {
+                    Session newSession = new Session(sid, 0, name,
+                        SessionState.ACTIVE, null, null, null);
+                    return sessionStore.create(newSession);
+                }))
+                .doOnNext(s -> this.currentSessionId = s.getId().getValue());
+        } else {
+            String newId = IdGenerator.nextIdStr();
+            SessionId sid = new SessionId(newId);
+            Session newSession = new Session(sid, 0, name,
+                SessionState.ACTIVE, null, null, null);
+            return sessionStore.create(newSession)
+                .doOnNext(s -> this.currentSessionId = s.getId().getValue());
+        }
+    }
+
+    // ========================================================================
+    // 受保护方法（子类可覆写）
+    // ========================================================================
+
     protected Mono<ChatResponse> executeChat(LoopContext ctx) {
         return reActLoop.execute(ctx);
     }
 
-    /**
-     * 执行流式对话的主流程。
-     */
     protected Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
         return reActLoop.executeStream(ctx);
     }
 
-    // === 生命周期 ===
-
-    /**
-     * 优雅关闭 Agent，释放资源。
-     */
-    public Mono<Void> shutdown() {
-        return Mono.fromRunnable(() -> {
-            built = false;
-        });
-    }
-
-    // === 可观测能力 ===
-
-    @Override
-    public Flux<DomainEvent> events() {
-        return Flux.empty(); // 子类覆写
-    }
-
-    @Override
-    public Flux<DomainEvent> events(String eventType) {
-        return eventBus.subscribe(eventType);
-    }
-
-    // === 受保护的工具方法 ===
-
     protected LoopContext createLoopContext(List<Msg> messages,
                                              GenerateOptions options, boolean stream) {
+        // 注入 ToolExecutor 的上下文提供者
+        ToolExecutionContextProvider contextProvider = () ->
+            new ToolExecutionContext(
+                currentSessionId != null ? "0" : null, // tenantId
+                null, // userId
+                currentSessionId,
+                name);
+
+        // 重建 ToolExecutor（注入权限和上下文）
+        ToolExecutor ctxToolExecutor = new ToolExecutor(
+            toolRegistry, new DefaultToolEmitter(), toolValidator,
+            permissionEngine, contextProvider);
+
+        // 重建 ReActLoop（使用新 ToolExecutor）
+        ReActLoop ctxReActLoop = new ReActLoop(model, ctxToolExecutor,
+            hookDispatcher, toolRegistry);
+
+        // 用新的 ReActLoop 替换（反射设置，简化处理）
+        try {
+            java.lang.reflect.Field loopField = AbstractAgent.class.getDeclaredField("reActLoop");
+            loopField.setAccessible(true);
+            loopField.set(this, ctxReActLoop);
+        } catch (Exception ignored) {
+            // 反射失败不影响主流程
+        }
+
         return LoopContext.builder()
             .agentName(name)
+            .tenantId(currentSessionId != null ? "0" : null)
+            .userId(null)
+            .sessionId(currentSessionId)
             .messages(messages)
             .generateOptions(options)
-            .stream(stream)
             .maxIterations(config.getExecutionConfig().getMaxIterations())
+            .stream(stream)
+            // 注入所有子系统
+            .sessionStore(sessionStore)
+            .summaryService(summaryService)
+            .permissionEngine(permissionEngine)
+            .eventBus(eventBus)
+            .memory(memory)
+            .workspace(workspace)
+            .contextWindow(contextWindow)
+            .toolValidator(toolValidator)
+            .hookRecorder(hookRecorder)
             .build();
     }
 
@@ -217,18 +298,80 @@ public abstract class AbstractAgent implements Agent, ObservableAgent, Streamabl
             .build();
     }
 
-    protected void ensureBuilt() {
-        if (!built) {
-            throw new AgentConfigurationException(
-                "Agent [" + name + "] 尚未构建，请先调用 build()");
-        }
+    protected void persistTurn(LoopContext ctx, ChatResponse response) {
+        if (currentSessionId == null || sessionStore == null) return;
+        SessionId sid = new SessionId(currentSessionId);
+        String userJson = ctx.getMessages().isEmpty() ? "" :
+            ctx.getMessages().get(ctx.getMessages().size() - 1).getTextContent();
+        String assistantJson = response.getMessage().getTextContent();
+        ChatTurn turn = new ChatTurn(
+            IdGenerator.nextId(),
+            Long.parseLong(currentSessionId),
+            ctx.getIteration(),
+            userJson, assistantJson, null,
+            java.time.LocalDateTime.now());
+        sessionStore.addTurn(sid, turn).subscribe();
     }
 
-    // === Getters ===
+    // ========================================================================
+    // 生命周期 + 可观测
+    // ========================================================================
+
+    public Mono<Void> shutdown() {
+        built = false;
+        return Mono.fromRunnable(() -> {
+            if (currentSessionId != null && sessionStore != null) {
+                sessionStore.close(new SessionId(currentSessionId)).subscribe();
+            }
+        });
+    }
+
+    @Override
+    public Flux<DomainEvent> events() {
+        return Flux.merge(
+            eventBus.subscribe("agent:created"),
+            eventBus.subscribe("agent:started"),
+            eventBus.subscribe("agent:completed"),
+            eventBus.subscribe("agent:error"),
+            eventBus.subscribe("hook:*"));
+    }
+
+    @Override
+    public Flux<DomainEvent> events(String eventType) {
+        return eventBus.subscribe(eventType);
+    }
+
+    // ========================================================================
+    // Setter（注入子系统）
+    // ========================================================================
+
+    public void setSessionStore(SessionStore sessionStore) { this.sessionStore = sessionStore; }
+    public void setSummaryService(SessionSummaryService summaryService) { this.summaryService = summaryService; }
+    public void setPermissionEngine(PermissionEngine permissionEngine) {
+        this.permissionEngine = permissionEngine;
+        // 更新 ToolExecutor
+        ToolExecutionContextProvider cp = () -> new ToolExecutionContext(null, null, currentSessionId, name);
+        try {
+            java.lang.reflect.Field f = AbstractAgent.class.getDeclaredField("toolExecutor");
+            f.setAccessible(true);
+            f.set(this, new ToolExecutor(toolRegistry, new DefaultToolEmitter(),
+                toolValidator, permissionEngine, cp));
+        } catch (Exception ignored) {}
+    }
+    public void setMemory(Memory memory) { this.memory = memory; }
+    public void setWorkspace(Workspace workspace) { this.workspace = workspace; }
+    public void setContextWindow(ModelContextWindow contextWindow) { this.contextWindow = contextWindow; }
+    public void setToolValidator(ToolValidator toolValidator) { this.toolValidator = toolValidator; }
+    public void setHookRecorder(HookRecorder hookRecorder) { this.hookRecorder = hookRecorder; }
+    public void setGracefulShutdown(GracefulShutdown gracefulShutdown) { this.gracefulShutdown = gracefulShutdown; }
+    public void setCheckpointService(CheckpointService checkpointService) { this.checkpointService = checkpointService; }
+
+    // ========================================================================
+    // Getters
+    // ========================================================================
 
     @Override
     public String getName() { return name; }
-
     public AgentConfig getConfig() { return config; }
     public ChatModel getModel() { return model; }
     public ToolRegistry getToolRegistry() { return toolRegistry; }
@@ -236,4 +379,20 @@ public abstract class AbstractAgent implements Agent, ObservableAgent, Streamabl
     public EventBus getEventBus() { return eventBus; }
     public SessionStore getSessionStore() { return sessionStore; }
     public boolean isBuilt() { return built; }
+    public String getCurrentSessionId() { return currentSessionId; }
+    public SessionSummaryService getSummaryService() { return summaryService; }
+    public PermissionEngine getPermissionEngine() { return permissionEngine; }
+    public Memory getMemory() { return memory; }
+    public Workspace getWorkspace() { return workspace; }
+    public ModelContextWindow getContextWindow() { return contextWindow; }
+    public HookRecorder getHookRecorder() { return hookRecorder; }
+    public GracefulShutdown getGracefulShutdown() { return gracefulShutdown; }
+    public CheckpointService getCheckpointService() { return checkpointService; }
+
+    protected void ensureBuilt() {
+        if (!built) {
+            throw new AgentConfigurationException(
+                "Agent [" + name + "] 尚未构建，请先调用 build()");
+        }
+    }
 }

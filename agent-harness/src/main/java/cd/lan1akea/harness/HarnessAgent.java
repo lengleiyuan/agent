@@ -32,7 +32,7 @@ public class HarnessAgent implements Agent {
 
     private final AbstractAgent delegate;
 
-    HarnessAgent(AbstractAgent delegate) {
+    public HarnessAgent(AbstractAgent delegate) {
         this.delegate = delegate;
     }
 
