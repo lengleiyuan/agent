@@ -5,366 +5,307 @@ import cd.lan1akea.core.agent.AgentEventType;
 import cd.lan1akea.core.event.EventBus;
 import cd.lan1akea.core.hook.*;
 import cd.lan1akea.core.hook.recorder.HookRecorder;
+import cd.lan1akea.core.memory.Memory;
+import cd.lan1akea.core.memory.MemoryEntry;
+import cd.lan1akea.core.memory.MemoryRetrievalQuery;
 import cd.lan1akea.core.message.*;
 import cd.lan1akea.core.model.*;
+import cd.lan1akea.core.session.SessionId;
+import cd.lan1akea.core.session.SessionStore;
+import cd.lan1akea.core.session.SessionSummaryService;
+import cd.lan1akea.core.session.ChatTurn;
 import cd.lan1akea.core.tool.*;
+import cd.lan1akea.core.util.IdGenerator;
+import cd.lan1akea.core.util.JsonUtils;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * ReAct 循环引擎（完整版）。
+ * ReAct 循环引擎。
  * <p>
- * 完整执行流程：上下文压缩 → 记忆检索 → PreReasoningHook → LLM调用 → PostReasoningHook
- * → 权限校验 → PreActingHook → 逐个工具调用（PreToolCallHook → 执行 → PostToolCallHook）
- * → PostActingHook → 观察 → 会话持久化 → 事件发射 → 递归下一轮。
- * </p>
- * <p>
- * 错误处理：ErrorHook（所有异常）、InterruptHook（工具暂停审批）。
+ * 构建时注入所有只读子系统，每次请求通过 LoopContext（纯数据）驱动。
+ * 负责：上下文压缩、记忆检索、Hook调度、LLM调用、工具执行、事件发射、会话持久化。
  * </p>
  */
 public class ReActLoop {
 
+    // === 构建时注入（只读，多请求共享） ===
     private final ChatModel model;
     private final ToolExecutor toolExecutor;
     private final HookDispatcher hookDispatcher;
     private final ToolRegistry toolRegistry;
+    private final SessionStore sessionStore;
+    private final SessionSummaryService summaryService;
+    private final Memory memory;
+    private final EventBus eventBus;
+    private final HookRecorder hookRecorder;
+    private final ModelContextWindow contextWindow;
 
     public ReActLoop(ChatModel model, ToolExecutor toolExecutor,
-                      HookDispatcher hookDispatcher, ToolRegistry toolRegistry) {
+                      HookDispatcher hookDispatcher, ToolRegistry toolRegistry,
+                      SessionStore sessionStore, SessionSummaryService summaryService,
+                      Memory memory, EventBus eventBus, HookRecorder hookRecorder,
+                      ModelContextWindow contextWindow) {
         this.model = model;
         this.toolExecutor = toolExecutor;
         this.hookDispatcher = hookDispatcher;
         this.toolRegistry = toolRegistry;
+        this.sessionStore = sessionStore;
+        this.summaryService = summaryService;
+        this.memory = memory;
+        this.eventBus = eventBus;
+        this.hookRecorder = hookRecorder;
+        this.contextWindow = contextWindow;
     }
 
     // ========================================================================
-    // 主循环入口
+    // 主循环
     // ========================================================================
 
-    /**
-     * 执行 ReAct 循环（非流式）。
-     */
     public Mono<ChatResponse> execute(LoopContext ctx) {
         return Mono.defer(() -> {
             if (ctx.getIteration() >= ctx.getMaxIterations()) {
-                emitAgentEvent(ctx, AgentEventType.COMPLETED);
-                return Mono.just(buildFinalResponse(ctx));
+                emitEvent(ctx, AgentEventType.COMPLETED);
+                return Mono.justOrEmpty(ctx.getLastResponse());
             }
-
-            // 上下文压缩检查
-            if (ctx.needsCompression()) {
-                ctx.compressHistory();
-            }
+            // 上下文压缩
+            compressIfNeeded(ctx);
+            // 记忆检索
+            enrichMemory(ctx);
 
             return reasoningStep(ctx)
                 .onErrorResume(e -> handleError(ctx, e).then(Mono.error(e)))
                 .flatMap(response -> {
                     ctx.setLastResponse(response);
-                    // Token 追踪
                     if (response.getUsage() != null) {
                         ctx.addTokens(response.getUsage().getTotalTokens());
                     }
-
                     List<ToolUseBlock> toolCalls = response.getMessage().getToolUseBlocks();
                     if (toolCalls.isEmpty()) {
-                        // 无工具调用，结束循环
-                        emitAgentEvent(ctx, AgentEventType.COMPLETED);
+                        emitEvent(ctx, AgentEventType.COMPLETED);
                         return Mono.just(response);
                     }
                     return actingStep(ctx, toolCalls)
-                        .flatMap(toolResults -> observationStep(ctx, toolResults))
-                        .flatMap(this::execute); // 递归下一轮
+                        .flatMap(results -> observationStep(ctx, results))
+                        .flatMap(this::execute);
                 });
         });
     }
 
-    /**
-     * 执行 ReAct 循环（流式）。
-     */
     public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
         return Flux.defer(() -> {
-            if (ctx.getIteration() >= ctx.getMaxIterations()) {
-                return Flux.empty();
-            }
-            return reasoningStepStream(ctx)
+            if (ctx.getIteration() >= ctx.getMaxIterations()) return Flux.empty();
+            HookContext hc = buildHookContext(ctx);
+            return hookDispatcher.dispatch(HookEventType.PRE_REASONING,
+                    new ReasoningEvent(HookEventType.PRE_REASONING), hc)
+                .thenMany(model.stream(ctx.getMessages(), ctx.getGenerateOptions()))
                 .doOnNext(chunk -> {
-                    // 流式块经过 StreamingChunkHook
-                    HookContext hookCtx = buildHookContext(ctx);
                     HookEvent se = new HookEvent(HookEventType.ON_STREAM_CHUNK);
-                    hookDispatcher.dispatch(HookEventType.ON_STREAM_CHUNK, se, hookCtx).subscribe();
-                })
-                .collectList()
-                .flatMapMany(chunks -> {
-                    ctx.setIteration(ctx.getIteration() + 1);
-                    return Flux.fromIterable(chunks);
+                    hookDispatcher.dispatch(HookEventType.ON_STREAM_CHUNK, se, hc).subscribe();
                 });
         });
     }
 
     // ========================================================================
-    // 推理阶段（Reasoning）
+    // 上下文管理
     // ========================================================================
 
-    protected Mono<ChatResponse> reasoningStep(LoopContext ctx) {
-        HookContext hookCtx = buildHookContext(ctx);
-        emitAgentEvent(ctx, AgentEventType.REASONING_START);
-
-        // 从长期记忆检索相关上下文
-        String lastUserMsg = getLastUserMessage(ctx);
-        if (lastUserMsg != null && !lastUserMsg.isEmpty()) {
-            ctx.enrichFromMemory(lastUserMsg);
+    /** 检查是否需要压缩，需要则执行 */
+    void compressIfNeeded(LoopContext ctx) {
+        if (contextWindow == null || summaryService == null) return;
+        double usage = (double) ctx.getTotalTokens() / contextWindow.getMaxInputTokens();
+        if (usage > 0.75 && ctx.getMessages().size() > 4) {
+            int keep = 4;
+            int removeCount = ctx.getMessages().size() - keep;
+            if (removeCount <= 0) return;
+            List<Msg> oldMsgs = new ArrayList<>(ctx.getMessages().subList(0, removeCount));
+            ctx.getMessages().subList(0, removeCount).clear();
+            // 摘要
+            List<ChatTurn> turns = new ArrayList<>();
+            for (int i = 0; i < oldMsgs.size(); i += 2) {
+                String u = i < oldMsgs.size() ? oldMsgs.get(i).getTextContent() : "";
+                String a = i + 1 < oldMsgs.size() ? oldMsgs.get(i + 1).getTextContent() : "";
+                turns.add(new ChatTurn(0, 0, i / 2, u, a, null, LocalDateTime.now()));
+            }
+            Msg summary = summaryService.summarize(turns);
+            ctx.getMessages().add(0, summary);
         }
+    }
 
-        // PreReasoning Hook
-        ReasoningEvent preEvent = new ReasoningEvent(HookEventType.PRE_REASONING);
-        preEvent.setMessages(ctx.getMessages());
-        recordHook(ctx, "PreReasoning", HookEventType.PRE_REASONING);
+    /** 从长期记忆检索相关上下文 */
+    void enrichMemory(LoopContext ctx) {
+        if (memory == null || ctx.getTenantId() == null) return;
+        String query = "";
+        for (int i = ctx.getMessages().size() - 1; i >= 0; i--) {
+            if (ctx.getMessages().get(i).getRole() == MsgRole.USER) {
+                query = ctx.getMessages().get(i).getTextContent();
+                break;
+            }
+        }
+        if (query.isEmpty()) return;
+        try {
+            Long tid = Long.parseLong(ctx.getTenantId());
+            Long uid = ctx.getUserId() != null ? Long.parseLong(ctx.getUserId()) : null;
+            List<MemoryEntry> entries = memory.retrieve(
+                new MemoryRetrievalQuery(query, 3, tid, uid))
+                .collectList().block(Duration.ofSeconds(5));
+            if (entries != null && !entries.isEmpty()) {
+                StringBuilder sb = new StringBuilder("相关记忆:\n");
+                for (MemoryEntry e : entries) sb.append("- ").append(e.getContent()).append("\n");
+                ctx.getMessages().add(0, SystemMessage.of(sb.toString()));
+            }
+        } catch (Exception ignored) {}
+    }
 
-        return hookDispatcher.dispatch(HookEventType.PRE_REASONING, preEvent, hookCtx)
-            .flatMap(result -> {
-                recordHookResult(ctx, "PreReasoning", result);
-                if (result.isAbort()) {
-                    return Mono.error(new cd.lan1akea.core.exception.HookAbortException(
-                        "hook", result.getAbortReason()));
-                }
-                if (result.isInterrupt()) {
-                    return Mono.just(buildInterruptedResponse(result.getInterruptReason()));
-                }
-                // 调用 LLM
+    // ========================================================================
+    // 推理阶段
+    // ========================================================================
+
+    Mono<ChatResponse> reasoningStep(LoopContext ctx) {
+        HookContext hc = buildHookContext(ctx);
+        emitEvent(ctx, AgentEventType.REASONING_START);
+
+        ReasoningEvent pre = new ReasoningEvent(HookEventType.PRE_REASONING);
+        pre.setMessages(ctx.getMessages());
+        record("PreReasoning", HookEventType.PRE_REASONING);
+
+        return hookDispatcher.dispatch(HookEventType.PRE_REASONING, pre, hc)
+            .flatMap(r -> {
+                if (r.isAbort()) return Mono.error(
+                    new cd.lan1akea.core.exception.HookAbortException("hook", r.getAbortReason()));
+                if (r.isInterrupt()) return Mono.just(buildInterrupted(r.getInterruptReason()));
                 List<ToolSchema> schemas = toolRegistry.getSchemasForTenant(ctx.getTenantId());
                 return model.chatWithTools(ctx.getMessages(), schemas, ctx.getGenerateOptions());
             })
-            .flatMap(response -> {
-                emitAgentEvent(ctx, AgentEventType.REASONING_END);
-                // PostReasoning Hook
-                ReasoningEvent postEvent = new ReasoningEvent(HookEventType.POST_REASONING);
-                postEvent.setMessages(ctx.getMessages());
-                recordHook(ctx, "PostReasoning", HookEventType.POST_REASONING);
-                return hookDispatcher.dispatch(HookEventType.POST_REASONING, postEvent, hookCtx)
-                    .flatMap(postResult -> {
-                        recordHookResult(ctx, "PostReasoning", postResult);
-                        if (postResult.isAbort()) {
-                            return Mono.error(new cd.lan1akea.core.exception.HookAbortException(
-                                "hook", postResult.getAbortReason()));
-                        }
-                        return Mono.just(response);
-                    });
+            .flatMap(resp -> {
+                emitEvent(ctx, AgentEventType.REASONING_END);
+                ReasoningEvent post = new ReasoningEvent(HookEventType.POST_REASONING);
+                return hookDispatcher.dispatch(HookEventType.POST_REASONING, post, hc)
+                    .thenReturn(resp);
             });
     }
 
-    protected Flux<ChatStreamChunk> reasoningStepStream(LoopContext ctx) {
-        HookContext hookCtx = buildHookContext(ctx);
-        List<ToolSchema> schemas = toolRegistry.getSchemasForTenant(ctx.getTenantId());
-        ReasoningEvent preEvent = new ReasoningEvent(HookEventType.PRE_REASONING);
-        return hookDispatcher.dispatch(HookEventType.PRE_REASONING, preEvent, hookCtx)
-            .thenMany(model.stream(ctx.getMessages(), ctx.getGenerateOptions()));
-    }
-
     // ========================================================================
-    // 行动阶段（Acting）
+    // 行动阶段
     // ========================================================================
 
-    protected Mono<List<ToolResult>> actingStep(LoopContext ctx, List<ToolUseBlock> toolCalls) {
-        HookContext hookCtx = buildHookContext(ctx);
-        emitAgentEvent(ctx, AgentEventType.ACTING_START);
+    Mono<List<ToolResult>> actingStep(LoopContext ctx, List<ToolUseBlock> toolCalls) {
+        HookContext hc = buildHookContext(ctx);
+        emitEvent(ctx, AgentEventType.ACTING_START);
+        ActingEvent ae = new ActingEvent(HookEventType.PRE_ACTING);
+        ae.setToolCalls(toolCalls);
+        record("PreActing", HookEventType.PRE_ACTING);
 
-        // PreActing Hook
-        ActingEvent actingEvent = new ActingEvent(HookEventType.PRE_ACTING);
-        actingEvent.setToolCalls(toolCalls);
-        recordHook(ctx, "PreActing", HookEventType.PRE_ACTING);
-
-        return hookDispatcher.dispatch(HookEventType.PRE_ACTING, actingEvent, hookCtx)
-            .flatMapMany(result -> {
-                recordHookResult(ctx, "PreActing", result);
-                if (result.isAbort()) {
-                    return Flux.error(new cd.lan1akea.core.exception.HookAbortException(
-                        "hook", result.getAbortReason()));
-                }
-                return Flux.fromIterable(toolCalls);
-            })
-            .flatMap(toolCall -> executeSingleTool(ctx, toolCall, hookCtx))
+        return hookDispatcher.dispatch(HookEventType.PRE_ACTING, ae, hc)
+            .flatMapMany(r -> Flux.fromIterable(toolCalls))
+            .flatMap(tc -> executeSingleTool(ctx, tc, hc))
             .collectList()
             .flatMap(results -> {
-                emitAgentEvent(ctx, AgentEventType.ACTING_END);
-                // PostActing Hook
-                ActingEvent postEvent = new ActingEvent(HookEventType.POST_ACTING);
-                recordHook(ctx, "PostActing", HookEventType.POST_ACTING);
-                return hookDispatcher.dispatch(HookEventType.POST_ACTING, postEvent, hookCtx)
-                    .flatMap(postResult -> {
-                        recordHookResult(ctx, "PostActing", postResult);
-                        return Mono.just(results);
-                    });
+                emitEvent(ctx, AgentEventType.ACTING_END);
+                ActingEvent post = new ActingEvent(HookEventType.POST_ACTING);
+                return hookDispatcher.dispatch(HookEventType.POST_ACTING, post, hc)
+                    .thenReturn(results);
             });
     }
 
-    protected Mono<ToolResult> executeSingleTool(LoopContext ctx, ToolUseBlock toolCall,
-                                                   HookContext hookCtx) {
-        ToolCallParam param = new ToolCallParam(
-            toolCall.getId(), toolCall.getName(), toolCall.getArguments());
+    Mono<ToolResult> executeSingleTool(LoopContext ctx, ToolUseBlock tc, HookContext hc) {
+        ToolCallParam param = new ToolCallParam(tc.getId(), tc.getName(), tc.getArguments());
+        record("PreToolCall:" + tc.getName(), HookEventType.PRE_TOOL_CALL);
 
-        // PreToolCall Hook
-        recordHook(ctx, "PreToolCall:" + toolCall.getName(), HookEventType.PRE_TOOL_CALL);
-        HookEvent preEvent = new HookEvent(HookEventType.PRE_TOOL_CALL);
-
-        return hookDispatcher.dispatch(HookEventType.PRE_TOOL_CALL, preEvent, hookCtx)
+        return hookDispatcher.dispatch(HookEventType.PRE_TOOL_CALL,
+                new HookEvent(HookEventType.PRE_TOOL_CALL), hc)
+            .flatMap(r -> r.isAbort()
+                ? Mono.just(ToolResult.failure("工具调用被阻止: " + r.getAbortReason()))
+                : toolExecutor.execute(param, ctx.getTenantId()))
+            .onErrorResume(ToolSuspendException.class, e ->
+                hookDispatcher.dispatch(HookEventType.ON_INTERRUPT,
+                    new InterruptEvent(e.getQuestion(), tc.getName()), hc)
+                    .flatMap(ir -> Mono.just(ir.isAbort()
+                        ? ToolResult.failure("操作被拒绝")
+                        : ToolResult.failure("等待审批: " + e.getQuestion()))))
             .flatMap(result -> {
-                recordHookResult(ctx, "PreToolCall", result);
-                if (result.isAbort()) {
-                    return Mono.just(ToolResult.failure(
-                        "工具调用被 Hook 阻止: " + result.getAbortReason()));
-                }
-                // 权限校验已在 ToolExecutor 中完成
-                return toolExecutor.execute(param, ctx.getTenantId());
-            })
-            .onErrorResume(ToolSuspendException.class, e -> {
-                // 工具暂停 → InterruptHook
-                InterruptEvent ie = new InterruptEvent(e.getQuestion(), toolCall.getName());
-                return hookDispatcher.dispatch(HookEventType.ON_INTERRUPT, ie, hookCtx)
-                    .flatMap(ir -> {
-                        if (ir.isAbort()) {
-                            return Mono.just(ToolResult.failure("操作被拒绝: " + ir.getAbortReason()));
-                        }
-                        return Mono.just(ToolResult.failure("等待人工审批: " + e.getQuestion()));
-                    });
-            })
-            .flatMap(toolResult -> {
-                // PostToolCall Hook
-                recordHook(ctx, "PostToolCall:" + toolCall.getName(), HookEventType.POST_TOOL_CALL);
-                HookEvent postEvent = new HookEvent(HookEventType.POST_TOOL_CALL);
-                return hookDispatcher.dispatch(HookEventType.POST_TOOL_CALL, postEvent, hookCtx)
-                    .flatMap(postResult -> {
-                        recordHookResult(ctx, "PostToolCall", postResult);
-                        return Mono.just(toolResult);
-                    });
+                record("PostToolCall:" + tc.getName(), HookEventType.POST_TOOL_CALL);
+                return hookDispatcher.dispatch(HookEventType.POST_TOOL_CALL,
+                    new HookEvent(HookEventType.POST_TOOL_CALL), hc).thenReturn(result);
             });
     }
 
     // ========================================================================
-    // 观察阶段（Observation）+ 持久化
+    // 观察阶段
     // ========================================================================
 
-    protected Mono<LoopContext> observationStep(LoopContext ctx, List<ToolResult> toolResults) {
-        List<Msg> responseMsgs = new ArrayList<>();
-        for (int i = 0; i < toolResults.size(); i++) {
-            ToolResult result = toolResults.get(i);
-            ToolUseBlock toolCall = ctx.getLastResponse().getMessage().getToolUseBlocks().get(i);
-            Msg resultMsg = Msg.builder(MsgRole.TOOL)
-                .addToolResult(toolCall.getId(),
-                    result.isSuccess() ? result.getContent()
-                        : "[错误] " + result.getErrorMessage(),
-                    !result.isSuccess())
-                .build();
-            ctx.addMessage(resultMsg);
-            responseMsgs.add(resultMsg);
+    Mono<LoopContext> observationStep(LoopContext ctx, List<ToolResult> results) {
+        for (int i = 0; i < results.size(); i++) {
+            ToolResult r = results.get(i);
+            ToolUseBlock tc = ctx.getLastResponse().getMessage().getToolUseBlocks().get(i);
+            ctx.addMessage(Msg.builder(MsgRole.TOOL)
+                .addToolResult(tc.getId(),
+                    r.isSuccess() ? r.getContent() : "[错误] " + r.getErrorMessage(),
+                    !r.isSuccess()).build());
         }
-
         ctx.setIteration(ctx.getIteration() + 1);
-
-        // 持久化当前轮次
-        if (ctx.getSessionId() != null && ctx.getLastResponse() != null) {
-            ctx.persistTurn(
-                getLastUserMessageObj(ctx),
-                ctx.getLastResponse().getMessage(),
-                cd.lan1akea.core.util.JsonUtils.toCompactJson(responseMsgs));
-        }
-
+        persistTurn(ctx);
         return Mono.just(ctx);
+    }
+
+    // ========================================================================
+    // 持久化
+    // ========================================================================
+
+    void persistTurn(LoopContext ctx) {
+        if (sessionStore == null || ctx.getSessionId() == null) return;
+        Msg userMsg = null, assistantMsg = null;
+        for (Msg m : ctx.getMessages()) {
+            if (m.getRole() == MsgRole.USER) userMsg = m;
+            if (m.getRole() == MsgRole.ASSISTANT) assistantMsg = m;
+        }
+        ChatTurn turn = new ChatTurn(IdGenerator.nextId(),
+            Long.parseLong(ctx.getSessionId()), ctx.getIteration(),
+            userMsg != null ? userMsg.getTextContent() : "",
+            assistantMsg != null ? assistantMsg.getTextContent() : null,
+            null, LocalDateTime.now());
+        sessionStore.addTurn(new SessionId(ctx.getSessionId()), turn).subscribe();
     }
 
     // ========================================================================
     // 错误处理
     // ========================================================================
 
-    /**
-     * 统一的错误处理：触发 ErrorHook，发射 AgentEvent.ERROR。
-     */
-    protected Mono<Void> handleError(LoopContext ctx, Throwable error) {
-        emitAgentEvent(ctx, AgentEventType.ERROR);
-        HookContext hookCtx = buildHookContext(ctx);
+    Mono<Void> handleError(LoopContext ctx, Throwable error) {
+        emitEvent(ctx, AgentEventType.ERROR);
         ErrorEvent ee = new ErrorEvent(error);
-        recordHook(ctx, "ErrorHook", HookEventType.ON_ERROR);
-        return hookDispatcher.dispatch(HookEventType.ON_ERROR, ee, hookCtx)
-            .flatMap(result -> {
-                recordHookResult(ctx, "ErrorHook", result);
-                if (result.isAbort()) {
-                    return Mono.error(new cd.lan1akea.core.exception.HookAbortException(
-                        "ErrorHook", result.getAbortReason()));
-                }
-                return Mono.empty();
-            });
+        return hookDispatcher.dispatch(HookEventType.ON_ERROR, ee, buildHookContext(ctx))
+            .flatMap(r -> r.isAbort()
+                ? Mono.error(new cd.lan1akea.core.exception.HookAbortException("ErrorHook", r.getAbortReason()))
+                : Mono.empty());
     }
 
     // ========================================================================
-    // 辅助方法
+    // 辅助
     // ========================================================================
 
-    protected HookContext buildHookContext(LoopContext ctx) {
-        return new HookContext(
-            ctx.getAgentName(),
-            ctx.getTenantId(),
-            ctx.getSessionId(),
-            ctx.getUserId(),
-            ctx.getIteration(),
-            new ArrayList<>(),
-            null);
+    HookContext buildHookContext(LoopContext ctx) {
+        return new HookContext(ctx.getAgentName(), ctx.getTenantId(), ctx.getSessionId(),
+            ctx.getUserId(), ctx.getIteration(), new ArrayList<>(), null);
     }
 
-    protected ChatResponse buildFinalResponse(LoopContext ctx) {
-        return ctx.getLastResponse();
-    }
-
-    protected ChatResponse buildInterruptedResponse(String interruptReason) {
+    ChatResponse buildInterrupted(String reason) {
         Msg msg = Msg.builder(MsgRole.ASSISTANT)
-            .addText("[执行已中断: " + interruptReason + "]")
-            .putMetadata(MessageMetadataKeys.INTERRUPT_ID, interruptReason)
-            .build();
+            .addText("[执行已中断: " + reason + "]")
+            .putMetadata(MessageMetadataKeys.INTERRUPT_ID, reason).build();
         return new ChatResponse(msg, new ChatUsage(0, 0), "interrupted", "");
     }
 
-    /** 发射 Agent 生命周期事件 */
-    protected void emitAgentEvent(LoopContext ctx, AgentEventType type) {
-        EventBus bus = ctx.getEventBus();
-        if (bus != null) {
-            bus.publish(new AgentEvent(type, ctx.getAgentName())).subscribe();
-        }
+    void emitEvent(LoopContext ctx, AgentEventType type) {
+        if (eventBus != null) eventBus.publish(new AgentEvent(type, ctx.getAgentName())).subscribe();
     }
 
-    /** 记录 Hook 执行 */
-    protected void recordHook(LoopContext ctx, String hookName, HookEventType eventType) {
-        HookRecorder recorder = ctx.getHookRecorder();
-        if (recorder != null) {
-            recorder.record(hookName, new HookEvent(eventType), HookResult.continue_());
-        }
-    }
-
-    protected void recordHookResult(LoopContext ctx, String hookName, HookResult result) {
-        HookRecorder recorder = ctx.getHookRecorder();
-        if (recorder != null) {
-            recorder.record(hookName, new HookEvent(HookEventType.PRE_REASONING), result);
-        }
-    }
-
-    /** 获取最后一条用户消息文本 */
-    protected String getLastUserMessage(LoopContext ctx) {
-        for (int i = ctx.getMessages().size() - 1; i >= 0; i--) {
-            Msg msg = ctx.getMessages().get(i);
-            if (msg.getRole() == MsgRole.USER) {
-                return msg.getTextContent();
-            }
-        }
-        return null;
-    }
-
-    protected Msg getLastUserMessageObj(LoopContext ctx) {
-        for (int i = ctx.getMessages().size() - 1; i >= 0; i--) {
-            Msg msg = ctx.getMessages().get(i);
-            if (msg.getRole() == MsgRole.USER) {
-                return msg;
-            }
-        }
-        return null;
+    void record(String name, HookEventType type) {
+        if (hookRecorder != null) hookRecorder.record(name, new HookEvent(type), HookResult.continue_());
     }
 }
