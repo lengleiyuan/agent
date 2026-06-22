@@ -1,0 +1,82 @@
+package cd.lan1akea.core.model;
+
+/**
+ * 流式响应块。
+ * <p>
+ * 流式调用中 LLM 逐步产出的单个文本增量或工具调用片段。
+ * </p>
+ */
+public class ChatStreamChunk {
+
+    /** 文本增量（当类型为 text 时有效） */
+    private final String delta;
+
+    /** 内容类型：text、thinking、tool_use_start、tool_use_delta、tool_use_end */
+    private final String type;
+
+    /** 关联的工具调用ID（当类型为 tool_use_* 时有效） */
+    private final String toolUseId;
+
+    /** 关联的工具名称（当类型为 tool_use_start 时有效） */
+    private final String toolName;
+
+    /** 完成原因（仅最终块有效） */
+    private final String finishReason;
+
+    /** 流式块索引 */
+    private final int index;
+
+    private ChatStreamChunk(Builder builder) {
+        this.delta = builder.delta;
+        this.type = builder.type;
+        this.toolUseId = builder.toolUseId;
+        this.toolName = builder.toolName;
+        this.finishReason = builder.finishReason;
+        this.index = builder.index;
+    }
+
+    /** @return 文本增量 */
+    public String getDelta() { return delta; }
+
+    /** @return 内容类型 */
+    public String getType() { return type; }
+
+    /** @return 工具调用ID */
+    public String getToolUseId() { return toolUseId; }
+
+    /** @return 工具名称 */
+    public String getToolName() { return toolName; }
+
+    /** @return 完成原因 */
+    public String getFinishReason() { return finishReason; }
+
+    /** @return 索引 */
+    public int getIndex() { return index; }
+
+    // 类型常量
+    public static final String TYPE_TEXT = "text";
+    public static final String TYPE_THINKING = "thinking";
+    public static final String TYPE_TOOL_USE_START = "tool_use_start";
+    public static final String TYPE_TOOL_USE_DELTA = "tool_use_delta";
+    public static final String TYPE_TOOL_USE_END = "tool_use_end";
+
+    public static Builder builder() { return new Builder(); }
+
+    public static class Builder {
+        private String delta;
+        private String type = TYPE_TEXT;
+        private String toolUseId;
+        private String toolName;
+        private String finishReason;
+        private int index;
+
+        public Builder delta(String delta) { this.delta = delta; return this; }
+        public Builder type(String type) { this.type = type; return this; }
+        public Builder toolUseId(String toolUseId) { this.toolUseId = toolUseId; return this; }
+        public Builder toolName(String toolName) { this.toolName = toolName; return this; }
+        public Builder finishReason(String finishReason) { this.finishReason = finishReason; return this; }
+        public Builder index(int index) { this.index = index; return this; }
+
+        public ChatStreamChunk build() { return new ChatStreamChunk(this); }
+    }
+}
