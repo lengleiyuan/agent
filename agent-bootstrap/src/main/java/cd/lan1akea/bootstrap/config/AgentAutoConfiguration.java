@@ -1,14 +1,9 @@
 package cd.lan1akea.bootstrap.config;
 
-import cd.lan1akea.core.agent.Agent;
 import cd.lan1akea.core.hook.HookChain;
-import cd.lan1akea.core.middleware.MiddlewareChain;
-import cd.lan1akea.core.middleware.LoggingMiddleware;
-import cd.lan1akea.core.model.ChatModel;
 import cd.lan1akea.core.model.ModelRegistry;
 import cd.lan1akea.core.tool.Tool;
 import cd.lan1akea.core.tool.ToolRegistry;
-import cd.lan1akea.harness.HarnessAgent;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -16,6 +11,9 @@ import java.util.List;
 
 /**
  * Agent 自动装配配置。
+ * <p>
+ * 注意：不再提供 MiddlewareChain（已删除，由 Hook 体系替代）。
+ * </p>
  */
 @Configuration
 public class AgentAutoConfiguration {
@@ -25,9 +23,7 @@ public class AgentAutoConfiguration {
     public ToolRegistry toolRegistry(List<Tool> tools) {
         ToolRegistry registry = new ToolRegistry();
         if (tools != null) {
-            for (Tool tool : tools) {
-                registry.register(tool);
-            }
+            for (Tool tool : tools) registry.register(tool);
         }
         return registry;
     }
@@ -36,14 +32,6 @@ public class AgentAutoConfiguration {
     @Bean
     public HookChain hookChain() {
         return new HookChain();
-    }
-
-    /** 全局中间件链（默认包含日志中间件） */
-    @Bean
-    public MiddlewareChain middlewareChain() {
-        MiddlewareChain chain = new MiddlewareChain();
-        chain.register(new LoggingMiddleware());
-        return chain;
     }
 
     /** 模型注册表 */

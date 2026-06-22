@@ -8,8 +8,6 @@ import cd.lan1akea.core.hook.HookChain;
 import cd.lan1akea.core.hook.impl.LoggingHook;
 import cd.lan1akea.core.hook.impl.AuditHook;
 import cd.lan1akea.core.hook.impl.RateLimitHook;
-import cd.lan1akea.core.middleware.MiddlewareChain;
-import cd.lan1akea.core.middleware.LoggingMiddleware;
 import cd.lan1akea.core.model.*;
 import cd.lan1akea.core.session.InMemorySessionStore;
 import cd.lan1akea.core.session.SessionStore;
@@ -92,15 +90,6 @@ public class DevAgentConfig {
         return chain;
     }
 
-    /** 中间件链 */
-    @Bean
-    @ConditionalOnMissingBean(MiddlewareChain.class)
-    public MiddlewareChain middlewareChain() {
-        MiddlewareChain chain = new MiddlewareChain();
-        chain.register(new LoggingMiddleware());
-        return chain;
-    }
-
     /** 会话存储（开发用内存） */
     @Bean
     @ConditionalOnMissingBean(SessionStore.class)
@@ -119,8 +108,8 @@ public class DevAgentConfig {
     @Bean
     @ConditionalOnMissingBean(HarnessAgent.class)
     public HarnessAgent defaultAgent(ChatModel model, ToolRegistry toolRegistry,
-                                      HookChain hookChain, MiddlewareChain middlewareChain,
-                                      SessionStore sessionStore, PermissionEngine permissionEngine) {
+                                      HookChain hookChain, SessionStore sessionStore,
+                                      PermissionEngine permissionEngine) {
         // 注册内置工具
         toolRegistry.register(new CalculatorTool());
 
@@ -130,7 +119,6 @@ public class DevAgentConfig {
             .model(model)
             .toolRegistry(toolRegistry)
             .hookChain(hookChain)
-            .middlewareChain(middlewareChain)
             .sessionStore(sessionStore)
             .executionConfig(AgentExecutionConfig.builder()
                 .maxIterations(5)

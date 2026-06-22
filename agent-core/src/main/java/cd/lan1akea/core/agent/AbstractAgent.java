@@ -12,7 +12,6 @@ import cd.lan1akea.core.hook.HookDispatcher;
 import cd.lan1akea.core.hook.recorder.HookRecorder;
 import cd.lan1akea.core.memory.Memory;
 import cd.lan1akea.core.memory.InMemoryMemory;
-import cd.lan1akea.core.middleware.MiddlewareChain;
 import cd.lan1akea.core.model.*;
 import cd.lan1akea.core.message.Msg;
 import cd.lan1akea.core.session.*;
@@ -43,7 +42,6 @@ public abstract class AbstractAgent implements Agent, ObservableAgent, Streamabl
     protected final ChatModel model;
     protected final ToolRegistry toolRegistry;
     protected final HookChain hookChain;
-    protected final MiddlewareChain middlewareChain;
     protected final EventBus eventBus;
     protected final AgentEventSource eventSource;
     protected final HookDispatcher hookDispatcher;
@@ -83,7 +81,6 @@ public abstract class AbstractAgent implements Agent, ObservableAgent, Streamabl
         this.hookRecorder = new HookRecorder();
 
         // 中间件
-        this.middlewareChain = config.getMiddlewareChain() != null ? config.getMiddlewareChain() : new MiddlewareChain();
 
         // 事件
         this.eventBus = new EventBus();
@@ -140,9 +137,7 @@ public abstract class AbstractAgent implements Agent, ObservableAgent, Streamabl
                 .maxIterations(config.getExecutionConfig().getMaxIterations())
                 .stream(false).build();
 
-            return middlewareChain.applyBefore(ctx)
-                .flatMap(reActLoop::execute)
-                .flatMap(middlewareChain::applyAfter)
+            return reActLoop.execute(ctx)
                 .doOnSuccess(r -> eventSource.emit(AgentEventType.COMPLETED, name).subscribe())
                 .doOnError(e -> eventSource.emit(AgentEventType.ERROR, name).subscribe());
         });
@@ -169,8 +164,7 @@ public abstract class AbstractAgent implements Agent, ObservableAgent, Streamabl
                 .maxIterations(config.getExecutionConfig().getMaxIterations())
                 .stream(true).build();
 
-            return middlewareChain.applyBefore(ctx)
-                .flatMapMany(reActLoop::executeStream)
+            return reActLoop.executeStream(ctx)
                 .doOnComplete(() -> eventSource.emit(AgentEventType.COMPLETED, name).subscribe())
                 .doOnError(e -> eventSource.emit(AgentEventType.ERROR, name).subscribe());
         });

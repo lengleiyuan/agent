@@ -7,8 +7,6 @@ import cd.lan1akea.core.hook.HookChain;
 import cd.lan1akea.core.hook.recorder.HookRecorder;
 import cd.lan1akea.core.hook.impl.*;
 import cd.lan1akea.core.message.*;
-import cd.lan1akea.core.middleware.MiddlewareChain;
-import cd.lan1akea.core.middleware.LoggingMiddleware;
 import cd.lan1akea.core.model.*;
 import cd.lan1akea.core.model.deepseek.DeepSeekChatModel;
 import cd.lan1akea.core.session.*;
@@ -70,9 +68,6 @@ public class AgentIntegrationTest {
         hookChain.register(loggingHook);
         hookChain.register(auditHook);
 
-        // 4. 中间件链
-        MiddlewareChain middlewareChain = new MiddlewareChain();
-        middlewareChain.register(new LoggingMiddleware());
 
         // 5. 会话存储
         SessionStore sessionStore = new InMemorySessionStore();
@@ -89,7 +84,6 @@ public class AgentIntegrationTest {
             .model(model)
             .toolRegistry(toolRegistry)
             .hookChain(hookChain)
-            .middlewareChain(middlewareChain)
             .sessionStore(sessionStore)
             .executionConfig(AgentExecutionConfig.builder()
                 .maxIterations(8)

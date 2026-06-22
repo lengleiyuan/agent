@@ -5,8 +5,6 @@ import cd.lan1akea.core.agent.config.AgentConfig;
 import cd.lan1akea.core.agent.config.AgentExecutionConfig;
 import cd.lan1akea.core.hook.Hook;
 import cd.lan1akea.core.hook.HookChain;
-import cd.lan1akea.core.middleware.Middleware;
-import cd.lan1akea.core.middleware.MiddlewareChain;
 import cd.lan1akea.core.model.ChatModel;
 import cd.lan1akea.core.session.SessionStore;
 import cd.lan1akea.core.tool.Tool;
@@ -28,7 +26,6 @@ public class HarnessAgentBuilder {
     private ChatModel model;
     private final List<Tool> tools = new ArrayList<>();
     private final List<Hook> hooks = new ArrayList<>();
-    private final List<Middleware> middlewares = new ArrayList<>();
     private SessionStore sessionStore;
     private AgentExecutionConfig executionConfig;
 
@@ -45,9 +42,6 @@ public class HarnessAgentBuilder {
     public HarnessAgentBuilder hook(Hook hook) { this.hooks.add(hook); return this; }
 
     /** 注册中间件 */
-    public HarnessAgentBuilder middleware(Middleware middleware) {
-        this.middlewares.add(middleware); return this;
-    }
 
     /** 设置会话存储 */
     public HarnessAgentBuilder sessionStore(SessionStore sessionStore) {
@@ -77,11 +71,6 @@ public class HarnessAgentBuilder {
             hookChain.register(hook);
         }
 
-        // 组装 MiddlewareChain
-        MiddlewareChain middlewareChain = new MiddlewareChain();
-        for (Middleware mw : middlewares) {
-            middlewareChain.register(mw);
-        }
 
         // 构建 AgentConfig
         AgentConfig config = AgentConfig.builder()
@@ -89,7 +78,6 @@ public class HarnessAgentBuilder {
             .model(model)
             .toolRegistry(toolRegistry)
             .hookChain(hookChain)
-            .middlewareChain(middlewareChain)
             .sessionStore(sessionStore)
             .executionConfig(executionConfig)
             .build();

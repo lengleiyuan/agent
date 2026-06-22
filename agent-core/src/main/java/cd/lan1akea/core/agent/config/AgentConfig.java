@@ -1,7 +1,6 @@
 package cd.lan1akea.core.agent.config;
 
 import cd.lan1akea.core.hook.HookChain;
-import cd.lan1akea.core.middleware.MiddlewareChain;
 import cd.lan1akea.core.model.ChatModel;
 import cd.lan1akea.core.session.SessionStore;
 import cd.lan1akea.core.tool.ToolRegistry;
@@ -18,7 +17,6 @@ public class AgentConfig {
     private final ChatModel model;
     private final ToolRegistry toolRegistry;
     private final HookChain hookChain;
-    private final MiddlewareChain middlewareChain;
     private final SessionStore sessionStore;
     private final AgentExecutionConfig executionConfig;
 
@@ -27,7 +25,6 @@ public class AgentConfig {
         this.model = builder.model;
         this.toolRegistry = builder.toolRegistry;
         this.hookChain = builder.hookChain;
-        this.middlewareChain = builder.middlewareChain;
         this.sessionStore = builder.sessionStore;
         this.executionConfig = builder.executionConfig != null
             ? builder.executionConfig : AgentExecutionConfig.defaults();
@@ -37,7 +34,6 @@ public class AgentConfig {
     public ChatModel getModel() { return model; }
     public ToolRegistry getToolRegistry() { return toolRegistry; }
     public HookChain getHookChain() { return hookChain; }
-    public MiddlewareChain getMiddlewareChain() { return middlewareChain; }
     public SessionStore getSessionStore() { return sessionStore; }
     public AgentExecutionConfig getExecutionConfig() { return executionConfig; }
 
@@ -48,7 +44,6 @@ public class AgentConfig {
         private ChatModel model;
         private ToolRegistry toolRegistry;
         private HookChain hookChain;
-        private MiddlewareChain middlewareChain;
         private SessionStore sessionStore;
         private AgentExecutionConfig executionConfig;
 
@@ -56,7 +51,6 @@ public class AgentConfig {
         public Builder model(ChatModel model) { this.model = model; return this; }
         public Builder toolRegistry(ToolRegistry toolRegistry) { this.toolRegistry = toolRegistry; return this; }
         public Builder hookChain(HookChain hookChain) { this.hookChain = hookChain; return this; }
-        public Builder middlewareChain(MiddlewareChain middlewareChain) { this.middlewareChain = middlewareChain; return this; }
         public Builder sessionStore(SessionStore sessionStore) { this.sessionStore = sessionStore; return this; }
         public Builder executionConfig(AgentExecutionConfig executionConfig) { this.executionConfig = executionConfig; return this; }
 
