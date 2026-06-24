@@ -3,17 +3,16 @@ package cd.lan1akea.core.hook.impl;
 import cd.lan1akea.core.hook.*;
 import reactor.core.publisher.Mono;
 
+import java.util.Set;
+
 /**
  * 日志 Hook。
  * <p>
  * 记录所有 Hook 事件的详细信息，用于调试和监控。
- * 订阅所有事件类型（通过动态匹配实现）。
+ * 通过 {@link #getSubscribedEventTypes()} 匹配所有事件类型。
  * </p>
  */
-public class LoggingHook implements PreReasoningHook, PostReasoningHook,
-                                     PreActingHook, PostActingHook,
-                                     PreToolCallHook, PostToolCallHook,
-                                     ErrorHook {
+public class LoggingHook implements Hook {
 
     private final String name;
     private int eventCount = 0;
@@ -30,9 +29,20 @@ public class LoggingHook implements PreReasoningHook, PostReasoningHook,
     public String getName() { return name; }
 
     @Override
-    public HookEventType getSubscribedEventType() {
-        // 由 HookChain 按接口类型匹配，此处返回最常用的类型
-        return HookEventType.PRE_REASONING;
+    public Set<HookEventType> getSubscribedEventTypes() {
+        return Set.of(
+            HookEventType.PRE_REASONING,
+            HookEventType.POST_REASONING,
+            HookEventType.PRE_ACTING,
+            HookEventType.POST_ACTING,
+            HookEventType.PRE_TOOL_CALL,
+            HookEventType.POST_TOOL_CALL,
+            HookEventType.ON_ERROR,
+            HookEventType.ON_STREAM_CHUNK,
+            HookEventType.ON_SUMMARY,
+            HookEventType.PRE_CALL,
+            HookEventType.POST_CALL
+        );
     }
 
     @Override

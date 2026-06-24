@@ -76,8 +76,8 @@ public class HookChain {
 
         Hook hook = hooks.get(index);
 
-        // 跳过不匹配的 Hook
-        if (hook.getSubscribedEventType() != eventType || !hook.isEnabled()) {
+        // 跳过不匹配的 Hook（支持多事件类型匹配）
+        if (!hook.getSubscribedEventTypes().contains(eventType) || !hook.isEnabled()) {
             return executeHooks(eventType, event, context, accumulated, index + 1);
         }
 

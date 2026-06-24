@@ -1,54 +1,73 @@
 package cd.lan1akea.harness;
 
-import cd.lan1akea.core.agent.AbstractAgent;
+import cd.lan1akea.core.agent.ReActAgent;
 import cd.lan1akea.core.agent.config.AgentConfig;
 import cd.lan1akea.core.agent.config.AgentExecutionConfig;
+import cd.lan1akea.core.exception.AgentConfigurationException;
 import cd.lan1akea.core.hook.Hook;
 import cd.lan1akea.core.hook.HookChain;
 import cd.lan1akea.core.model.ChatModel;
-import cd.lan1akea.core.session.SessionStore;
-import cd.lan1akea.core.tool.Tool;
+import cd.lan1akea.core.state.AgentStateStore;
 import cd.lan1akea.core.tool.ToolRegistry;
-import reactor.core.publisher.Mono;
+import cd.lan1akea.core.workspace.Workspace;
+import cd.lan1akea.harness.support.AnnotationToolResolver;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
  * HarnessAgent Builder。
  * <p>
  * 流式 API 构建 Agent 实例。
+ * <pre>
+ * HarnessAgent agent = HarnessAgent.builder()
+ *     .name("MyAgent")
+ *     .model(new OpenAIChatModel(apiKey, "gpt-4o"))
+ *     .tool(new CalculatorTool())
+ *     .hook(new AuditHook())
+ *     .build();
+ * </pre>
  * </p>
  */
 public class HarnessAgentBuilder {
 
     private String name;
     private ChatModel model;
-    private final List<Tool> tools = new ArrayList<>();
+    private final List<Object> toolObjects = new ArrayList<>();
     private final List<Hook> hooks = new ArrayList<>();
-    private SessionStore sessionStore;
+    private AgentStateStore stateStore;
+    private Workspace workspace;
     private AgentExecutionConfig executionConfig;
 
-    /** 设置 Agent 名称 */
     public HarnessAgentBuilder name(String name) { this.name = name; return this; }
-
-    /** 设置模型 */
     public HarnessAgentBuilder model(ChatModel model) { this.model = model; return this; }
 
-    /** 注册工具 */
-    public HarnessAgentBuilder tool(Tool tool) { this.tools.add(tool); return this; }
-
-    /** 注册 Hook */
-    public HarnessAgentBuilder hook(Hook hook) { this.hooks.add(hook); return this; }
-
-    /** 注册中间件 */
-
-    /** 设置会话存储 */
-    public HarnessAgentBuilder sessionStore(SessionStore sessionStore) {
-        this.sessionStore = sessionStore; return this;
+    public HarnessAgentBuilder tool(Object toolObj) {
+        this.toolObjects.add(toolObj);
+        return this;
     }
 
-    /** 设置执行配置 */
+    public HarnessAgentBuilder tools(Object... toolObjects) {
+        this.toolObjects.addAll(Arrays.asList(toolObjects));
+        return this;
+    }
+
+    public HarnessAgentBuilder hook(Hook hook) { this.hooks.add(hook); return this; }
+
+    public HarnessAgentBuilder hooks(Hook... hookList) {
+        this.hooks.addAll(Arrays.asList(hookList));
+        return this;
+    }
+
+    public HarnessAgentBuilder stateStore(AgentStateStore stateStore) {
+        this.stateStore = stateStore; return this;
+    }
+
+    public HarnessAgentBuilder workspace(Workspace workspace) {
+        this.workspace = workspace; return this;
+    }
+
     public HarnessAgentBuilder executionConfig(AgentExecutionConfig config) {
         this.executionConfig = config; return this;
     }
@@ -56,40 +75,32 @@ public class HarnessAgentBuilder {
     /**
      * 构建 HarnessAgent。
      *
-     * @return Mono&lt;HarnessAgent&gt;
+     * @return HarnessAgent 实例
+     * @throws AgentConfigurationException 如果缺少必要配置
      */
-    public Mono<HarnessAgent> build() {
-        // 组装 ToolRegistry
+    public HarnessAgent build() {
+        if (name == null || name.isBlank()) throw new AgentConfigurationException("Agent name 不能为空");
+        if (model == null) throw new AgentConfigurationException("ChatModel 不能为 null");
+
         ToolRegistry toolRegistry = new ToolRegistry();
-        for (Tool tool : tools) {
-            toolRegistry.register(tool);
-        }
+        toolRegistry.addResolver(new AnnotationToolResolver());
+        for (Object obj : toolObjects) toolRegistry.registerTool(obj);
 
-        // 组装 HookChain
         HookChain hookChain = new HookChain();
-        for (Hook hook : hooks) {
-            hookChain.register(hook);
-        }
+        for (Hook hook : hooks) hookChain.register(hook);
 
-
-        // 构建 AgentConfig
         AgentConfig config = AgentConfig.builder()
             .name(name)
             .model(model)
             .toolRegistry(toolRegistry)
             .hookChain(hookChain)
-            .sessionStore(sessionStore)
+            .stateStore(stateStore)
+            .workspace(workspace)
             .executionConfig(executionConfig)
             .build();
 
-        // 创建内部 Agent（匿名子类）
-        AbstractAgent agent = new AbstractAgent(config) {
-            @Override
-            protected Mono<Void> doBuild() {
-                return Mono.empty();
-            }
-        };
-
-    return agent.build().thenReturn(new HarnessAgent(agent));
+        ReActAgent agent = new ReActAgent(config);
+        agent.build().block();
+        return new HarnessAgent(agent);
     }
 }

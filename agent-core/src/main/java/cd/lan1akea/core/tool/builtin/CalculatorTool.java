@@ -37,7 +37,6 @@ public class CalculatorTool extends ToolBase {
             if (expr == null || expr.isBlank()) {
                 return ToolResult.failure("表达式不能为空");
             }
-            // 安全检查
             if (expr.contains("System") || expr.contains("Runtime")
                 || expr.contains("exec") || expr.contains("ProcessBuilder")) {
                 return ToolResult.failure("表达式包含不安全的操作");

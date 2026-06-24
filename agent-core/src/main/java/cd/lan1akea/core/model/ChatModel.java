@@ -12,7 +12,13 @@ import java.util.List;
  * 定义与 LLM 对话的标准接口，支持同步（单次）和流式两种模式。
  * </p>
  */
-public interface ChatModel extends Model {
+public interface ChatModel {
+
+    /** @return 模型提供商名称 */
+    String getProvider();
+
+    /** @return 模型名称 */
+    String getModelName();
 
     /**
      * 单次聊天调用。
@@ -41,6 +47,16 @@ public interface ChatModel extends Model {
      * @return Mono&lt;ChatResponse&gt; 聊天响应
      */
     Mono<ChatResponse> chatWithTools(List<Msg> messages, List<ToolSchema> toolSchemas, GenerateOptions options);
+
+    /**
+     * 带工具 Schema 的流式聊天调用。
+     *
+     * @param messages    消息列表
+     * @param toolSchemas 可用工具 Schema 列表
+     * @param options     生成选项
+     * @return Flux&lt;ChatStreamChunk&gt; 流式响应块流
+     */
+    Flux<ChatStreamChunk> streamWithTools(List<Msg> messages, List<ToolSchema> toolSchemas, GenerateOptions options);
 
     /**
      * 是否支持流式调用。

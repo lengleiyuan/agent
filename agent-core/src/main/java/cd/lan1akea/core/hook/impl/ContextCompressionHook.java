@@ -12,6 +12,7 @@ import reactor.core.publisher.Mono;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 上下文压缩 Hook（PreReasoningHook）。
@@ -20,7 +21,7 @@ import java.util.List;
  * 通过 Hook 机制实现，可按需注册/移除/替换。
  * </p>
  */
-public class ContextCompressionHook implements PreReasoningHook {
+public class ContextCompressionHook implements Hook {
 
     private final String name;
     private final SessionSummaryService summaryService;
@@ -44,7 +45,7 @@ public class ContextCompressionHook implements PreReasoningHook {
     public String getName() { return name; }
 
     @Override
-    public HookEventType getSubscribedEventType() { return HookEventType.PRE_REASONING; }
+    public Set<HookEventType> getSubscribedEventTypes() { return Set.of(HookEventType.PRE_REASONING); }
 
     @Override
     public int getPriority() { return 5; } // 最先执行（压缩后再做其他处理）
@@ -56,9 +57,8 @@ public class ContextCompressionHook implements PreReasoningHook {
         List<Msg> messages = re.getMessages();
         if (messages == null || messages.size() <= 4) return Mono.just(HookResult.continue_());
 
-        // 估算 Token 数（简单按字符数/2估算）
-        long estimatedTokens = messages.stream()
-            .mapToLong(m -> m.getTextContent().length()).sum() / 2;
+        // 使用 TokenEstimator 估算
+        int estimatedTokens = contextWindow.estimateTokens(messages);
         double usage = (double) estimatedTokens / contextWindow.getMaxInputTokens();
 
         if (usage < threshold) return Mono.just(HookResult.continue_());

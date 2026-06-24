@@ -2,8 +2,6 @@ package cd.lan1akea.core.tool;
 
 import cd.lan1akea.core.exception.ToolExecutionException;
 import java.util.List;
-import cd.lan1akea.core.tenant.PermissionDecision;
-import cd.lan1akea.core.tenant.PermissionEngine;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
@@ -19,21 +17,16 @@ public class ToolExecutor {
     private final ToolRegistry registry;
     private final ToolEmitter emitter;
     private final ToolValidator toolValidator;
-    private final PermissionEngine permissionEngine;
-    private final ToolExecutionContextProvider contextProvider;
 
     public ToolExecutor(ToolRegistry registry) {
-        this(registry, new DefaultToolEmitter(), new ToolValidator(), null, null);
+        this(registry, new DefaultToolEmitter(), new ToolValidator());
     }
 
     public ToolExecutor(ToolRegistry registry, ToolEmitter emitter,
-                         ToolValidator toolValidator, PermissionEngine permissionEngine,
-                         ToolExecutionContextProvider contextProvider) {
+                         ToolValidator toolValidator) {
         this.registry = registry;
         this.emitter = emitter;
         this.toolValidator = toolValidator != null ? toolValidator : new ToolValidator();
-        this.permissionEngine = permissionEngine;
-        this.contextProvider = contextProvider;
     }
 
     /**
@@ -74,30 +67,7 @@ public class ToolExecutor {
                     + String.join(", ", names)));
             }
 
-            // 2. 权限校验
-            if (permissionEngine != null && contextProvider != null) {
-                ToolExecutionContext ctx = contextProvider.getContext();
-                if (ctx != null) {
-                    cd.lan1akea.core.tenant.User user = new cd.lan1akea.core.tenant.User(
-                        new cd.lan1akea.core.tenant.UserId(
-                            ctx.getUserId() != null ? Long.parseLong(ctx.getUserId()) : 0),
-                        ctx.getTenantId() != null ? Long.parseLong(ctx.getTenantId()) : 0,
-                        "agent-user", "ACTIVE",
-                        java.util.Collections.emptyList(),
-                        java.time.LocalDateTime.now());
-                    PermissionDecision decision = permissionEngine.evaluate(
-                        user, cd.lan1akea.core.tenant.ResourceType.TOOL, "execute");
-                    if (decision.isDenied()) {
-                        return Mono.just(ToolResult.failure(
-                            "权限不足: " + decision.getReason()));
-                    }
-                    if (decision.isAsk()) {
-                        // 需要审批 → 抛出暂停异常
-                        return Mono.error(new ToolSuspendException(
-                            tool.getName(), "工具 [" + tool.getName() + "] 需要审批: " + decision.getReason()));
-                    }
-                }
-            }
+            // 2. 权限校验（通过 PermissionEngine 在 ReActLoop Hook 层完成）
 
             // 3. 参数验证
             try {

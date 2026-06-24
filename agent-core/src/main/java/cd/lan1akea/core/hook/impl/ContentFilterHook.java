@@ -5,6 +5,7 @@ import cd.lan1akea.core.message.Msg;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
+import java.util.Set;
 
 /**
  * 内容过滤 Hook。
@@ -13,7 +14,7 @@ import java.util.List;
  * 实现 PostReasoningHook，在推理完成后审查输出。
  * </p>
  */
-public class ContentFilterHook implements PostReasoningHook, InterruptHook {
+public class ContentFilterHook implements Hook {
 
     private final String name;
     private final List<String> blockedWords;
@@ -31,8 +32,8 @@ public class ContentFilterHook implements PostReasoningHook, InterruptHook {
     public String getName() { return name; }
 
     @Override
-    public HookEventType getSubscribedEventType() {
-        return HookEventType.POST_REASONING;
+    public Set<HookEventType> getSubscribedEventTypes() {
+        return Set.of(HookEventType.POST_REASONING, HookEventType.ON_INTERRUPT);
     }
 
     @Override

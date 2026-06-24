@@ -36,5 +36,11 @@ public enum HookEventType {
     ON_STREAM_CHUNK,
 
     /** 会话摘要生成时 */
-    ON_SUMMARY
+    ON_SUMMARY,
+
+    /** 单次调用开始前（最外层，早于所有其他事件） */
+    PRE_CALL,
+
+    /** 单次调用完成后（最外层，晚于所有其他事件） */
+    POST_CALL
 }

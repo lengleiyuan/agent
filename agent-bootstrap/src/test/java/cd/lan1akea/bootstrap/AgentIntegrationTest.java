@@ -1,6 +1,6 @@
 package cd.lan1akea.bootstrap;
 
-import cd.lan1akea.core.agent.AbstractAgent;
+import cd.lan1akea.core.agent.ReActAgent;
 import cd.lan1akea.core.agent.config.AgentConfig;
 import cd.lan1akea.core.agent.config.AgentExecutionConfig;
 import cd.lan1akea.core.hook.HookChain;
@@ -10,12 +10,10 @@ import cd.lan1akea.core.message.*;
 import cd.lan1akea.core.model.*;
 import cd.lan1akea.core.model.deepseek.DeepSeekChatModel;
 import cd.lan1akea.core.session.*;
-import cd.lan1akea.core.tenant.*;
 import cd.lan1akea.core.tool.*;
 import cd.lan1akea.core.tool.builtin.CalculatorTool;
 import cd.lan1akea.harness.HarnessAgent;
 import org.junit.jupiter.api.*;
-import reactor.core.publisher.Mono;
 
 import java.util.List;
 
@@ -69,13 +67,10 @@ public class AgentIntegrationTest {
         hookChain.register(auditHook);
 
 
-        // 5. 会话存储
-        SessionStore sessionStore = new InMemorySessionStore();
+        // 5. 状态存储
+        cd.lan1akea.core.state.AgentStateStore stateStore = new cd.lan1akea.core.state.InMemoryAgentStateStore();
 
-        // 6. 权限引擎（宽松模式）
-        PermissionEngine permissionEngine = new PermissionEngine(PermissionMode.PERMISSIVE, List.of());
-
-        // 7. Hook 记录器
+        // 6. Hook 记录器
         hookRecorder = new HookRecorder();
 
         // 8. 构建 Agent 配置
@@ -84,7 +79,7 @@ public class AgentIntegrationTest {
             .model(model)
             .toolRegistry(toolRegistry)
             .hookChain(hookChain)
-            .sessionStore(sessionStore)
+            .stateStore(stateStore)
             .executionConfig(AgentExecutionConfig.builder()
                 .maxIterations(8)
                 .temperature(0.7)
@@ -93,15 +88,12 @@ public class AgentIntegrationTest {
             .build();
 
         // 9. 创建 Agent + 注入子系统
-        AbstractAgent inner = new AbstractAgent(config) {
-            @Override
-            protected Mono<Void> doBuild() { return Mono.empty(); }
-        };
-        inner.setPermissionEngine(permissionEngine);
+        ReActAgent inner = new ReActAgent(config);
         inner.setHookRecorder(hookRecorder);
 
         // 10. 构建
-        agent = inner.build().thenReturn(new HarnessAgent(inner)).block();
+        inner.build().block();
+        agent = new HarnessAgent(inner);
         assertNotNull(agent, "Agent 构建失败");
 
         System.out.println("Agent [" + agent.getName() + "] 构建完成");
@@ -128,7 +120,7 @@ public class AgentIntegrationTest {
             UserMessage.of("你好，请用一句话介绍你自己")
         );
 
-        ChatResponse response = agent.chat(messages, null).block();
+        ChatResponse response = agent.chat(messages).block();
         assertNotNull(response, "响应不应为空");
         assertNotNull(response.getMessage(), "消息不应为空");
         assertFalse(response.getMessage().getTextContent().isBlank(), "回复不应为空");
@@ -157,7 +149,7 @@ public class AgentIntegrationTest {
             UserMessage.of("请帮我计算 123 * 456 + 789 的结果")
         );
 
-        ChatResponse response = agent.chat(messages, null).block();
+        ChatResponse response = agent.chat(messages).block();
         assertNotNull(response);
         String reply = response.getMessage().getTextContent();
         assertFalse(reply.isBlank());
@@ -193,13 +185,13 @@ public class AgentIntegrationTest {
             SystemMessage.of("你是一个助手，请记住我说的话。"),
             UserMessage.of("我的名字是张三")
         );
-        ChatResponse r1 = agent.chat(turn1, null).block();
+        ChatResponse r1 = agent.chat(turn1).block();
         assertNotNull(r1);
         System.out.println("轮次1: " + r1.getMessage().getTextContent().substring(0,
             Math.min(80, r1.getMessage().getTextContent().length())) + "...");
 
         // 验证会话持久化
-        Session loaded = agent.getDelegate().getSessionStore()
+        cd.lan1akea.core.session.Session loaded = agent.getDelegate().getStateStore()
             .findById(session.getId()).block();
         assertNotNull(loaded, "会话应已持久化");
         System.out.println("会话状态: " + loaded.getState() + "，轮次: " + loaded.getTurnCount());
@@ -220,7 +212,7 @@ public class AgentIntegrationTest {
         List<Msg> messages = List.of(
             UserMessage.of("1+1等于几？")
         );
-        agent.chat(messages, null).block();
+        agent.chat(messages).block();
 
         int afterHooks = loggingHook.getEventCount();
         int afterAudit = auditHook.getAuditLog().size();
@@ -246,7 +238,7 @@ public class AgentIntegrationTest {
             UserMessage.of("报时：现在几点？（用JSON回复）")
         );
 
-        ChatResponse response = agent.chat(messages, null).block();
+        ChatResponse response = agent.chat(messages).block();
         assertNotNull(response);
         String reply = response.getMessage().getTextContent();
         System.out.println("回复: " + reply.substring(0, Math.min(150, reply.length())) + "...");
@@ -266,7 +258,7 @@ public class AgentIntegrationTest {
         );
 
         StringBuilder collected = new StringBuilder();
-        agent.stream(messages, null)
+        agent.stream(messages)
             .doOnNext(chunk -> {
                 if (chunk.getDelta() != null) {
                     collected.append(chunk.getDelta());
@@ -294,7 +286,7 @@ public class AgentIntegrationTest {
             List<Msg> msgs = List.of(
                 UserMessage.of("消息" + i + ": 请回复'收到" + i + "'")
             );
-            agent.chat(msgs, null).block();
+            agent.chat(msgs).block();
         }
 
         // 验证 SessionSummaryService 存在且可调用
@@ -342,7 +334,7 @@ public class AgentIntegrationTest {
         );
 
         // 租户A 发请求（contextWrite注入tenantId）
-        ChatResponse responseA = agent.chat(messages, null)
+        ChatResponse responseA = agent.chat(messages)
             .contextWrite(ctx -> ctx.put("tenantId", "tenant_A")
                 .put("userId", "user_1"))
             .block();

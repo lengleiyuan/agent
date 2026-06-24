@@ -3,6 +3,7 @@ package cd.lan1akea.core.hook.impl;
 import cd.lan1akea.core.hook.*;
 import reactor.core.publisher.Mono;
 
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -12,7 +13,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * 限制工具调用频率，防止过度调用。
  * </p>
  */
-public class RateLimitHook implements PreToolCallHook {
+public class RateLimitHook implements Hook {
 
     private final String name;
     private final int maxCallsPerWindow;
@@ -34,8 +35,8 @@ public class RateLimitHook implements PreToolCallHook {
     public String getName() { return name; }
 
     @Override
-    public HookEventType getSubscribedEventType() {
-        return HookEventType.PRE_TOOL_CALL;
+    public Set<HookEventType> getSubscribedEventTypes() {
+        return Set.of(HookEventType.PRE_TOOL_CALL);
     }
 
     @Override

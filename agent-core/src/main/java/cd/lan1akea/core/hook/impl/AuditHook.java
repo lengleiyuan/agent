@@ -6,14 +6,16 @@ import reactor.core.publisher.Mono;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 审计 Hook。
  * <p>
  * 记录所有工具调用的审计日志，用于合规审查。
+ * 同时监听 PRE_TOOL_CALL 和 POST_TOOL_CALL。
  * </p>
  */
-public class AuditHook implements PreToolCallHook, PostToolCallHook {
+public class AuditHook implements Hook {
 
     private final String name;
     private final List<AuditEntry> auditLog = new ArrayList<>();
@@ -30,8 +32,8 @@ public class AuditHook implements PreToolCallHook, PostToolCallHook {
     public String getName() { return name; }
 
     @Override
-    public HookEventType getSubscribedEventType() {
-        return HookEventType.PRE_TOOL_CALL;
+    public Set<HookEventType> getSubscribedEventTypes() {
+        return Set.of(HookEventType.PRE_TOOL_CALL, HookEventType.POST_TOOL_CALL);
     }
 
     @Override

@@ -32,6 +32,9 @@ public enum AgentEventType {
     /** Agent 被终止 */
     ABORTED,
 
+    /** 外部中断 */
+    INTERRUPTED,
+
     /** 会话摘要生成 */
     SUMMARIZED
 }

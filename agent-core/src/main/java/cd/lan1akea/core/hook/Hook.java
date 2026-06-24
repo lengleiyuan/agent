@@ -2,6 +2,8 @@ package cd.lan1akea.core.hook;
 
 import reactor.core.publisher.Mono;
 
+import java.util.Set;
+
 /**
  * Hook 顶层接口。
  * <p>
@@ -17,9 +19,9 @@ public interface Hook {
     String getName();
 
     /**
-     * @return 监听的事件类型
+     * @return 监听的事件类型集合
      */
-    HookEventType getSubscribedEventType();
+    Set<HookEventType> getSubscribedEventTypes();
 
     /**
      * Hook 是否启用。

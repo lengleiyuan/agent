@@ -11,6 +11,7 @@ import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 记忆检索 Hook（PreReasoningHook）。
@@ -20,7 +21,7 @@ import java.util.List;
  * 通过 Hook 机制实现，可按需移除，也可替换为知识库/Skill 等其他检索方式。
  * </p>
  */
-public class MemoryEnrichmentHook implements PreReasoningHook {
+public class MemoryEnrichmentHook implements Hook {
 
     private final String name;
     private final Memory memory;
@@ -40,7 +41,7 @@ public class MemoryEnrichmentHook implements PreReasoningHook {
     public String getName() { return name; }
 
     @Override
-    public HookEventType getSubscribedEventType() { return HookEventType.PRE_REASONING; }
+    public Set<HookEventType> getSubscribedEventTypes() { return Set.of(HookEventType.PRE_REASONING); }
 
     @Override
     public int getPriority() { return 10; } // 压缩之后、其他处理之前

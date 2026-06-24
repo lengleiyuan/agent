@@ -1,5 +1,7 @@
 package cd.lan1akea.core.hook;
 
+import java.util.Set;
+
 /**
  * LLM 推理后 Hook。
  * <p>
@@ -8,7 +10,7 @@ package cd.lan1akea.core.hook;
  */
 public interface PostReasoningHook extends Hook {
     @Override
-    default HookEventType getSubscribedEventType() {
-        return HookEventType.POST_REASONING;
+    default Set<HookEventType> getSubscribedEventTypes() {
+        return Set.of(HookEventType.POST_REASONING);
     }
 }
