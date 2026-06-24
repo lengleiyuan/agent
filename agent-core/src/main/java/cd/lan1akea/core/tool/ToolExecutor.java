@@ -43,28 +43,26 @@ public class ToolExecutor {
      * @return Mono&lt;ToolResult&gt; 执行结果
      */
     public Mono<ToolResult> execute(ToolCallParam callParam) {
-        return execute(callParam, null);
+        return execute(callParam, callParam.getTenantId());
     }
 
     /**
      * 执行工具调用（租户感知）。
-     *
-     * @param callParam 调用参数
-     * @param tenantId  租户ID（null 则仅查全局工具）
-     * @return Mono&lt;ToolResult&gt; 执行结果
+     * @deprecated 使用 {@link #execute(ToolCallParam)}，上下文已内嵌在 callParam 中
      */
+    @Deprecated
     public Mono<ToolResult> execute(ToolCallParam callParam, String tenantId) {
         return Mono.defer(() -> {
-            // 1. 查找工具（租户感知）
-            Tool tool = registry.getForTenant(tenantId, callParam.getToolName());
+            // 1. 查找工具（优先用 callParam 中的上下文，fallback 到显式传参）
+            String tid = callParam.getTenantId() != null ? callParam.getTenantId() : tenantId;
+            Tool tool = registry.getForContext(
+                tid, callParam.getUserId(),
+                callParam.getSessionId(), callParam.getToolName());
             if (tool == null) {
-                List<String> names = tenantId != null
-                    ? registry.getToolsForTenant(tenantId).stream().map(Tool::getName).toList()
-                    : registry.getToolNames();
+                String ctx = tid != null ? tid : "global";
                 return Mono.just(ToolResult.failure(
                     "工具不存在: " + callParam.getToolName()
-                    + "。租户 [" + (tenantId != null ? tenantId : "global") + "] 可用工具: "
-                    + String.join(", ", names)));
+                    + "。上下文 [" + ctx + "] 中不可用"));
             }
 
             // 2. 权限校验（通过 PermissionEngine 在 ReActLoop Hook 层完成）

@@ -264,14 +264,28 @@ public class ToolRegistry {
 
     /**
      * 租户感知的工具查找（单工具）。
+     * @deprecated 使用 {@link #getForContext}
      */
+    @Deprecated
     public Tool getForTenant(String tenantId, String name) {
+        return getForContext(tenantId, null, null, name);
+    }
+
+    /**
+     * 全上下文工具查找 — 优先级 SESSION > USER > TENANT > GLOBAL。
+     */
+    public Tool getForContext(String tenantId, String userId, String sessionId, String name) {
+        if (sessionId != null) {
+            Map<String, Tool> st = sessionTools.get(sessionId);
+            if (st != null) { Tool t = st.get(name); if (t != null) return t; }
+        }
+        if (tenantId != null && userId != null) {
+            Map<String, Tool> ut = userTools.get(userKey(tenantId, userId));
+            if (ut != null) { Tool t = ut.get(name); if (t != null) return t; }
+        }
         if (tenantId != null) {
             Map<String, Tool> tt = tenantTools.get(tenantId);
-            if (tt != null) {
-                Tool tool = tt.get(name);
-                if (tool != null) return tool;
-            }
+            if (tt != null) { Tool t = tt.get(name); if (t != null) return t; }
         }
         return globalTools.get(name);
     }

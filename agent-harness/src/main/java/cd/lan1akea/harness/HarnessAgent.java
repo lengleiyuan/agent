@@ -12,6 +12,7 @@ import cd.lan1akea.core.model.ChatStreamChunk;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -33,11 +34,13 @@ import java.util.List;
 public class HarnessAgent implements ObservableAgent, StreamableAgent, CallableAgent {
 
     private final ReActAgent delegate;
+    private final List<AutoCloseable> closeables = new ArrayList<>();
 
     public HarnessAgent(ReActAgent delegate) {
         this.delegate = delegate;
     }
 
+    void addCloseable(AutoCloseable c) { closeables.add(c); }
 
     public static HarnessAgentBuilder builder() {
         return new HarnessAgentBuilder();
@@ -114,7 +117,10 @@ public class HarnessAgent implements ObservableAgent, StreamableAgent, CallableA
     // Harness
     // ========================================================================
 
-    public Mono<Void> shutdown() { return delegate.shutdown(); }
+    public Mono<Void> shutdown() {
+        closeables.forEach(c -> { try { c.close(); } catch (Exception ignored) {} });
+        return delegate.shutdown();
+    }
 
     public ReActAgent getDelegate() { return delegate; }
 }

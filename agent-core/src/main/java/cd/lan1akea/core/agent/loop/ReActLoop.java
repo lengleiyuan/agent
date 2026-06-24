@@ -234,7 +234,7 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
         return hookDispatcher.dispatch(HookEventType.PRE_TOOL_CALL, preEvent, hc)
             .flatMap(r -> r.isAbort()
                 ? Mono.just(ToolResult.failure("工具调用被阻止: " + r.getAbortReason()))
-                : toolExecutor.execute(param, ctx.getTenantId()))
+                : toolExecutor.execute(param))
             .onErrorResume(ToolSuspendException.class, e ->
                 hookDispatcher.dispatch(HookEventType.ON_INTERRUPT,
                     new InterruptEvent(e.getQuestion(), tc.getName()), hc)

@@ -5,6 +5,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -182,5 +184,74 @@ class HookImplTest {
         cd.lan1akea.core.memory.InMemoryMemory memory = new cd.lan1akea.core.memory.InMemoryMemory();
         MemoryEnrichmentHook hook = new MemoryEnrichmentHook(memory);
         assertEquals("MemoryEnrichment", hook.getName());
+    }
+
+    // ========================================================================
+    // ToolAccessHook
+    // ========================================================================
+
+    @Test
+    void testToolAccessHookAllow() {
+        cd.lan1akea.core.tool.ToolAccessPolicy policy = new cd.lan1akea.core.tool.ToolAccessPolicy();
+        policy.allow("t1", Set.of("calc", "search"));
+        ToolAccessHook hook = new ToolAccessHook(policy);
+
+        // calc 在 allowlist 中
+        cd.lan1akea.core.tool.ToolCallParam param =
+            new cd.lan1akea.core.tool.ToolCallParam("c1", "calc", Map.of());
+        ToolCallEvent event = new ToolCallEvent(HookEventType.PRE_TOOL_CALL, param);
+        HookResult r = hook.onEvent(event,
+            new HookContext("a", "t1", null, null, 0, null, null)).block();
+
+        assertTrue(r.isContinue());
+    }
+
+    @Test
+    void testToolAccessHookDeny() {
+        cd.lan1akea.core.tool.ToolAccessPolicy policy = new cd.lan1akea.core.tool.ToolAccessPolicy();
+        policy.allow("t1", Set.of("calc"));
+        ToolAccessHook hook = new ToolAccessHook(policy);
+
+        // weather 不在 allowlist 中
+        cd.lan1akea.core.tool.ToolCallParam param =
+            new cd.lan1akea.core.tool.ToolCallParam("c1", "weather", Map.of());
+        ToolCallEvent event = new ToolCallEvent(HookEventType.PRE_TOOL_CALL, param);
+        HookResult r = hook.onEvent(event,
+            new HookContext("a", "t1", null, null, 0, null, null)).block();
+
+        assertTrue(r.isAbort());
+        assertTrue(r.getAbortReason().contains("weather"));
+    }
+
+    @Test
+    void testToolAccessHookBlocklist() {
+        cd.lan1akea.core.tool.ToolAccessPolicy policy = new cd.lan1akea.core.tool.ToolAccessPolicy();
+        policy.block("t1", Set.of("dangerous"));
+        ToolAccessHook hook = new ToolAccessHook(policy);
+
+        // safe_tool 不在 blocklist
+        ToolCallEvent event1 = new ToolCallEvent(HookEventType.PRE_TOOL_CALL,
+            new cd.lan1akea.core.tool.ToolCallParam("c1", "safe_tool", Map.of()));
+        assertTrue(hook.onEvent(event1,
+            new HookContext("a", "t1", null, null, 0, null, null)).block().isContinue());
+
+        // dangerous 在 blocklist
+        ToolCallEvent event2 = new ToolCallEvent(HookEventType.PRE_TOOL_CALL,
+            new cd.lan1akea.core.tool.ToolCallParam("c2", "dangerous", Map.of()));
+        assertTrue(hook.onEvent(event2,
+            new HookContext("a", "t1", null, null, 0, null, null)).block().isAbort());
+    }
+
+    @Test
+    void testToolAccessHookDefaultAllow() {
+        cd.lan1akea.core.tool.ToolAccessPolicy policy = new cd.lan1akea.core.tool.ToolAccessPolicy();
+        ToolAccessHook hook = new ToolAccessHook(policy);
+
+        ToolCallEvent event = new ToolCallEvent(HookEventType.PRE_TOOL_CALL,
+            new cd.lan1akea.core.tool.ToolCallParam("c1", "any_tool", Map.of()));
+        HookResult r = hook.onEvent(event,
+            new HookContext("a", "t1", null, null, 0, null, null)).block();
+
+        assertTrue(r.isContinue());
     }
 }

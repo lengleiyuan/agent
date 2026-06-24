@@ -304,6 +304,54 @@ class ToolRegistryTest {
     }
 
     // ========================================================================
+    // getForContext 全上下文查找
+    // ========================================================================
+
+    @Test
+    void testGetForContextSessionFirst() {
+        registry.register(new StubTool("dup", "global_version"));
+        registry.registerForTenant("t1", new StubTool("dup", "tenant_version"));
+        registry.registerForUser("t1", "u1", new StubTool("dup", "user_version"));
+        registry.registerForSession("s1", new StubTool("dup", "session_version"));
+
+        // SESSION 优先
+        Tool t = registry.getForContext("t1", "u1", "s1", "dup");
+        assertNotNull(t);
+        assertEquals("session_version", t.getDescription());
+    }
+
+    @Test
+    void testGetForContextUserOverTenant() {
+        registry.registerForTenant("t1", new StubTool("tool", "tenant"));
+        registry.registerForUser("t1", "u1", new StubTool("tool", "user"));
+
+        Tool t = registry.getForContext("t1", "u1", null, "tool");
+        assertEquals("user", t.getDescription());
+    }
+
+    @Test
+    void testGetForContextTenantFallback() {
+        registry.register(new StubTool("tool", "global"));
+        registry.registerForTenant("t1", new StubTool("tool", "tenant"));
+
+        Tool t = registry.getForContext("t1", null, null, "tool");
+        assertEquals("tenant", t.getDescription());
+    }
+
+    @Test
+    void testGetForContextGlobalFallback() {
+        registry.register(new StubTool("tool", "global"));
+
+        Tool t = registry.getForContext(null, null, null, "tool");
+        assertEquals("global", t.getDescription());
+    }
+
+    @Test
+    void testGetForContextNotFound() {
+        assertNull(registry.getForContext("t1", "u1", "s1", "nonexistent"));
+    }
+
+    // ========================================================================
     // Stub
     // ========================================================================
 

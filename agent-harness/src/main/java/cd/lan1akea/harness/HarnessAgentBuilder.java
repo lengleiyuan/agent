@@ -9,6 +9,9 @@ import cd.lan1akea.core.hook.HookChain;
 import cd.lan1akea.core.model.ChatModel;
 import cd.lan1akea.core.state.AgentStateStore;
 import cd.lan1akea.core.tool.ToolRegistry;
+import cd.lan1akea.core.tool.mcp.HttpSseTransport;
+import cd.lan1akea.core.tool.mcp.McpClient;
+import cd.lan1akea.core.tool.mcp.McpToolAdapter;
 import cd.lan1akea.core.workspace.Workspace;
 import cd.lan1akea.harness.support.AnnotationToolResolver;
 
@@ -39,6 +42,7 @@ public class HarnessAgentBuilder {
     private AgentStateStore stateStore;
     private Workspace workspace;
     private AgentExecutionConfig executionConfig;
+    private final List<McpServerConfig> mcpServers = new ArrayList<>();
 
     public HarnessAgentBuilder name(String name) { this.name = name; return this; }
     public HarnessAgentBuilder model(ChatModel model) { this.model = model; return this; }
@@ -73,6 +77,22 @@ public class HarnessAgentBuilder {
     }
 
     /**
+     * 注册 MCP Server，自动发现并注册其所有工具。
+     * <pre>
+     * builder.mcpServer("https://mcp.example.com", "sk-xxx");
+     * builder.mcpServer("https://mcp2.example.com");  // 无认证
+     * </pre>
+     */
+    public HarnessAgentBuilder mcpServer(String endpoint, String apiKey) {
+        this.mcpServers.add(new McpServerConfig(endpoint, apiKey));
+        return this;
+    }
+
+    public HarnessAgentBuilder mcpServer(String endpoint) {
+        return mcpServer(endpoint, null);
+    }
+
+    /**
      * 构建 HarnessAgent。
      *
      * @return HarnessAgent 实例
@@ -85,6 +105,17 @@ public class HarnessAgentBuilder {
         ToolRegistry toolRegistry = new ToolRegistry();
         toolRegistry.addResolver(new AnnotationToolResolver());
         for (Object obj : toolObjects) toolRegistry.registerTool(obj);
+
+        // MCP Server 连接 — 发现工具并注册
+        List<AutoCloseable> mcpClients = new ArrayList<>();
+        for (McpServerConfig mcpCfg : mcpServers) {
+            McpClient mcpClient = new McpClient(
+                new HttpSseTransport(mcpCfg.endpoint, mcpCfg.apiKey));
+            mcpClient.connect().block();
+            mcpClients.add(mcpClient);
+            mcpClient.listTools().block().forEach(info ->
+                toolRegistry.register(new McpToolAdapter(mcpClient, info)));
+        }
 
         HookChain hookChain = new HookChain();
         for (Hook hook : hooks) hookChain.register(hook);
@@ -101,6 +132,14 @@ public class HarnessAgentBuilder {
 
         ReActAgent agent = new ReActAgent(config);
         agent.build().block();
-        return new HarnessAgent(agent);
+        HarnessAgent harness = new HarnessAgent(agent);
+        mcpClients.forEach(harness::addCloseable);
+        return harness;
     }
+
+    // ========================================================================
+    // inner types
+    // ========================================================================
+
+    private record McpServerConfig(String endpoint, String apiKey) {}
 }
