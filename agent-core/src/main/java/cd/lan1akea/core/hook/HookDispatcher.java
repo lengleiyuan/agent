@@ -32,13 +32,8 @@ public class HookDispatcher {
             return Mono.just(HookResult.continue_());
         }
 
-        // 注入 RuntimeContext 到 Aware Hook
-        for (Hook hook : hookChain.getHooks()) {
-            if (hook instanceof RuntimeContextAware) {
-                ((RuntimeContextAware) hook).setRuntimeContext(context);
-            }
-        }
-
+        // HookContext 已通过 onEvent(HookEvent, HookContext) 参数传入每个 Hook，
+        // 无需额外的 setter 注入——那会在线程间引入竞态条件。
         return hookChain.fire(eventType, event, context)
             .doOnNext(result -> {
                 if (recorder != null) {
