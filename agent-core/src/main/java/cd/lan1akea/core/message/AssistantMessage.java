@@ -6,12 +6,16 @@ import java.util.Map;
 
 /**
  * 助手（AI）消息。
- * <p>
  * 角色固定为 ASSISTANT。可以包含文本回复、工具调用、思考过程等内容块。
- * </p>
  */
 public class AssistantMessage extends Msg {
 
+    /**
+     * 创建带有指定内容块和元数据的助手消息。
+     *
+     * @param contentBlocks 内容块列表
+     * @param metadata      元数据映射
+     */
     public AssistantMessage(List<ContentBlock> contentBlocks, Map<String, Object> metadata) {
         super(MsgRole.ASSISTANT, contentBlocks, metadata);
     }

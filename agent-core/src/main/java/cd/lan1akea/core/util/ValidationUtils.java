@@ -5,15 +5,15 @@ import java.util.Objects;
 
 /**
  * 参数校验工具类。
- * <p>
  * 在框架内部使用，避免在核心层引入 Spring Validation。
  * 校验失败抛出 IllegalArgumentException。
- * </p>
  */
 public final class ValidationUtils {
 
+    /**
+     * 私有构造函数，防止实例化。
+     */
     private ValidationUtils() {
-        // 工具类，禁止实例化
     }
 
     /**

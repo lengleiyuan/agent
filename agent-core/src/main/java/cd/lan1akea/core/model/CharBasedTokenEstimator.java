@@ -9,8 +9,16 @@ import java.util.List;
  */
 class CharBasedTokenEstimator implements TokenEstimator {
 
+    /**
+     * 每 Token 字符数
+     */
     private final double charsPerToken;
 
+    /**
+     * 创建字符数比率估算器。
+     *
+     * @param charsPerToken 字符 Token 比率
+     */
     CharBasedTokenEstimator(double charsPerToken) {
         this.charsPerToken = charsPerToken;
     }

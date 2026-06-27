@@ -6,12 +6,16 @@ import java.util.Map;
 
 /**
  * 用户消息。
- * <p>
  * 角色固定为 USER。可以包含文本、图片等多种内容块。
- * </p>
  */
 public class UserMessage extends Msg {
 
+    /**
+     * 创建带有指定内容块和元数据的用户消息。
+     *
+     * @param contentBlocks 内容块列表
+     * @param metadata      元数据映射
+     */
     public UserMessage(List<ContentBlock> contentBlocks, Map<String, Object> metadata) {
         super(MsgRole.USER, contentBlocks, metadata);
     }

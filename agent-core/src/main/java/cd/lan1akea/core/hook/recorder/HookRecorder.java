@@ -9,17 +9,21 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Hook 记录器。
- * <p>
+ *
  * 记录所有 Hook 执行的历史，用于审计、调试回放。
- * </p>
  */
 public class HookRecorder {
 
-    /** 记录条目列表 */
+    /**
+     * 记录条目列表
+     */
     private final List<RecordEntry> entries = new CopyOnWriteArrayList<>();
 
-    /** 是否启用记录 */
+    /**
+     * 是否启用记录
+     */
     private volatile boolean enabled = true;
+
 
     /**
      * 记录一次 Hook 执行。
@@ -38,31 +42,54 @@ public class HookRecorder {
         ));
     }
 
-    /** @return 所有记录（不可变） */
+    /**
+     * @return 所有记录（不可变）
+     */
     public List<RecordEntry> getEntries() {
         return List.copyOf(entries);
     }
 
-    /** 清空记录 */
+    /**
+     * 清空所有记录。
+     */
     public void clear() {
         entries.clear();
     }
 
-    /** 启用/禁用 */
+    /**
+     * 启用或禁用记录。
+     */
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
 
-    /** @return 记录数 */
+    /**
+     * @return 当前记录数
+     */
     public int size() { return entries.size(); }
 
     /**
      * 单条记录。
      */
     public static class RecordEntry {
+        /**
+         * 记录时间戳
+         */
         private final long timestamp;
+        /**
+         * Hook 名称
+         */
         private final String hookName;
+        /**
+         * 事件类型
+         */
         private final String eventType;
+        /**
+         * 结果类型
+         */
         private final String resultType;
 
+        /**
+         * 创建记录条目。
+         */
         RecordEntry(long timestamp, String hookName, String eventType, String resultType) {
             this.timestamp = timestamp;
             this.hookName = hookName;
@@ -70,11 +97,26 @@ public class HookRecorder {
             this.resultType = resultType;
         }
 
+        /**
+         * @return 时间戳
+         */
         public long getTimestamp() { return timestamp; }
+        /**
+         * @return Hook 名称
+         */
         public String getHookName() { return hookName; }
+        /**
+         * @return 事件类型
+         */
         public String getEventType() { return eventType; }
+        /**
+         * @return 结果类型
+         */
         public String getResultType() { return resultType; }
 
+        /**
+         * @return 日志格式的文本
+         */
         @Override
         public String toString() {
             return String.format("[%d] %s | %s → %s", timestamp, hookName, eventType, resultType);

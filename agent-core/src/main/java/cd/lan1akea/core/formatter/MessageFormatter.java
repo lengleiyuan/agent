@@ -7,9 +7,7 @@ import java.util.Map;
 
 /**
  * 消息格式化接口。
- * <p>
  * 将内部 Msg 列表转换为各 LLM 服务商要求的 JSON 格式。
- * </p>
  */
 public interface MessageFormatter {
 

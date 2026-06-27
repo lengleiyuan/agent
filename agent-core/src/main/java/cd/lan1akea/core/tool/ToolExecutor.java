@@ -8,20 +8,39 @@ import java.time.Duration;
 
 /**
  * 工具执行器。
- * <p>
- * 完整的工具执行流程：查找 → 权限校验 → 参数验证 → 审批检查 → 执行 → 超时控制。
- * </p>
+ * 完整的工具执行流程：查找 -> 权限校验 -> 参数验证 -> 审批检查 -> 执行 -> 超时控制。
  */
 public class ToolExecutor {
 
+    /**
+     * 工具注册表，用于查找工具
+     */
     private final ToolRegistry registry;
+    /**
+     * 工具事件发射器
+     */
     private final ToolEmitter emitter;
+    /**
+     * 工具参数校验器
+     */
     private final ToolValidator toolValidator;
 
+    /**
+     * 使用默认值创建工具执行器。
+     *
+     * @param registry 工具注册表
+     */
     public ToolExecutor(ToolRegistry registry) {
         this(registry, new DefaultToolEmitter(), new ToolValidator());
     }
 
+    /**
+     * 使用自定义发射器和校验器创建工具执行器。
+     *
+     * @param registry      工具注册表
+     * @param emitter       工具事件发射器
+     * @param toolValidator 工具校验器
+     */
     public ToolExecutor(ToolRegistry registry, ToolEmitter emitter,
                          ToolValidator toolValidator) {
         this.registry = registry;
@@ -31,27 +50,25 @@ public class ToolExecutor {
 
     /**
      * 执行工具调用，完整的执行链：
-     * <ol>
-     * <li>查找工具（ToolRegistry）</li>
-     * <li>权限校验（PermissionEngine）</li>
-     * <li>参数验证（ToolValidator）</li>
-     * <li>审批检查（requiresApproval → ToolSuspendException）</li>
-     * <li>执行工具（带超时控制）</li>
-     * </ol>
+     * 1. 查找工具（ToolRegistry）
+     * 2. 权限校验（PermissionEngine）
+     * 3. 参数验证（ToolValidator）
+     * 4. 审批检查（requiresApproval -> ToolSuspendException）
+     * 5. 执行工具（带超时控制）
      *
      * @param callParam 调用参数
-     * @return Mono&lt;ToolResult&gt; 执行结果
+     * @return Mono<ToolResult> 执行结果
      */
-    public Mono<ToolResult> execute(ToolCallParam callParam) {
+    public Mono<ToolResult> execute(ToolCallContext callParam) {
         return execute(callParam, callParam.getTenantId());
     }
 
     /**
      * 执行工具调用（租户感知）。
-     * @deprecated 使用 {@link #execute(ToolCallParam)}，上下文已内嵌在 callParam 中
+     * @deprecated 使用 execute(ToolCallContext)，上下文已内嵌在 callParam 中
      */
     @Deprecated
-    public Mono<ToolResult> execute(ToolCallParam callParam, String tenantId) {
+    public Mono<ToolResult> execute(ToolCallContext callParam, String tenantId) {
         return Mono.defer(() -> {
             // 1. 查找工具（优先用 callParam 中的上下文，fallback 到显式传参）
             String tid = callParam.getTenantId() != null ? callParam.getTenantId() : tenantId;
@@ -107,6 +124,10 @@ public class ToolExecutor {
         });
     }
 
-    /** @return 工具注册表 */
+    /**
+     * 返回工具注册表。
+     *
+     * @return 工具注册表
+     */
     public ToolRegistry getRegistry() { return registry; }
 }

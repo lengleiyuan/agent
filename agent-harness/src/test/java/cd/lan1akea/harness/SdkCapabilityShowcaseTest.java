@@ -1,4 +1,5 @@
 package cd.lan1akea.harness;
+import java.util.List;
 import java.util.Set;
 
 import cd.lan1akea.core.agent.ReActAgent;
@@ -18,7 +19,7 @@ import cd.lan1akea.core.tool.*;
 import cd.lan1akea.core.tool.builtin.CalculatorTool;
 import cd.lan1akea.harness.annotation.ToolFunction;
 import cd.lan1akea.harness.annotation.ToolParam;
-import cd.lan1akea.harness.support.AnnotationToolResolver;
+import cd.lan1akea.harness.support.AnnotationToolAdapter;
 import org.junit.jupiter.api.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -75,7 +76,7 @@ class SdkCapabilityShowcaseTest {
             }
 
             @Override
-            public Mono<ToolResult> execute(ToolCallParam params) {
+            public Mono<ToolResult> execute(ToolCallContext params) {
                 String city = params.getString("city");
                 return Mono.just(ToolResult.success(city + ": 晴, 22°C"));
             }
@@ -87,7 +88,7 @@ class SdkCapabilityShowcaseTest {
 
         // 执行工具
         ToolResult result = weatherTool.execute(
-            new ToolCallParam("c1", "get_weather", "{\"city\": \"北京\"}")).block();
+            ToolCallContext.builder().callId("c1").toolName("get_weather").argumentsJson("{\"city\": \"北京\"}").build()).block();
         assertTrue(result.isSuccess());
         assertTrue(result.getContent().contains("北京"));
     }
@@ -112,7 +113,7 @@ class SdkCapabilityShowcaseTest {
 
         // 执行
         ToolResult result = tool.execute(
-            new ToolCallParam("c1", "get_weather_v2", "{\"city\": \"上海\", \"unit\": \"fahrenheit\"}")).block();
+            ToolCallContext.builder().callId("c1").toolName("get_weather_v2").argumentsJson("{\"city\": \"上海\", \"unit\": \"fahrenheit\"}").build()).block();
         assertTrue(result.isSuccess());
         assertTrue(result.getContent().contains("上海") && result.getContent().contains("F"));
     }
@@ -128,7 +129,7 @@ class SdkCapabilityShowcaseTest {
         @Override public String getDescription() { return "查询天气（ToolBase方式）"; }
 
         @Override
-        public Mono<ToolResult> execute(ToolCallParam params) {
+        public Mono<ToolResult> execute(ToolCallContext params) {
             String city = params.getString("city");
             String unit = params.getString("unit");
             if (unit == null) unit = "celsius";
@@ -146,16 +147,16 @@ class SdkCapabilityShowcaseTest {
         // SDK 自动取第一个 public 方法作为工具执行体
         SearchTool pojo = new SearchTool();
 
-        AnnotationToolResolver resolver = new AnnotationToolResolver();
-        assertTrue(resolver.canResolve(pojo));
+        AnnotationToolAdapter adapter = new AnnotationToolAdapter();
+        assertTrue(adapter.canAdapt(pojo));
 
-        Tool tool = resolver.resolve(pojo);
+        Tool tool = adapter.adaption(pojo);
         assertEquals("search_docs", tool.getName());
         assertEquals("全文搜索文档", tool.getDescription());
         assertTrue(tool.getParameters().getParametersSchema().toString().contains("keyword"));
 
         ToolResult result = tool.execute(
-            new ToolCallParam("c1", "search_docs", "{\"keyword\": \"Java反射\"}")).block();
+            ToolCallContext.builder().callId("c1").toolName("search_docs").argumentsJson("{\"keyword\": \"Java反射\"}").build()).block();
         assertTrue(result.getContent().contains("Java反射"));
     }
 
@@ -175,18 +176,19 @@ class SdkCapabilityShowcaseTest {
     @DisplayName("方式4：业务方用 @ToolFunction 标注方法级别定义工具")
     void toolDefinition_annotatedMethod() {
         // 一个类里可以有多个 @ToolFunction 方法 → 每个方法解析为一个 Tool
-        // 注：当前 AnnotationToolResolver 解析第一个找到的 @ToolFunction 方法
+        // 注：当前 AnnotationToolAdapter 解析第一个找到的 @ToolFunction 方法
         TranslateUtil util = new TranslateUtil();
 
-        AnnotationToolResolver resolver = new AnnotationToolResolver();
-        assertTrue(resolver.canResolve(util));
+        AnnotationToolAdapter adapter = new AnnotationToolAdapter();
+        assertTrue(adapter.canAdapt(util));
 
-        Tool tool = resolver.resolve(util);
+        Tool tool = adapter.adaption(util);
         assertEquals("translate_text", tool.getName());
 
         ToolResult result = tool.execute(
-            new ToolCallParam("c1", "translate_text",
-                "{\"text\": \"Hello World\", \"source\": \"en\", \"target\": \"zh\"}")).block();
+            ToolCallContext.builder().callId("c1").toolName("translate_text")
+                .argumentsJson("{\"text\": \"Hello World\", \"source\": \"en\", \"target\": \"zh\"}")
+                .build()).block();
         assertTrue(result.getContent().contains("Hello World"));
     }
 
@@ -201,51 +203,51 @@ class SdkCapabilityShowcaseTest {
     }
 
     // ========================================================================
-    // 二、ToolResolver SPI —— 核心层的转换契约
+    // 二、ToolAdapter SPI —— 核心层的转换契约
     // ========================================================================
 
     @Test
     @Order(5)
-    @DisplayName("ToolResolver: canResolve 识别 @ToolFunction 注解对象")
-    void resolver_canResolveDetectsAnnotation() {
-        AnnotationToolResolver resolver = new AnnotationToolResolver();
+    @DisplayName("ToolAdapter: canAdapt 识别 @ToolFunction 注解对象")
+    void resolver_canAdaptDetectsAnnotation() {
+        AnnotationToolAdapter adapter = new AnnotationToolAdapter();
 
         // 有 @ToolFunction 注解 → true
-        assertTrue(resolver.canResolve(new SearchTool()));
-        assertTrue(resolver.canResolve(new TranslateUtil()));
+        assertTrue(adapter.canAdapt(new SearchTool()));
+        assertTrue(adapter.canAdapt(new TranslateUtil()));
 
         // 普通 POJO → false
-        assertFalse(resolver.canResolve(new Object()));
-        assertFalse(resolver.canResolve("a string"));
+        assertFalse(adapter.canAdapt(new Object()));
+        assertFalse(adapter.canAdapt("a string"));
 
         // CalculatorTool 实现了 Tool 接口但没有 @ToolFunction → false
         // （它应该走 instanceof Tool 分支，不走 resolver）
-        assertFalse(resolver.canResolve(new CalculatorTool()));
+        assertFalse(adapter.canAdapt(new CalculatorTool()));
     }
 
     @Test
     @Order(6)
-    @DisplayName("ToolResolver: resolve 将注解 POJO 反射转换为 Tool")
+    @DisplayName("ToolAdapter: resolve 将注解 POJO 反射转换为 Tool")
     void resolver_resolveConvertsToTool() {
-        AnnotationToolResolver resolver = new AnnotationToolResolver();
+        AnnotationToolAdapter adapter = new AnnotationToolAdapter();
 
         // 类级 @ToolFunction：取第一个 public 方法
-        Tool tool1 = resolver.resolve(new SearchTool());
+        Tool tool1 = adapter.adaption(new SearchTool());
         assertEquals(SearchTool.class.getSimpleName(), "SearchTool");
         assertTrue(tool1 instanceof Tool);
         assertEquals("search_docs", tool1.getName());
 
         // 方法级 @ToolFunction：取标注了 @ToolFunction 的方法
-        Tool tool2 = resolver.resolve(new TranslateUtil());
+        Tool tool2 = adapter.adaption(new TranslateUtil());
         assertEquals("translate_text", tool2.getName());
     }
 
     @Test
     @Order(7)
-    @DisplayName("ToolResolver: 参数元数据从 @ToolParam 注解读取并生成 JSON Schema")
+    @DisplayName("ToolAdapter: 参数元数据从 @ToolParam 注解读取并生成 JSON Schema")
     void resolver_extractsParamMetadataToSchema() {
-        AnnotationToolResolver resolver = new AnnotationToolResolver();
-        Tool tool = resolver.resolve(new SearchTool());
+        AnnotationToolAdapter adapter = new AnnotationToolAdapter();
+        Tool tool = adapter.adaption(new SearchTool());
         ToolSchema schema = tool.getParameters();
 
         Map<String, Object> raw = schema.getParametersSchema();
@@ -281,10 +283,11 @@ class SdkCapabilityShowcaseTest {
     @DisplayName("ToolRegistry: registerTool(Tool实例) 直接注册")
     void registry_registerToolWithToolInstance() {
         ToolRegistry registry = new ToolRegistry();
-        registry.addResolver(new AnnotationToolResolver());
+        registry.addAdapter(new AnnotationToolAdapter());
 
-        Tool registered = registry.registerTool(new ToolBaseWeather());
-        assertEquals("get_weather_v2", registered.getName());
+        List<Tool> registered = registry.registerTool(new ToolBaseWeather());
+        assertEquals(1, registered.size());
+        assertEquals("get_weather_v2", registered.get(0).getName());
         assertTrue(registry.contains("get_weather_v2"));
         assertEquals(1, registry.size());
     }
@@ -294,11 +297,12 @@ class SdkCapabilityShowcaseTest {
     @DisplayName("ToolRegistry: registerTool(注解POJO) 走 Resolver convert 后注册")
     void registry_registerToolWithAnnotatedPojo() {
         ToolRegistry registry = new ToolRegistry();
-        registry.addResolver(new AnnotationToolResolver());
+        registry.addAdapter(new AnnotationToolAdapter());
 
         // 传入的只是一个普通 POJO，SDK 内部走 Resolver → 反射 → 注册
-        Tool registered = registry.registerTool(new SearchTool());
-        assertEquals("search_docs", registered.getName());
+        List<Tool> registered = registry.registerTool(new SearchTool());
+        assertEquals(1, registered.size());
+        assertEquals("search_docs", registered.get(0).getName());
         assertTrue(registry.contains("search_docs"));
     }
 
@@ -307,7 +311,7 @@ class SdkCapabilityShowcaseTest {
     @DisplayName("ToolRegistry: registerTool(无法识别的对象) 抛异常")
     void registry_registerToolRejectsUnknown() {
         ToolRegistry registry = new ToolRegistry();
-        registry.addResolver(new AnnotationToolResolver());
+        registry.addAdapter(new AnnotationToolAdapter());
 
         assertThrows(IllegalArgumentException.class,
             () -> registry.registerTool(new Object()));
@@ -320,7 +324,7 @@ class SdkCapabilityShowcaseTest {
     @DisplayName("ToolRegistry: registerToolForTenant 租户隔离注册")
     void registry_registerToolForTenant() {
         ToolRegistry registry = new ToolRegistry();
-        registry.addResolver(new AnnotationToolResolver());
+        registry.addAdapter(new AnnotationToolAdapter());
 
         // 租户A 注册专属工具
         registry.registerToolForTenant("tenant_a", new SearchTool());
@@ -373,7 +377,7 @@ class SdkCapabilityShowcaseTest {
     @DisplayName("ToolRegistry: 无 Resolver 时注解 POJO 注册失败")
     void registry_missingResolverFailsGracefully() {
         ToolRegistry registry = new ToolRegistry();
-        // 没有 addResolver → 无法解析注解 POJO
+        // 没有 addAdapter → 无法解析注解 POJO
 
         // Tool 实例仍然能正常注册
         registry.registerTool(new CalculatorTool());
@@ -631,7 +635,7 @@ class SdkCapabilityShowcaseTest {
         assertTrue(agent.getDelegate().isBuilt());
         assertNotNull(agent.getDelegate().getStateStore());
         assertEquals(1, agent.getDelegate().getToolRegistry().size());
-        assertEquals(1, agent.getDelegate().getHookChain().size());
+        assertEquals(4, agent.getDelegate().getHookChain().size()); // 1 user + 3 default
     }
 
 
@@ -644,12 +648,12 @@ class SdkCapabilityShowcaseTest {
     @DisplayName("ToolExecutor: 正常执行工具")
     void executor_successfulExecution() {
         ToolRegistry registry = new ToolRegistry();
-        registry.addResolver(new AnnotationToolResolver());
+        registry.addAdapter(new AnnotationToolAdapter());
         registry.registerTool(new SearchTool());
 
         ToolExecutor executor = new ToolExecutor(registry);
         ToolResult result = executor.execute(
-            new ToolCallParam("c1", "search_docs", "{\"keyword\": \"test\"}")).block();
+            ToolCallContext.builder().callId("c1").toolName("search_docs").argumentsJson("{\"keyword\": \"test\"}").build()).block();
 
         assertNotNull(result);
         assertTrue(result.isSuccess());
@@ -662,7 +666,7 @@ class SdkCapabilityShowcaseTest {
     void executor_toolNotFoundReturnsFailure() {
         ToolExecutor executor = new ToolExecutor(new ToolRegistry());
         ToolResult result = executor.execute(
-            new ToolCallParam("c1", "nonexistent", "{}")).block();
+            ToolCallContext.builder().callId("c1").toolName("nonexistent").argumentsJson("{}").build()).block();
 
         assertNotNull(result);
         assertFalse(result.isSuccess());
@@ -674,19 +678,19 @@ class SdkCapabilityShowcaseTest {
     @DisplayName("ToolExecutor: 租户感知查找")
     void executor_tenantAwareLookup() {
         ToolRegistry registry = new ToolRegistry();
-        registry.addResolver(new AnnotationToolResolver());
+        registry.addAdapter(new AnnotationToolAdapter());
         registry.registerToolForTenant("tenant_a", new SearchTool());
 
         ToolExecutor executor = new ToolExecutor(registry);
 
         // 全局查找 → 找不到
         ToolResult r1 = executor.execute(
-            new ToolCallParam("c1", "search_docs", "{\"keyword\": \"x\"}"), null).block();
+            ToolCallContext.builder().callId("c1").toolName("search_docs").argumentsJson("{\"keyword\": \"x\"}").build(), null).block();
         assertFalse(r1.isSuccess());
 
         // 租户A 查找 → 找到
         ToolResult r2 = executor.execute(
-            new ToolCallParam("c2", "search_docs", "{\"keyword\": \"x\"}"), "tenant_a").block();
+            ToolCallContext.builder().callId("c2").toolName("search_docs").argumentsJson("{\"keyword\": \"x\"}").build(), "tenant_a").block();
         assertTrue(r2.isSuccess());
     }
 
@@ -801,7 +805,7 @@ class SdkCapabilityShowcaseTest {
         HookChain chain = new HookChain();
         chain.register(new Hook() {
             @Override public String getName() { return "PreCallWatcher"; }
-            @Override public Set<HookEventType> getSubscribedEventTypes() { return Set.of(HookEventType.PRE_CALL); }
+            @Override public Set<HookEventType> getSubscribedEventTypes() { return Set.of(HookEventType.PRE_REASONING); }
             @Override public Mono<HookResult> onEvent(HookEvent event, HookContext context) {
                 hookEvents.add("pre_call");
                 return Mono.just(HookResult.continue_());
@@ -837,23 +841,6 @@ class SdkCapabilityShowcaseTest {
     // ========================================================================
 
     @Test
-    @Order(37)
-    @DisplayName("Session: openSession 创建新会话")
-    void session_openSession() {
-        InMemoryAgentStateStore store = new InMemoryAgentStateStore();
-        HarnessAgent agent = HarnessAgent.builder()
-            .name("SessionAgent")
-            .model(stubModel)
-            .stateStore(store)
-            .build();
-
-        Session session = agent.getDelegate().openSession("my-session").block();
-        assertNotNull(session);
-        assertEquals("my-session", session.getId().getValue());
-        assertEquals(SessionState.ACTIVE, session.getState());
-    }
-
-    @Test
     @Order(38)
     @DisplayName("AgentState: saveCheckpoint + loadLatestCheckpoint 检查点保存与恢复")
     void checkpoint_saveAndRestore() {
@@ -865,7 +852,6 @@ class SdkCapabilityShowcaseTest {
             .build();
 
         // 打开会话
-        agent.getDelegate().openSession("sess-checkpoint").block();
 
         // 保存检查点
         AgentState checkpoint = new AgentState("CheckpointAgent", "sess-checkpoint",

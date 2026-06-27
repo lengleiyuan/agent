@@ -5,7 +5,9 @@ package cd.lan1akea.core.exception;
  */
 public class AgentException extends RuntimeException {
 
-    /** 错误码 */
+    /**
+     * 错误码
+     */
     private final String errorCode;
 
     /**
@@ -27,7 +29,9 @@ public class AgentException extends RuntimeException {
         this.errorCode = errorCode;
     }
 
-    /** @return 错误码 */
+    /**
+     * @return 错误码
+     */
     public String getErrorCode() {
         return errorCode;
     }

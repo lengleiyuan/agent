@@ -8,9 +8,7 @@ import java.util.Map;
 
 /**
  * 工具参数校验器。
- * <p>
  * 根据工具声明的 JSON Schema 校验调用参数是否合法。
- * </p>
  */
 @SuppressWarnings("unchecked")
 public class ToolValidator {
@@ -22,7 +20,7 @@ public class ToolValidator {
      * @param callParam 实际调用参数
      * @throws IllegalArgumentException 如果参数不合法
      */
-    public void validate(ToolSchema schema, ToolCallParam callParam) {
+    public void validate(ToolSchema schema, ToolCallContext callParam) {
         Map<String, Object> paramsSchema = schema.getParametersSchema();
         Map<String, Object> properties = (Map<String, Object>) paramsSchema.get("properties");
         if (properties == null) {
@@ -42,7 +40,7 @@ public class ToolValidator {
         }
 
         // 校验参数类型（简单的类型检查）
-        Map<String, Object> args = callParam.getArguments();
+        Map<String, Object> args = callParam.getArgumentsMap();
         for (Map.Entry<String, Object> entry : args.entrySet()) {
             String key = entry.getKey();
             Object value = entry.getValue();
@@ -59,6 +57,13 @@ public class ToolValidator {
         }
     }
 
+    /**
+     * 检查实际值是否匹配期望的 JSON Schema 类型。
+     *
+     * @param value        实际值
+     * @param expectedType 期望类型（string, number, boolean, array, object）
+     * @return 匹配返回 true
+     */
     private boolean matchesType(Object value, String expectedType) {
         if (value == null) return true;
         switch (expectedType) {

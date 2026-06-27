@@ -3,12 +3,13 @@ package cd.lan1akea.core.tool;
 import cd.lan1akea.core.model.ToolSchema;
 import reactor.core.publisher.Mono;
 
+import java.util.Collections;
+import java.util.Set;
+
 /**
  * 工具顶层接口。
- * <p>
- * 所有工具必须实现此接口。工具通过 name() + description() + parameters() 向 LLM 描述自身，
- * 通过 execute() 执行实际逻辑。
- * </p>
+ * 所有工具必须实现此接口。工具通过 name、description、parameters 向 LLM 描述自身，
+ * 通过 execute 执行实际逻辑。
  */
 public interface Tool {
 
@@ -31,9 +32,9 @@ public interface Tool {
      * 执行工具逻辑。
      *
      * @param params 调用参数
-     * @return Mono&lt;ToolResult&gt; 执行结果
+     * @return Mono<ToolResult> 执行结果
      */
-    Mono<ToolResult> execute(ToolCallParam params);
+    Mono<ToolResult> execute(ToolCallContext params);
 
     /**
      * @return 工具分组名称（默认为 "default"）
@@ -47,6 +48,14 @@ public interface Tool {
      */
     default boolean requiresApproval() {
         return false;
+    }
+
+    /**
+     * @return 业务权限码集合。框架不强制校验，Hook 实现（如 HarnessPermissionHook）
+     *         可读取此值并结合业务权限框架做拦截。默认空集。
+     */
+    default Set<String> getPermissions() {
+        return Collections.emptySet();
     }
 
     /**

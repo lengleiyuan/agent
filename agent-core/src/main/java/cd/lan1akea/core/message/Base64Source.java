@@ -5,24 +5,38 @@ package cd.lan1akea.core.message;
  */
 public class Base64Source extends Source {
 
-    /** Base64 编码的数据 */
+    /**
+     * Base64 编码的数据
+     */
     private final String data;
 
-    /** MIME 类型 */
+    /**
+     * MIME 类型
+     */
     private final String mediaType;
 
+    /**
+     * 创建 Base64 来源。
+     *
+     * @param data      Base64 编码数据
+     * @param mediaType 数据 MIME 类型
+     */
     public Base64Source(String data, String mediaType) {
         super("base64");
         this.data = data;
         this.mediaType = mediaType;
     }
 
-    /** @return Base64 编码数据 */
+    /**
+     * @return Base64 编码数据
+     */
     public String getData() {
         return data;
     }
 
-    /** @return MIME 类型 */
+    /**
+     * @return MIME 类型
+     */
     public String getMediaType() {
         return mediaType;
     }

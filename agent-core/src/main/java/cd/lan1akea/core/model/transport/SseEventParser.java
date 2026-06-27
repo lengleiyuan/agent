@@ -8,10 +8,8 @@ import java.util.Map;
 
 /**
  * SSE（Server-Sent Events）事件解析器。
- * <p>
  * 将 SSE 文本行流解析为 ChatStreamChunk 流。
  * 支持 OpenAI 兼容的 SSE 格式。
- * </p>
  */
 public class SseEventParser {
 
@@ -31,10 +29,16 @@ public class SseEventParser {
                 if (chunk != null) {
                     sink.next(chunk);
                 }
-                // null chunk silently skipped
+                // 静默跳过 null chunk
             });
     }
 
+    /**
+     * 解析单条 SSE data JSON 为 ChatStreamChunk。
+     *
+     * @param json SSE data 中的 JSON 字符串
+     * @return 解析后的 chunk，解析失败返回 null
+     */
     @SuppressWarnings("unchecked")
     private ChatStreamChunk parseChunk(String json) {
         try {

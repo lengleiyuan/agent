@@ -7,7 +7,6 @@ import cd.lan1akea.core.context.RuntimeContext;
 import cd.lan1akea.core.hook.*;
 import cd.lan1akea.core.hook.impl.LoggingHook;
 import cd.lan1akea.core.hook.impl.AuditHook;
-import cd.lan1akea.core.hook.recorder.HookRecorder;
 import cd.lan1akea.core.message.*;
 import cd.lan1akea.core.model.*;
 import cd.lan1akea.core.state.InMemoryAgentStateStore;
@@ -35,7 +34,6 @@ class ReActAgentTest {
     private LoggingHook loggingHook;
     private AuditHook auditHook;
     private InMemoryAgentStateStore stateStore;
-    private HookRecorder recorder;
 
     @BeforeEach
     void setUp() {
@@ -51,7 +49,6 @@ class ReActAgentTest {
         hookChain.register(auditHook);
 
         stateStore = new InMemoryAgentStateStore();
-        recorder = new HookRecorder();
     }
 
     // ========================================================================
@@ -148,23 +145,10 @@ class ReActAgentTest {
     }
 
     @Test
-    void testHookRecorderIntegration() {
-        model.setResponse(new ChatResponse(
-            AssistantMessage.of("ok"), new ChatUsage(1, 1), "stop", null));
-
-        ReActAgent agent = createAgent("TestAgent");
-        agent.setHookRecorder(recorder);
-        agent.chat(List.of(UserMessage.of("hi"))).block();
-
-        assertTrue(recorder.size() > 0,
-            "HookRecorder 应记录事件（实际: " + recorder.size() + "）");
-    }
-
-    @Test
     void testHookChainAbortPreventsExecution() {
         hookChain.register(new Hook() {
             @Override public String getName() { return "blocker"; }
-            @Override public Set<HookEventType> getSubscribedEventTypes() { return Set.of(HookEventType.PRE_CALL); }
+            @Override public Set<HookEventType> getSubscribedEventTypes() { return Set.of(HookEventType.PRE_REASONING); }
             @Override public int getPriority() { return 1; }
             @Override
             public Mono<HookResult> onEvent(HookEvent event, HookContext context) {
@@ -287,93 +271,6 @@ class ReActAgentTest {
     // observe
     // ========================================================================
 
-    @Test
-    void testObserve() {
-        model.setResponse(new ChatResponse(
-            AssistantMessage.of("noted"), new ChatUsage(1, 1), "stop", null));
-
-        ReActAgent agent = createAgent("TestAgent");
-        agent.observe(UserMessage.of("notification")).block();
-        assertTrue(agent.isBuilt());
-    }
-
-    // ========================================================================
-    // 中断
-    // ========================================================================
-
-    @Test
-    void testInterruptIdleAgent() {
-        ReActAgent agent = createAgent("TestAgent");
-        assertDoesNotThrow(() -> agent.interrupt());
-        assertDoesNotThrow(() -> agent.interrupt(UserMessage.of("stop")));
-    }
-
-    // ========================================================================
-    // 事件
-    // ========================================================================
-
-    @Test
-    void testEventsStream() {
-        ReActAgent agent = createAgent("TestAgent");
-        var events = agent.events().take(Duration.ofSeconds(1))
-            .collectList().block();
-        assertNotNull(events);
-    }
-
-    @Test
-    void testEventsByType() {
-        ReActAgent agent = createAgent("TestAgent");
-        var agentEvents = agent.events("agent:created")
-            .take(Duration.ofMillis(500)).collectList().block();
-        assertNotNull(agentEvents);
-    }
-
-    // ========================================================================
-    // Getters
-    // ========================================================================
-
-    @Test
-    void testGetters() {
-        ReActAgent agent = createAgent("TestAgent");
-        assertNotNull(agent.getConfig());
-        assertNotNull(agent.getModel());
-        assertNotNull(agent.getToolRegistry());
-        assertNotNull(agent.getHookChain());
-        assertNotNull(agent.getEventBus());
-        assertNotNull(agent.getStateStore());
-        assertNotNull(agent.getContextWindow());
-        assertFalse(agent.isRunning());
-    }
-
-    // ========================================================================
-    // 会话
-    // ========================================================================
-
-    @Test
-    void testOpenSession() {
-        ReActAgent agent = createAgent("TestAgent");
-        var session = agent.openSession(null).block();
-        assertNotNull(session);
-        assertNotNull(session.getId());
-    }
-
-    @Test
-    void testOpenSessionWithStateStore() {
-        ReActAgent agent = createAgent("TestAgent");
-        var session = agent.openSession("my-session-id").block();
-        assertNotNull(session);
-        assertEquals("my-session-id", session.getId().getValue());
-    }
-
-    @Test
-    void testContextWindowAvailable() {
-        ReActAgent agent = createAgent("TestAgent");
-        assertNotNull(agent.getContextWindow());
-        assertEquals("stub", agent.getContextWindow().getModelName());
-    }
-
-    // ========================================================================
-    // 子 Agent 工具
     // ========================================================================
 
     @Test
@@ -437,7 +334,7 @@ class ReActAgentTest {
             .block();
 
         assertNotNull(response);
-        // 子 Agent 通过 ToolCallParam 拿到了 tenant_X
+        // 子 Agent 通过 ToolCallContext 拿到了 tenant_X
     }
 
     // ========================================================================

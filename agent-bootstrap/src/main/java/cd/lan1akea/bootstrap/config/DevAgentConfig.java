@@ -1,8 +1,6 @@
 package cd.lan1akea.bootstrap.config;
 
 import cd.lan1akea.core.agent.ReActAgent;
-import cd.lan1akea.core.agent.config.AgentConfig;
-import cd.lan1akea.core.agent.config.AgentExecutionConfig;
 import cd.lan1akea.core.formatter.OpenAiMessageFormatter;
 import cd.lan1akea.core.hook.HookChain;
 import cd.lan1akea.core.hook.impl.LoggingHook;
@@ -35,7 +33,9 @@ import java.util.Map;
 @Configuration
 public class DevAgentConfig {
 
-    /** 回显模型 */
+    /**
+     * 回显模型
+     */
     @Bean
     @ConditionalOnMissingBean(ChatModel.class)
     public ChatModel echoModel() {
@@ -71,16 +71,13 @@ public class DevAgentConfig {
         };
     }
 
-    /** Hook 链（含完整预处理链） */
+    /**
+     * Hook 链（含完整预处理链）
+     */
     @Bean
     @ConditionalOnMissingBean(HookChain.class)
     public HookChain hookChain() {
         HookChain chain = new HookChain();
-        chain.register(new cd.lan1akea.core.hook.impl.ContextCompressionHook(
-            new cd.lan1akea.core.session.SessionSummaryService(),
-            new cd.lan1akea.core.model.ModelContextWindow("echo-model", 8000, 4000)));
-        chain.register(new cd.lan1akea.core.hook.impl.MemoryEnrichmentHook(
-            new cd.lan1akea.core.memory.InMemoryMemory()));
         chain.register(new cd.lan1akea.core.hook.impl.ContentFilterHook());
         chain.register(new LoggingHook("DevLogger"));
         chain.register(new AuditHook("DevAudit"));
@@ -88,37 +85,42 @@ public class DevAgentConfig {
         return chain;
     }
 
-    /** 状态存储（开发用内存） */
+    /**
+     * 状态存储（开发用内存）
+     */
     @Bean
     @ConditionalOnMissingBean(AgentStateStore.class)
     public AgentStateStore stateStore() {
         return new InMemoryAgentStateStore();
     }
 
-    /** 默认 Agent（完整装配所有子系统） */
+    /**
+     * 默认 Agent（完整装配所有子系统）
+     */
     @Bean
     @ConditionalOnMissingBean(HarnessAgent.class)
     public HarnessAgent defaultAgent(ChatModel model, ToolRegistry toolRegistry,
-                                      HookChain hookChain, AgentStateStore stateStore) {
+                                      AgentStateStore stateStore) {
         // 全局工具组：所有租户可见
         ToolGroup globalGroup = new ToolGroup("global-tools", ToolGroupScope.GLOBAL);
         globalGroup.addTool(new CalculatorTool());
         toolRegistry.registerGroup(globalGroup);
 
-        AgentConfig config = AgentConfig.builder()
+        ReActAgent inner = ReActAgent.builder()
             .name("DevAgent")
             .model(model)
             .toolRegistry(toolRegistry)
-            .hookChain(hookChain)
+            .hooks(
+                new cd.lan1akea.core.hook.impl.ContentFilterHook(),
+                new LoggingHook("DevLogger"),
+                new AuditHook("DevAudit"),
+                new RateLimitHook(20, 60_000))
+            .maxIterations(5)
+            .temperature(0.7)
+            .maxTokens(2048)
             .stateStore(stateStore)
-            .executionConfig(AgentExecutionConfig.builder()
-                .maxIterations(5)
-                .temperature(0.7)
-                .maxTokens(2048)
-                .build())
             .build();
 
-        ReActAgent inner = new ReActAgent(config);
         inner.build().block();
         return new HarnessAgent(inner);
     }

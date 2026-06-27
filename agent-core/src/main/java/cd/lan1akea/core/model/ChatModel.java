@@ -8,17 +8,35 @@ import java.util.List;
 
 /**
  * 聊天模型接口。
- * <p>
  * 定义与 LLM 对话的标准接口，支持同步（单次）和流式两种模式。
- * </p>
  */
 public interface ChatModel {
 
-    /** @return 模型提供商名称 */
+    /**
+     * @return 模型提供商名称
+     */
     String getProvider();
 
-    /** @return 模型名称 */
+    /**
+     * @return 模型名称
+     */
     String getModelName();
+
+    /**
+     * @return 模型最大输入 Token 数。默认 128K，
+     *         具体模型可覆盖（如 gpt-4o-128k、claude-200k 等）。
+     */
+    default int getMaxInputTokens() { return 128_000; }
+
+    /**
+     * @return 默认最大输出 Token 数。
+     */
+    default int getDefaultMaxTokens() { return 4096; }
+
+    /**
+     * @return 默认温度。
+     */
+    default double getDefaultTemperature() { return 0.7; }
 
     /**
      * 单次聊天调用。

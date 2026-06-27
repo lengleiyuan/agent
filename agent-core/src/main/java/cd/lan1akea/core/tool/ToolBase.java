@@ -11,16 +11,19 @@ import java.util.Map;
 
 /**
  * 工具抽象基类。
- * <p>
  * 提供 Schema 生成、参数校验的默认实现。子类只需声明参数并实现 execute()。
- * </p>
  */
 public abstract class ToolBase implements Tool {
 
+    /**
+     * 声明的参数列表
+     */
     private final List<ToolParam> params = new ArrayList<>();
 
     /**
-     * 声明工具参数。在子类构造函数中调用。
+     * 声明工具参数。在子类构造方法中调用。
+     *
+     * @param param 要声明的参数
      */
     protected void declareParam(ToolParam param) {
         params.add(param);
@@ -28,6 +31,10 @@ public abstract class ToolBase implements Tool {
 
     /**
      * 快速声明字符串参数。
+     *
+     * @param name        参数名称
+     * @param description 参数描述
+     * @param required    是否必需
      */
     protected void declareStringParam(String name, String description, boolean required) {
         declareParam(ToolParam.builder(name, "string")
@@ -35,7 +42,11 @@ public abstract class ToolBase implements Tool {
     }
 
     /**
-     * 快速声明数值参数。
+     * 快速声明数字参数。
+     *
+     * @param name        参数名称
+     * @param description 参数描述
+     * @param required    是否必需
      */
     protected void declareNumberParam(String name, String description, boolean required) {
         declareParam(ToolParam.builder(name, "number")
@@ -44,6 +55,10 @@ public abstract class ToolBase implements Tool {
 
     /**
      * 快速声明布尔参数。
+     *
+     * @param name        参数名称
+     * @param description 参数描述
+     * @param required    是否必需
      */
     protected void declareBooleanParam(String name, String description, boolean required) {
         declareParam(ToolParam.builder(name, "boolean")
@@ -83,12 +98,12 @@ public abstract class ToolBase implements Tool {
     }
 
     /**
-     * 校验调用参数是否满足 Schema 要求。
+     * 校验必需参数是否存在。
      *
      * @param callParam 调用参数
-     * @throws IllegalArgumentException 如果参数不合法
+     * @throws IllegalArgumentException 缺少必需参数时抛出
      */
-    protected void validateParams(ToolCallParam callParam) {
+    protected void validateParams(ToolCallContext callParam) {
         ValidationUtils.notNull(callParam, "callParam");
         for (ToolParam param : params) {
             if (param.isRequired()) {

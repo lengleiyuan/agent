@@ -20,12 +20,15 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class InMemoryAgentStateStore implements AgentStateStore {
 
+    /**
+     * 内存会话存储（按会话 ID 索引）
+     */
     private final Map<String, Session> sessions = new ConcurrentHashMap<>();
+    /**
+     * 内存检查点存储（按会话 ID 索引）
+     */
     private final Map<String, AgentState> checkpoints = new ConcurrentHashMap<>();
 
-    // ========================================================================
-    // 会话生命周期
-    // ========================================================================
 
     @Override
     public Mono<Session> create(Session session) {
@@ -70,9 +73,6 @@ public class InMemoryAgentStateStore implements AgentStateStore {
         return Mono.empty();
     }
 
-    // ========================================================================
-    // 对话持久化
-    // ========================================================================
 
     @Override
     public Mono<Void> addTurn(SessionId sessionId, ChatTurn turn) {
@@ -88,7 +88,7 @@ public class InMemoryAgentStateStore implements AgentStateStore {
 
         List<Msg> history = new ArrayList<>();
         for (ChatTurn turn : session.getTurns()) {
-            // 优先使用结构化消息，fallback 到 JSON 字符串
+            // 优先使用结构化消息，回退到 JSON 字符串
             List<Msg> userMsgs = turn.getUserMessages();
             List<Msg> asstMsgs = turn.getAssistantMessages();
             List<Msg> toolMsgs = turn.getToolMessages();
@@ -106,9 +106,6 @@ public class InMemoryAgentStateStore implements AgentStateStore {
         return Flux.fromIterable(history);
     }
 
-    // ========================================================================
-    // 检查点
-    // ========================================================================
 
     @Override
     public Mono<Void> saveCheckpoint(AgentState state) {

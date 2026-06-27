@@ -7,10 +7,8 @@ import java.util.Map;
 
 /**
  * HTTP 客户端适配接口。
- * <p>
  * 对底层 HTTP 客户端（Reactor Netty、OkHttp 等）的抽象。
  * 使 Model 层不直接依赖具体的 HTTP 实现。
- * </p>
  */
 public interface HttpClientAdapter {
 

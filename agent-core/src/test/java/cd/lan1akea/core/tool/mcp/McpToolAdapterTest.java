@@ -1,7 +1,7 @@
 package cd.lan1akea.core.tool.mcp;
 
 import cd.lan1akea.core.model.ToolSchema;
-import cd.lan1akea.core.tool.ToolCallParam;
+import cd.lan1akea.core.tool.ToolCallContext;
 import cd.lan1akea.core.tool.ToolResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -59,8 +59,7 @@ class McpToolAdapterTest {
     void testExecuteSuccess() {
         client.setResult("Beijing: sunny, 22°C");
 
-        ToolCallParam param = new ToolCallParam("c1", "weather",
-            Map.of("city", "Beijing"));
+        ToolCallContext param = ToolCallContext.of("c1", "weather", Map.of("city", "Beijing"));
         ToolResult result = adapter.execute(param).block();
 
         assertNotNull(result);
@@ -72,7 +71,7 @@ class McpToolAdapterTest {
     void testExecuteFailure() {
         client.setError(new McpException("Tool not found"));
 
-        ToolCallParam param = new ToolCallParam("c1", "weather", Map.of());
+        ToolCallContext param = ToolCallContext.of("c1", "weather", Map.of());
         ToolResult result = adapter.execute(param).block();
 
         assertNotNull(result);

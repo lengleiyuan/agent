@@ -124,9 +124,9 @@ class HookChainTest {
         assertTrue(hook.wasExecuted());
 
         hook.reset();
-        // PRE_ACTING should NOT match
-        HookResult r3 = chain.fire(HookEventType.PRE_ACTING,
-            new HookEvent(HookEventType.PRE_ACTING),
+        // PRE_MODEL_CALL should NOT match
+        HookResult r3 = chain.fire(HookEventType.PRE_MODEL_CALL,
+            new HookEvent(HookEventType.PRE_MODEL_CALL),
             new HookContext("test", null, null, null, 0, null, null)).block();
         assertTrue(r3.isContinue());
         assertFalse(hook.wasExecuted());

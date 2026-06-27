@@ -1,6 +1,5 @@
 package cd.lan1akea.core.hook;
 
-import cd.lan1akea.core.event.DomainEvent;
 
 import java.util.Collections;
 import java.util.HashMap;
@@ -8,22 +7,30 @@ import java.util.Map;
 
 /**
  * Hook 事件。
- * <p>
- * 携带 Hook 执行上下文中的所有数据，Hook 实现可通过 getPayload() / setPayload() 读写数据。
- * </p>
+ * 携带 Hook 执行上下文中的所有数据，Hook 实现可通过 getPayload / setPayload 读写数据。
  */
-public class HookEvent extends DomainEvent {
+public class HookEvent {
 
-    /** Hook 事件类型 */
+    /**
+     * Hook 事件类型
+     */
     private final HookEventType eventType;
 
-    /** 事件载荷（可变，Hook 可修改） */
+    /**
+     * 事件载荷（可变，Hook 可修改）
+     */
     private final Map<String, Object> payload;
 
+    /**
+     * 创建指定类型的 Hook 事件，带空载荷。
+     */
     public HookEvent(HookEventType eventType) {
         this(eventType, new HashMap<>());
     }
 
+    /**
+     * 创建指定类型和载荷的 Hook 事件。
+     */
     public HookEvent(HookEventType eventType, Map<String, Object> payload) {
         this.eventType = eventType;
         this.payload = new HashMap<>(payload != null ? payload : new HashMap<>());
@@ -51,11 +58,15 @@ public class HookEvent extends DomainEvent {
         return Collections.unmodifiableMap(payload);
     }
 
-    /** @return Hook 事件类型 */
+    /**
+     * @return Hook 事件类型
+     */
     public HookEventType getHookEventType() { return eventType; }
 
-    @Override
+    /**
+     * @return 事件类型标识字符串
+     */
     public String getEventType() {
-        return "hook:" + eventType.name().toLowerCase();
+        return eventType != null ? "hook:" + eventType.name().toLowerCase() : "hook:aroundCall";
     }
 }

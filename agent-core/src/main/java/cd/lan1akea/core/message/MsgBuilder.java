@@ -7,23 +7,33 @@ import java.util.Map;
 
 /**
  * Msg 构建器。
- * <p>
  * 用法示例：
- * <pre>
  * Msg msg = Msg.builder(MsgRole.USER)
  *     .addText("你好")
  *     .addImage(ImageBlock.fromUrl("https://example.com/img.png"))
  *     .putMetadata("tenant_id", 123L)
  *     .build();
- * </pre>
- * </p>
  */
 public class MsgBuilder {
 
+    /**
+     * 消息角色。
+     */
     private final MsgRole role;
+    /**
+     * 正在构建的内容块列表。
+     */
     private final List<ContentBlock> contentBlocks = new ArrayList<>();
+    /**
+     * 正在构建的元数据映射。
+     */
     private final Map<String, Object> metadata = new HashMap<>();
 
+    /**
+     * 创建指定角色的构建器。
+     *
+     * @param role 消息角色
+     */
     MsgBuilder(MsgRole role) {
         this.role = role;
     }

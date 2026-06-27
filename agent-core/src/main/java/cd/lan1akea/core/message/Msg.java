@@ -11,24 +11,30 @@ import java.util.Objects;
 
 /**
  * 消息顶层类。
- * <p>
  * 消息由角色（MsgRole）和一个或多个内容块（ContentBlock）组成。
  * 附带 metadata 映射用于存储扩展信息（Token用量、延迟、中断ID等）。
  * 使用 MsgBuilder 构建实例。
- * </p>
  */
 public class Msg {
 
-    /** 消息唯一ID */
+    /**
+     * 消息唯一ID
+     */
     private final String id;
 
-    /** 消息角色 */
+    /**
+     * 消息角色
+     */
     private final MsgRole role;
 
-    /** 内容块列表（不可变） */
+    /**
+     * 内容块列表（不可变）
+     */
     private final List<ContentBlock> contentBlocks;
 
-    /** 扩展元数据 */
+    /**
+     * 扩展元数据
+     */
     private final Map<String, Object> metadata;
 
     /**
@@ -115,26 +121,40 @@ public class Msg {
         return result;
     }
 
-    // === Getters ===
 
-    /** @return 消息ID */
+    /**
+     * @return 消息ID
+     */
     public String getId() { return id; }
 
-    /** @return 消息角色 */
+    /**
+     * @return 消息角色
+     */
     public MsgRole getRole() { return role; }
 
-    /** @return 内容块列表（不可变） */
+    /**
+     * @return 内容块列表（不可变）
+     */
     public List<ContentBlock> getContentBlocks() { return contentBlocks; }
 
-    /** @return 元数据（不可变） */
+    /**
+     * @return 元数据（不可变）
+     */
     public Map<String, Object> getMetadata() { return metadata; }
 
-    /** 获取元数据值 */
+    /**
+     * 通过键获取元数据值。
+     */
     @SuppressWarnings("unchecked")
     public <T> T getMetadata(String key) {
         return (T) metadata.get(key);
     }
 
+    /**
+     * 返回消息的字符串表示。
+     *
+     * @return 包含 id、role、块数量和文本内容的字符串
+     */
     @Override
     public String toString() {
         return "Msg{id='" + id + "', role=" + role

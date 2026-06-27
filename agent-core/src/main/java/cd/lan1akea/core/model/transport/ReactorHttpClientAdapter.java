@@ -13,18 +13,27 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Reactor Netty HTTP 客户端适配器。
- * <p>
  * 基于 Reactor Netty 实现 HttpClientAdapter。
- * </p>
  */
 public class ReactorHttpClientAdapter implements HttpClientAdapter {
 
+    /**
+     * Reactor Netty HttpClient 实例。
+     */
     private final HttpClient httpClient;
 
+    /**
+     * 使用默认 60 秒超时创建适配器。
+     */
     public ReactorHttpClientAdapter() {
         this(Duration.ofSeconds(60));
     }
 
+    /**
+     * 使用指定超时时间创建适配器。
+     *
+     * @param timeout 请求超时时间
+     */
     public ReactorHttpClientAdapter(Duration timeout) {
         ConnectionProvider provider = ConnectionProvider.builder("agent-http")
             .maxConnections(200)

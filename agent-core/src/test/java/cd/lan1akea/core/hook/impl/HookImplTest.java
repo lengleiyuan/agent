@@ -1,8 +1,13 @@
 package cd.lan1akea.core.hook.impl;
 
 import cd.lan1akea.core.hook.*;
+import cd.lan1akea.core.memory.Memory;
+import cd.lan1akea.core.memory.MemoryEntry;
+import cd.lan1akea.core.memory.MemoryRetrievalQuery;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
 import java.util.Map;
@@ -181,7 +186,19 @@ class HookImplTest {
 
     @Test
     void testMemoryEnrichmentHookName() {
-        cd.lan1akea.core.memory.InMemoryMemory memory = new cd.lan1akea.core.memory.InMemoryMemory();
+        cd.lan1akea.core.memory.Memory memory = new cd.lan1akea.core.memory.Memory() {
+            public Mono<String> store(MemoryEntry e) { return Mono.just("stub"); }
+            public Flux<MemoryEntry> retrieve(MemoryRetrievalQuery q) { return Flux.empty(); }
+            public Mono<MemoryEntry> get(String id) { return Mono.empty(); }
+            public Mono<Void> update(String id, MemoryEntry e) { return Mono.empty(); }
+            public Flux<MemoryEntry> recent(int n) { return Flux.empty(); }
+            public Flux<MemoryEntry> range(long f, long t, int n) { return Flux.empty(); }
+            public Mono<Void> forget(String id) { return Mono.empty(); }
+            public Mono<Void> forgetByTenant(String t) { return Mono.empty(); }
+            public Mono<Void> forgetByUser(String u) { return Mono.empty(); }
+            public Mono<Void> forgetBySession(String s) { return Mono.empty(); }
+            public Mono<Void> clear() { return Mono.empty(); }
+        };
         MemoryEnrichmentHook hook = new MemoryEnrichmentHook(memory);
         assertEquals("MemoryEnrichment", hook.getName());
     }
@@ -197,8 +214,8 @@ class HookImplTest {
         ToolAccessHook hook = new ToolAccessHook(policy);
 
         // calc 在 allowlist 中
-        cd.lan1akea.core.tool.ToolCallParam param =
-            new cd.lan1akea.core.tool.ToolCallParam("c1", "calc", Map.of());
+        cd.lan1akea.core.tool.ToolCallContext param =
+            cd.lan1akea.core.tool.ToolCallContext.of("c1", "calc", Map.of());
         ToolCallEvent event = new ToolCallEvent(HookEventType.PRE_TOOL_CALL, param);
         HookResult r = hook.onEvent(event,
             new HookContext("a", "t1", null, null, 0, null, null)).block();
@@ -213,8 +230,8 @@ class HookImplTest {
         ToolAccessHook hook = new ToolAccessHook(policy);
 
         // weather 不在 allowlist 中
-        cd.lan1akea.core.tool.ToolCallParam param =
-            new cd.lan1akea.core.tool.ToolCallParam("c1", "weather", Map.of());
+        cd.lan1akea.core.tool.ToolCallContext param =
+            cd.lan1akea.core.tool.ToolCallContext.of("c1", "weather", Map.of());
         ToolCallEvent event = new ToolCallEvent(HookEventType.PRE_TOOL_CALL, param);
         HookResult r = hook.onEvent(event,
             new HookContext("a", "t1", null, null, 0, null, null)).block();
@@ -231,13 +248,13 @@ class HookImplTest {
 
         // safe_tool 不在 blocklist
         ToolCallEvent event1 = new ToolCallEvent(HookEventType.PRE_TOOL_CALL,
-            new cd.lan1akea.core.tool.ToolCallParam("c1", "safe_tool", Map.of()));
+            cd.lan1akea.core.tool.ToolCallContext.of("c1", "safe_tool", Map.of()));
         assertTrue(hook.onEvent(event1,
             new HookContext("a", "t1", null, null, 0, null, null)).block().isContinue());
 
         // dangerous 在 blocklist
         ToolCallEvent event2 = new ToolCallEvent(HookEventType.PRE_TOOL_CALL,
-            new cd.lan1akea.core.tool.ToolCallParam("c2", "dangerous", Map.of()));
+            cd.lan1akea.core.tool.ToolCallContext.of("c2", "dangerous", Map.of()));
         assertTrue(hook.onEvent(event2,
             new HookContext("a", "t1", null, null, 0, null, null)).block().isAbort());
     }
@@ -248,7 +265,7 @@ class HookImplTest {
         ToolAccessHook hook = new ToolAccessHook(policy);
 
         ToolCallEvent event = new ToolCallEvent(HookEventType.PRE_TOOL_CALL,
-            new cd.lan1akea.core.tool.ToolCallParam("c1", "any_tool", Map.of()));
+            cd.lan1akea.core.tool.ToolCallContext.of("c1", "any_tool", Map.of()));
         HookResult r = hook.onEvent(event,
             new HookContext("a", "t1", null, null, 0, null, null)).block();
 

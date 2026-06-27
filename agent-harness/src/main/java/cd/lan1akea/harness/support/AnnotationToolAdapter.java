@@ -2,8 +2,8 @@ package cd.lan1akea.harness.support;
 
 import cd.lan1akea.core.model.ToolSchema;
 import cd.lan1akea.core.tool.Tool;
-import cd.lan1akea.core.tool.ToolCallParam;
-import cd.lan1akea.core.tool.ToolResolver;
+import cd.lan1akea.core.tool.ToolCallContext;
+import cd.lan1akea.core.tool.ToolAdapter;
 import cd.lan1akea.core.tool.ToolResult;
 import cd.lan1akea.core.util.JsonUtils;
 import cd.lan1akea.harness.annotation.ToolFunction;
@@ -13,17 +13,22 @@ import reactor.core.publisher.Mono;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
- * 注解工具解析器 — 将 {@code @ToolFunction} 标注的 POJO 反射解析为 {@link Tool}。
+ * 注解工具解析器——将 @ToolFunction 标注的 POJO 反射解析为 Tool。
  */
-public class AnnotationToolResolver implements ToolResolver {
+public class AnnotationToolAdapter implements ToolAdapter {
 
+    /**
+     * 判断对象是否适配（有类级或方法级 ToolFunction 注解）。
+     */
     @Override
-    public boolean canResolve(Object obj) {
+    public boolean canAdapt(Object obj) {
         Class<?> clazz = obj.getClass();
         if (clazz.isAnnotationPresent(ToolFunction.class)) return true;
         for (Method m : clazz.getDeclaredMethods()) {
@@ -32,8 +37,11 @@ public class AnnotationToolResolver implements ToolResolver {
         return false;
     }
 
+    /**
+     * 将目标对象适配为单个 Tool。
+     */
     @Override
-    public Tool resolve(Object target) {
+    public Tool adaption(Object target) {
         Class<?> clazz = target.getClass();
         Method method;
         ToolFunction anno;
@@ -88,12 +96,77 @@ public class AnnotationToolResolver implements ToolResolver {
         // 5. 构建 ToolSchema
         ToolSchema schema = buildSchema(name, description, params);
 
-        return new ResolvedTool(name, description, schema, target, method, params);
+        // 6. 提取业务权限码 & ToolCallContext 注入位置
+        Set<String> permissions = anno.permission().isEmpty()
+            ? Collections.emptySet() : Set.of(anno.permission());
+        int ctxParamIndex = findContextParam(method);
+
+        return new AnnotationTool(name, description, schema, target, method, params,
+            permissions, ctxParamIndex);
     }
 
+    /**
+     * 将目标对象适配为多个 Tool（类级或方法级注解）。
+     */
+    @Override
+    public List<Tool> adaptToAll(Object target) {
+        Class<?> clazz = target.getClass();
+        List<Method> methods = findToolMethods(clazz);
+
+        List<Tool> tools = new ArrayList<>();
+        for (Method method : methods) {
+            method.setAccessible(true);
+            ToolFunction anno = method.getAnnotation(ToolFunction.class);
+            if (anno == null) anno = clazz.getAnnotation(ToolFunction.class); // 类级回退
+
+            List<ParamMeta> params = extractParams(method);
+            String name = !anno.name().isEmpty() ? anno.name() : toSnakeCase(method.getName());
+            String desc = !anno.description().isEmpty() ? anno.description() : name;
+            ToolSchema schema = buildSchema(name, desc, params);
+            Set<String> permissions = anno.permission().isEmpty()
+                ? Collections.emptySet() : Set.of(anno.permission());
+            int ctxParamIndex = findContextParam(method);
+
+            tools.add(new AnnotationTool(name, desc, schema, target, method, params,
+                permissions, ctxParamIndex));
+        }
+        return tools;
+    }
+
+    /**
+     * 查找所有工具方法：
+     * 1. 有方法级 ToolFunction 返回所有标注了 ToolFunction 的方法
+     * 2. 只有类级 ToolFunction 返回所有 public 非 Object 方法
+     */
+    private List<Method> findToolMethods(Class<?> clazz) {
+        List<Method> annotated = new ArrayList<>();
+        for (Method m : clazz.getDeclaredMethods()) {
+            if (m.isAnnotationPresent(ToolFunction.class)) annotated.add(m);
+        }
+        if (!annotated.isEmpty()) return annotated;
+
+        // 类级 @ToolFunction：所有 public 方法
+        if (clazz.isAnnotationPresent(ToolFunction.class)) {
+            for (Method m : clazz.getDeclaredMethods()) {
+                if (java.lang.reflect.Modifier.isPublic(m.getModifiers())
+                    && m.getDeclaringClass() != Object.class) {
+                    annotated.add(m);
+                }
+            }
+        }
+        return annotated;
+    }
+
+    /**
+     * 提取方法参数元数据列表。
+     */
     private List<ParamMeta> extractParams(Method method) {
         List<ParamMeta> result = new ArrayList<>();
         for (Parameter param : method.getParameters()) {
+            // 跳过框架注入参数 — ToolCallContext（core/门面）不出现在 LLM Schema 中
+            if (param.getType() == cd.lan1akea.core.tool.ToolCallContext.class
+                || param.getType() == cd.lan1akea.harness.context.ToolContext.class) continue;
+
             ParamMeta meta = new ParamMeta();
             meta.javaType = param.getType();
             meta.type = inferType(meta.javaType);
@@ -113,6 +186,9 @@ public class AnnotationToolResolver implements ToolResolver {
         return result;
     }
 
+    /**
+     * 根据名称、描述和参数元数据构建 ToolSchema。
+     */
     private ToolSchema buildSchema(String name, String description, List<ParamMeta> params) {
         Map<String, Object> properties = new LinkedHashMap<>();
         List<String> required = new ArrayList<>();
@@ -136,6 +212,9 @@ public class AnnotationToolResolver implements ToolResolver {
         return new ToolSchema(name, description, schema);
     }
 
+    /**
+     * 推断 Java 类型对应的 JSON Schema 类型名称。
+     */
     private String inferType(Class<?> clazz) {
         if (clazz == String.class) return "string";
         if (clazz == int.class || clazz == long.class || clazz == Integer.class || clazz == Long.class)
@@ -146,6 +225,9 @@ public class AnnotationToolResolver implements ToolResolver {
         return "string";
     }
 
+    /**
+     * 将原始参数值转换为目标类型。
+     */
     private static Object convertArg(Object raw, Class<?> targetType) {
         if (raw == null) return null;
         if (targetType.isInstance(raw)) return raw;
@@ -170,6 +252,22 @@ public class AnnotationToolResolver implements ToolResolver {
         return s;
     }
 
+    /**
+     * 查找 ToolCallContext（core 或 harness 门面）类型的参数位置，未找到返回 -1。
+     */
+    private static int findContextParam(Method method) {
+        Parameter[] params = method.getParameters();
+        for (int i = 0; i < params.length; i++) {
+            Class<?> type = params[i].getType();
+            if (type == cd.lan1akea.core.tool.ToolCallContext.class
+                || type == cd.lan1akea.harness.context.ToolContext.class) return i;
+        }
+        return -1;
+    }
+
+    /**
+     * 将驼峰命名转换为蛇形命名。
+     */
     static String toSnakeCase(String camel) {
         StringBuilder sb = new StringBuilder();
         for (char c : camel.toCharArray()) {
@@ -187,48 +285,131 @@ public class AnnotationToolResolver implements ToolResolver {
     // inner types
     // ========================================================================
 
+    /**
+     * 参数元数据，描述工具方法的一个参数。
+     */
     private static class ParamMeta {
+        /**
+         * 参数名称。
+         */
         String name;
+        /**
+         * JSON Schema 类型（string/number/integer/boolean）。
+         */
         String type = "string";
+        /**
+         * 参数描述。
+         */
         String description = "";
+        /**
+         * 是否必需。
+         */
         boolean required;
+        /**
+         * 默认值。
+         */
         String defaultValue;
+        /**
+         * 参数的 Java 类型。
+         */
         Class<?> javaType = String.class;
     }
 
-    private static class ResolvedTool implements Tool {
+    /**
+     * 基于反射的注解工具实现。
+     */
+    private static class AnnotationTool implements Tool {
+        /**
+         * 工具名称。
+         */
         private final String name;
+        /**
+         * 工具描述。
+         */
         private final String description;
+        /**
+         * 参数 Schema。
+         */
         private final ToolSchema schema;
+        /**
+         * 目标对象实例。
+         */
         private final Object target;
+        /**
+         * 目标方法。
+         */
         private final Method method;
+        /**
+         * 参数元数据列表。
+         */
         private final List<ParamMeta> params;
+        /**
+         * 业务权限码集合。
+         */
+        private final Set<String> permissions;
+        /**
+         * ToolCallContext 在方法参数中的位置，-1 表示不需要。
+         */
+        private final int ctxParamIndex;
 
-        ResolvedTool(String name, String description, ToolSchema schema,
-                     Object target, Method method, List<ParamMeta> params) {
+        /**
+         * 构造注解工具实例。
+         */
+        AnnotationTool(String name, String description, ToolSchema schema,
+                     Object target, Method method, List<ParamMeta> params,
+                     Set<String> permissions, int ctxParamIndex) {
             this.name = name;
             this.description = description;
             this.schema = schema;
             this.target = target;
             this.method = method;
             this.params = params;
+            this.permissions = permissions;
+            this.ctxParamIndex = ctxParamIndex;
         }
 
+        /**
+         * 返回工具名称。
+         */
         @Override public String getName() { return name; }
+        /**
+         * 返回工具描述。
+         */
         @Override public String getDescription() { return description; }
+        /**
+         * 返回参数 Schema。
+         */
         @Override public ToolSchema getParameters() { return schema; }
+        /**
+         * 返回业务权限码。
+         */
+        @Override public Set<String> getPermissions() { return permissions; }
 
+        /**
+         * 执行工具调用，通过反射调用目标方法。
+         */
         @Override
-        public Mono<ToolResult> execute(ToolCallParam callParam) {
+        public Mono<ToolResult> execute(ToolCallContext callParam) {
             return Mono.fromCallable(() -> {
-                Object[] args = new Object[params.size()];
+                int argCount = params.size() + (ctxParamIndex >= 0 ? 1 : 0);
+                Object[] args = new Object[argCount];
+                int argIdx = 0;
+                // 1. 业务参数（LLM 可见参数）
                 for (int i = 0; i < params.size(); i++) {
                     ParamMeta p = params.get(i);
                     Object raw = callParam.get(p.name);
                     if (raw == null && p.defaultValue != null && !p.defaultValue.isEmpty()) {
                         raw = p.defaultValue;
                     }
-                    args[i] = convertArg(raw, p.javaType);
+                    // 如果这个位置是 ToolCallContext 注入点，注入门面包
+                    if (i == ctxParamIndex) {
+                        args[argIdx++] = new cd.lan1akea.harness.context.ToolContext(callParam);
+                    }
+                    args[argIdx++] = convertArg(raw, p.javaType);
+                }
+                // 2. ToolCallContext 注入在参数列表末尾
+                if (ctxParamIndex >= params.size()) {
+                    args[argIdx] = new cd.lan1akea.harness.context.ToolContext(callParam);
                 }
                 Object result = method.invoke(target, args);
                 String output = result instanceof String ? (String) result : JsonUtils.toCompactJson(result);

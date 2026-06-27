@@ -5,14 +5,14 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 模型注册表。
- * <p>
  * 管理所有已注册的模型实例，按 provider:modelName 键索引。
  * 支持运行时动态注册。
- * </p>
  */
 public class ModelRegistry {
 
-    /** 键格式: "provider:modelName" */
+    /**
+     * 按 "provider:modelName" 索引的映射
+     */
     private final Map<String, ChatModel> models = new ConcurrentHashMap<>();
 
     /**
@@ -60,9 +60,18 @@ public class ModelRegistry {
         models.remove(buildKey(provider, modelName));
     }
 
-    /** @return 已注册模型数量 */
+    /**
+     * @return 已注册模型数量
+     */
     public int size() { return models.size(); }
 
+    /**
+     * 构建注册表键。
+     *
+     * @param provider  提供商名称
+     * @param modelName 模型名称
+     * @return 组合键
+     */
     private String buildKey(String provider, String modelName) {
         return provider + ":" + modelName;
     }

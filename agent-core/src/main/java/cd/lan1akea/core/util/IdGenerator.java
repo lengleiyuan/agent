@@ -6,35 +6,64 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 分布式唯一ID生成器（雪花算法变体）。
- * <p>
  * 结构：41位时间戳（毫秒）+ 10位机器ID + 12位序列号 = 63位。
  * 不使用符号位，保证ID始终为正数。
- * </p>
  */
 public class IdGenerator {
 
-    // 时间戳起始偏移（2025-01-01 00:00:00 UTC）
+    /**
+     * 时间戳起始偏移（2025-01-01 00:00:00 UTC）。
+     */
     private static final long EPOCH = 1735689600000L;
 
-    // 各部分位数
+    /**
+     * 机器 ID 位数。
+     */
     private static final long MACHINE_ID_BITS = 10L;
+    /**
+     * 序列号位数。
+     */
     private static final long SEQUENCE_BITS = 12L;
 
-    // 最大值
+    /**
+     * 最大机器 ID 值。
+     */
     private static final long MAX_MACHINE_ID = ~(-1L << MACHINE_ID_BITS);
+    /**
+     * 最大序列号值。
+     */
     private static final long MAX_SEQUENCE = ~(-1L << SEQUENCE_BITS);
 
-    // 位移
+    /**
+     * 机器 ID 左移位数。
+     */
     private static final long MACHINE_ID_SHIFT = SEQUENCE_BITS;
+    /**
+     * 时间戳左移位数。
+     */
     private static final long TIMESTAMP_SHIFT = MACHINE_ID_BITS + SEQUENCE_BITS;
 
-    // 单例
+    /**
+     * 单例实例。
+     */
     private static final IdGenerator INSTANCE = new IdGenerator();
 
+    /**
+     * 机器标识符。
+     */
     private final long machineId;
+    /**
+     * 原子序列号计数器。
+     */
     private final AtomicLong sequence = new AtomicLong(0L);
+    /**
+     * 上次生成ID的时间戳（用于时钟回拨检测）。
+     */
     private volatile long lastTimestamp = -1L;
 
+    /**
+     * 私有构造函数，初始化机器 ID。
+     */
     private IdGenerator() {
         this.machineId = generateMachineId();
     }
@@ -57,6 +86,12 @@ public class IdGenerator {
         return String.valueOf(nextId());
     }
 
+    /**
+     * 使用雪花算法生成下一个唯一ID。
+     *
+     * @return 唯一正数ID
+     * @throws IllegalStateException 如果时钟回拨超过100ms
+     */
     private synchronized long generate() {
         long currentTimestamp = System.currentTimeMillis();
 
@@ -97,7 +132,9 @@ public class IdGenerator {
     }
 
     /**
-     * 生成机器ID，基于MAC地址哈希。
+     * 基于MAC地址哈希生成机器ID。
+     *
+     * @return 范围内的机器ID
      */
     private long generateMachineId() {
         try {
@@ -121,6 +158,12 @@ public class IdGenerator {
         return new SecureRandom().nextInt((int) MAX_MACHINE_ID + 1);
     }
 
+    /**
+     * 自旋等待直到系统时钟进入下一毫秒。
+     *
+     * @param currentTimestamp 当前时间戳
+     * @return 下一毫秒的时间戳
+     */
     private long waitNextMillis(long currentTimestamp) {
         long next = System.currentTimeMillis();
         while (next <= currentTimestamp) {

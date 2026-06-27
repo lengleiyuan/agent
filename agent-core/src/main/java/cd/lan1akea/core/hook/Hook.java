@@ -6,10 +6,8 @@ import java.util.Set;
 
 /**
  * Hook 顶层接口。
- * <p>
  * 所有 Hook 实现必须实现此接口。
  * 通过 onEvent 处理事件，返回 HookResult 决定后续行为。
- * </p>
  */
 public interface Hook {
 
@@ -35,7 +33,7 @@ public interface Hook {
      *
      * @param event   事件数据
      * @param context Hook 执行上下文
-     * @return Mono&lt;HookResult&gt; 处理结果
+     * @return 处理结果
      */
     Mono<HookResult> onEvent(HookEvent event, HookContext context);
 

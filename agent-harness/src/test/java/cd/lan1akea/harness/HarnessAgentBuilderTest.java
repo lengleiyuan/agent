@@ -10,7 +10,7 @@ import cd.lan1akea.core.model.*;
 import cd.lan1akea.core.state.AgentStateStore;
 import cd.lan1akea.core.state.InMemoryAgentStateStore;
 import cd.lan1akea.core.tool.Tool;
-import cd.lan1akea.core.tool.ToolCallParam;
+import cd.lan1akea.core.tool.ToolCallContext;
 import cd.lan1akea.core.tool.ToolResult;
 import cd.lan1akea.core.model.ToolSchema;
 import cd.lan1akea.core.tool.builtin.CalculatorTool;
@@ -60,7 +60,7 @@ class HarnessAgentBuilderTest {
             .build();
 
         assertNotNull(agent);
-        assertEquals(3, agent.getDelegate().getHookChain().size());
+        assertEquals(6, agent.getDelegate().getHookChain().size()); // 3 user + 3 default
     }
 
     @Test
@@ -92,19 +92,6 @@ class HarnessAgentBuilderTest {
 
         assertEquals(5, agent.getDelegate().getConfig().getExecutionConfig().getMaxIterations());
         assertEquals(0.5, agent.getDelegate().getConfig().getExecutionConfig().getTemperature());
-    }
-
-    @Test
-    void testBuilderWithWorkspace() {
-        cd.lan1akea.core.workspace.Workspace ws = new cd.lan1akea.core.workspace.Workspace(
-            java.nio.file.Path.of("/tmp/test"), 10_000_000L);
-        HarnessAgent agent = HarnessAgent.builder()
-            .name("WsAgent")
-            .model(new StubModel())
-            .workspace(ws)
-            .build();
-
-        assertSame(ws, agent.getDelegate().getWorkspace());
     }
 
     @Test
@@ -172,7 +159,7 @@ class HarnessAgentBuilderTest {
         }
 
         @Override
-        public Mono<ToolResult> execute(ToolCallParam params) {
+        public Mono<ToolResult> execute(ToolCallContext params) {
             return Mono.just(ToolResult.success("ok"));
         }
     }
@@ -182,7 +169,7 @@ class HarnessAgentBuilderTest {
         StubHook(String name) { this.name = name; }
 
         @Override public String getName() { return name; }
-        @Override public Set<HookEventType> getSubscribedEventTypes() { return Set.of(HookEventType.PRE_CALL); }
+        @Override public Set<HookEventType> getSubscribedEventTypes() { return Set.of(HookEventType.PRE_REASONING); }
 
         @Override
         public Mono<HookResult> onEvent(HookEvent event, HookContext context) {

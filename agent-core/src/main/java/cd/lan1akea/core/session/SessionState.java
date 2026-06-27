@@ -5,15 +5,23 @@ package cd.lan1akea.core.session;
  */
 public enum SessionState {
 
-    /** 活跃中 */
+    /**
+     * 活跃中
+     */
     ACTIVE,
 
-    /** 已暂停 */
+    /**
+     * 已暂停
+     */
     PAUSED,
 
-    /** 已关闭 */
+    /**
+     * 已关闭
+     */
     CLOSED,
 
-    /** 已过期 */
+    /**
+     * 已过期
+     */
     EXPIRED
 }

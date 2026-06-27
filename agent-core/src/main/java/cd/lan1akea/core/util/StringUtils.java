@@ -5,8 +5,10 @@ package cd.lan1akea.core.util;
  */
 public final class StringUtils {
 
+    /**
+     * 私有构造函数，防止实例化。
+     */
     private StringUtils() {
-        // 工具类，禁止实例化
     }
 
     /**

@@ -373,7 +373,7 @@ class ToolRegistryTest {
             return new ToolSchema(name, desc, schema);
         }
 
-        @Override public Mono<ToolResult> execute(ToolCallParam params) {
+        @Override public Mono<ToolResult> execute(ToolCallContext params) {
             return Mono.just(ToolResult.success("ok"));
         }
     }

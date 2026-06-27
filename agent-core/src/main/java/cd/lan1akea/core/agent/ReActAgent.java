@@ -2,11 +2,10 @@ package cd.lan1akea.core.agent;
 
 import cd.lan1akea.core.agent.config.AgentConfig;
 import cd.lan1akea.core.agent.config.AgentExecutionConfig;
+import cd.lan1akea.core.model.ToolChoicePolicy;
 import cd.lan1akea.core.agent.loop.LoopContext;
 import cd.lan1akea.core.agent.loop.ReActLoop;
 import cd.lan1akea.core.context.RuntimeContext;
-import cd.lan1akea.core.event.EventBus;
-import cd.lan1akea.core.event.DomainEvent;
 import cd.lan1akea.core.exception.AgentConfigurationException;
 import cd.lan1akea.core.hook.*;
 import cd.lan1akea.core.hook.recorder.HookRecorder;
@@ -15,61 +14,103 @@ import cd.lan1akea.core.message.SystemMessage;
 import cd.lan1akea.core.model.*;
 import cd.lan1akea.core.model.ChatResponse;
 import cd.lan1akea.core.model.ChatStreamChunk;
-import cd.lan1akea.core.model.ContextWindowManager;
 import cd.lan1akea.core.model.ModelContextWindow;
 import cd.lan1akea.core.model.StructuredOutputReminder;
 import cd.lan1akea.core.session.*;
-import cd.lan1akea.core.state.AgentState;
 import cd.lan1akea.core.state.AgentStateStore;
 import cd.lan1akea.core.tool.*;
 import cd.lan1akea.core.util.IdGenerator;
-import cd.lan1akea.core.workspace.Workspace;
+import cd.lan1akea.core.util.ValidationUtils;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * ReActAgent — 多租户并发安全的 Agent 实现。
- * <p>
- * 构建时注入模型+工具+Hook，每次请求通过 LoopContext 传递可变数据。
+ * 构建时注入模型、工具、Hook，每次请求通过 LoopContext 传递可变数据。
  * 无实例级锁，多请求可并发执行。租户/用户/会话上下文通过 RuntimeContext 显式传递。
- * </p>
  */
-public class ReActAgent implements ObservableAgent, StreamableAgent, CallableAgent {
+public class ReActAgent implements StreamableAgent, CallableAgent {
 
-    // === 构建时注入（不可变） ===
+    /**
+     * Agent 唯一标识。
+     */
     final String id;
+    /**
+     * Agent 名称。
+     */
     final String name;
+    /**
+     * Agent 配置。
+     */
     final AgentConfig config;
+    /**
+     * 聊天模型。
+     */
     final ChatModel model;
+    /**
+     * 工具注册表。
+     */
     final ToolRegistry toolRegistry;
+    /**
+     * Hook 链。
+     */
     final HookChain hookChain;
+    /**
+     * Hook 分发器。
+     */
     final HookDispatcher hookDispatcher;
+    /**
+     * 工具执行器。
+     */
     final ToolExecutor toolExecutor;
+    /**
+     * ReAct 执行循环。
+     */
     final ReActLoop reActLoop;
+    /**
+     * AroundHook 链。
+     */
+    final AroundHookChain aroundHookChain;
 
-    // === 可选（可通过 setter 替换） ===
+    /**
+     * 状态存储（可选）。
+     */
     AgentStateStore stateStore;
-    Workspace workspace;
-    SessionSummaryService summaryService;
+    /**
+     * 上下文窗口配置。
+     */
     ModelContextWindow contextWindow;
-    ContextWindowManager contextWindowManager;
+    /**
+     * Hook 记录器（可选）。
+     */
     HookRecorder hookRecorder;
+    /**
+     * 系统提示消息。
+     */
+    String systemMessage;
 
-    // === 内部 ===
-    final EventBus eventBus;
-    final AgentEventSource eventSource;
+    /**
+     * 当前活跃的循环上下文。
+     */
     final AtomicReference<LoopContext> activeLoopContext = new AtomicReference<>();
+    /**
+     * 是否已构建。
+     */
     private volatile boolean built;
 
+    /**
+     * 使用指定配置创建 ReActAgent。
+     *
+     * @param config 代理配置，必须包含模型
+     */
     public ReActAgent(AgentConfig config) {
-        cd.lan1akea.core.util.ValidationUtils.notNull(config, "AgentConfig");
-        cd.lan1akea.core.util.ValidationUtils.notNull(config.getModel(), "ChatModel");
+        ValidationUtils.notNull(config, "AgentConfig");
+        ValidationUtils.notNull(config.getModel(), "ChatModel");
 
         this.config = config;
         this.id = IdGenerator.nextIdStr();
@@ -81,282 +122,472 @@ public class ReActAgent implements ObservableAgent, StreamableAgent, CallableAge
 
         this.hookChain = config.getHookChain() != null ? config.getHookChain() : new HookChain();
         this.hookDispatcher = new HookDispatcher(this.hookChain);
+        this.aroundHookChain = config.getAroundHookChain() != null ? config.getAroundHookChain() : new AroundHookChain();
 
-        this.eventBus = new EventBus();
-        this.eventSource = new AgentEventSource(eventBus);
 
         this.stateStore = config.getStateStore();
-        this.workspace = config.getWorkspace();
-        this.contextWindow = new ModelContextWindow(config.getModel().getModelName(), 8000, 4000);
-        this.contextWindowManager = new ContextWindowManager(contextWindow);
-        this.summaryService = new SessionSummaryService();
+        int maxInput = config.getModel().getMaxInputTokens();
+        this.contextWindow = new ModelContextWindow(config.getModel().getModelName(), maxInput, maxInput / 2);
 
         this.reActLoop = new ReActLoop(model, toolExecutor, hookDispatcher, toolRegistry,
-            stateStore, eventBus);
+            stateStore, aroundHookChain);
     }
 
-    // ========================================================================
-    // 构建
-    // ========================================================================
 
-    public final Mono<Void> build() {
-        if (built) return Mono.error(new AgentConfigurationException("Agent [" + name + "] 已构建"));
-        built = true;
 
-        for (AgentEventType t : AgentEventType.values()) eventBus.subscribe("agent:" + t.name().toLowerCase());
-        eventBus.subscribe("hook:*");
-
-        return eventSource.emit(AgentEventType.CREATED, name).then(doBuild());
-    }
-
-    protected Mono<Void> doBuild() { return Mono.empty(); }
-
-    // ========================================================================
-    // 核心执行（非流式）
-    // ========================================================================
-
+    /**
+     * 发送消息并获取回复。
+     */
     @Override
     public Mono<ChatResponse> chat(List<Msg> messages) {
-        ensureBuilt();
-        return Mono.deferContextual(ctxView -> {
-            String tenantId = ctxView.getOrDefault("tenantId", null);
-            String userId = ctxView.getOrDefault("userId", null);
-            String sessId = ctxView.getOrDefault("sessionId", null);
-            @SuppressWarnings("unchecked")
-            Map<String, Object> attrs = ctxView.getOrDefault("attributes", null);
-
-            return loadSessionAndHistory(sessId, messages)
-                .flatMap(msgs -> injectAgentsMd(msgs))
-                .flatMap(msgs -> dispatchPreCall(tenantId, userId, sessId, msgs))
-                .flatMap(m -> {
-                    LoopContext ctx = LoopContext.builder()
-                        .agentName(name).tenantId(tenantId).userId(userId).sessionId(sessId)
-                        .attributes(attrs).messages(m).generateOptions(resolveOptions())
-                        .maxIterations(config.getExecutionConfig().getMaxIterations())
-                        .stream(false).build();
-
-                    activeLoopContext.set(ctx);
-                    Mono<ChatResponse> exec = reActLoop.execute(ctx)
-                        .doOnSuccess(r -> eventSource.emit(AgentEventType.COMPLETED, name).subscribe())
-                        .doOnError(e -> eventSource.emit(AgentEventType.ERROR, name).subscribe())
-                        .doFinally(s -> activeLoopContext.set(null));
-
-                    long totalTimeout = config.getExecutionConfig().getTotalTimeoutMs();
-                    if (totalTimeout > 0) exec = exec.timeout(Duration.ofMillis(totalTimeout));
-
-                    return exec;
-                })
-                .flatMap(resp -> dispatchPostCall(tenantId, userId, sessId, resp, false));
-        });
+        return doChat(messages, null);
     }
 
-    // ========================================================================
-    // 核心执行：带 RuntimeContext
-    // ========================================================================
-
+    /**
+     * 发送消息并获取回复，指定运行时上下文。
+     */
     @Override
     public Mono<ChatResponse> chat(List<Msg> messages, RuntimeContext ctx) {
-        return writeRuntimeContext(chat(messages), ctx);
+        return doChat(messages, ctx);
     }
 
-    @Override
-    public Flux<ChatStreamChunk> stream(List<Msg> messages, RuntimeContext ctx) {
-        return writeRuntimeContextStream(stream(messages), ctx);
-    }
+    /**
+     * 非流式聊天执行入口。
+     * RuntimeContext 非 null 时直接使用，否则从 Reactor Context 回退读取。
+     * 始终写回 Reactor Context 供下游传播。
+     *
+     * @param messages 消息列表
+     * @param rtCtx 运行时上下文，可为 null
+     * @return 聊天响应
+     */
+    private Mono<ChatResponse> doChat(List<Msg> messages, RuntimeContext rtCtx) {
+        ensureBuilt();
+        return Mono.deferContextual(ctxView -> {
+            final RuntimeContext ctx = resolveRuntimeContext(ctxView, rtCtx);
+            String tenantId = ctx.getTenantId();
+            String userId = ctx.getUserId();
+            String sessId = ctx.getSessionId();
 
-    private Mono<ChatResponse> writeRuntimeContext(Mono<ChatResponse> mono, RuntimeContext ctx) {
-        return mono.contextWrite(c -> {
-            if (ctx.getTenantId() != null) c = c.put("tenantId", ctx.getTenantId());
-            if (ctx.getUserId() != null) c = c.put("userId", ctx.getUserId());
-            if (ctx.getSessionId() != null) c = c.put("sessionId", ctx.getSessionId());
-            if (!ctx.getAttributes().isEmpty()) c = c.put("attributes", ctx.getAttributes());
-            return c;
+            // aroundCall — 包裹整个 chat（traceId/全链路计时）
+            // 上下文压缩由 ContextCompressionHook（PRE_REASONING 优先级5）统一处理
+            HookContext callHc = new HookContext(name, tenantId, userId, sessId, 0, List.of(), ctx.getAttributes());
+            return aroundHookChain.aroundCall(new HookEvent(null), callHc,
+                            e -> loadSessionAndHistory(sessId, messages)
+                                    .flatMap(this::injectSystemMessage)
+                                    .flatMap(m -> {
+                                        LoopContext loopCtx = LoopContext.builder()
+                                                .agentName(name).fromRuntimeContext(ctx)
+                                                .messages(m).generateOptions(resolveOptions())
+                                                .maxIterations(config.getExecutionConfig().getMaxIterations())
+                                                .stream(false).build();
+                                        activeLoopContext.set(loopCtx);
+                                        Mono<ChatResponse> exec = reActLoop.execute(loopCtx)
+                                                .doFinally(s -> activeLoopContext.set(null));
+                                        long totalTimeout = config.getExecutionConfig().getTotalTimeoutMs();
+                                        if (totalTimeout > 0) exec = exec.timeout(Duration.ofMillis(totalTimeout));
+                                        return exec;
+                                    })
+                                    .map(resp -> { e.setPayload("response", resp); return e; }))
+                    .map(e -> (ChatResponse) e.getPayload("response"))
+                    .contextWrite(c -> writeContext(c, ctx));
         });
     }
 
-    private Flux<ChatStreamChunk> writeRuntimeContextStream(Flux<ChatStreamChunk> flux, RuntimeContext ctx) {
-        return flux.contextWrite(c -> {
-            if (ctx.getTenantId() != null) c = c.put("tenantId", ctx.getTenantId());
-            if (ctx.getUserId() != null) c = c.put("userId", ctx.getUserId());
-            if (ctx.getSessionId() != null) c = c.put("sessionId", ctx.getSessionId());
-            if (!ctx.getAttributes().isEmpty()) c = c.put("attributes", ctx.getAttributes());
-            return c;
-        });
-    }
 
-    // ========================================================================
-    // 核心执行（流式）
-    // ========================================================================
-
+    /**
+     * 流式发送消息并获取回复。
+     */
     @Override
     public Flux<ChatStreamChunk> stream(List<Msg> messages) {
+        return doStream(messages, null);
+    }
+
+    /**
+     * 流式发送消息并获取回复，指定运行时上下文。
+     */
+    @Override
+    public Flux<ChatStreamChunk> stream(List<Msg> messages, RuntimeContext ctx) {
+        return doStream(messages, ctx);
+    }
+
+    /**
+     * 流式聊天执行入口。
+     *
+     * @param messages 消息列表
+     * @param rtCtx 运行时上下文，可为 null
+     * @return 聊天流式响应
+     */
+    private Flux<ChatStreamChunk> doStream(List<Msg> messages, RuntimeContext rtCtx) {
         ensureBuilt();
         return Flux.deferContextual(ctxView -> {
-            String tenantId = ctxView.getOrDefault("tenantId", null);
-            String userId = ctxView.getOrDefault("userId", null);
-            String sessId = ctxView.getOrDefault("sessionId", null);
-            @SuppressWarnings("unchecked")
-            Map<String, Object> attrs = ctxView.getOrDefault("attributes", null);
-
+            final RuntimeContext ctx = resolveRuntimeContext(ctxView, rtCtx);
+            String sessId = ctx.getSessionId();
             GenerateOptions opts = resolveOptions();
 
             return loadSessionAndHistory(sessId, messages)
-                .flatMapMany(msgs -> injectAgentsMd(msgs).flatMapMany(Flux::just))
-                .concatMap(msgs -> dispatchPreCall(tenantId, userId, sessId, msgs))
-                .concatMap(m -> {
-                    LoopContext ctx = LoopContext.builder()
-                        .agentName(name).tenantId(tenantId).userId(userId).sessionId(sessId)
-                        .attributes(attrs).messages(m).generateOptions(opts)
-                        .maxIterations(config.getExecutionConfig().getMaxIterations())
-                        .stream(true).build();
+                    .flatMapMany(msgs -> injectSystemMessage(msgs).flatMapMany(Flux::just))
+                    .concatMap(m -> {
+                        LoopContext loopCtx = LoopContext.builder()
+                                .agentName(name)
+                                .fromRuntimeContext(ctx)
+                                .messages(m).generateOptions(opts)
+                                .maxIterations(config.getExecutionConfig().getMaxIterations())
+                                .stream(true).build();
 
-                    activeLoopContext.set(ctx);
-                    List<ChatStreamChunk> collected = new ArrayList<>();
-                    return reActLoop.executeStream(ctx)
-                        .doOnNext(collected::add)
-                        .doOnComplete(() -> eventSource.emit(AgentEventType.COMPLETED, name).subscribe())
-                        .doOnError(e -> eventSource.emit(AgentEventType.ERROR, name).subscribe())
-                        .doFinally(s -> {
-                            activeLoopContext.set(null);
-                            dispatchPostCallStream(tenantId, userId, sessId, collected);
-                        });
-                });
+                        activeLoopContext.set(loopCtx);
+                        List<ChatStreamChunk> collected = new ArrayList<>();
+                        return reActLoop.executeStream(loopCtx)
+                                .doOnNext(collected::add)
+                                .doFinally(s -> activeLoopContext.set(null));
+                    })
+                    .contextWrite(c -> writeContext(c, ctx));
         });
     }
 
-    // ========================================================================
-    // 结构化输出
-    // ========================================================================
-
+    /**
+     * 发送消息并获取按指定类结构化的回复。
+     */
     @Override
     public Mono<ChatResponse> chat(List<Msg> messages, Class<?> outputClass) {
         return chat(StructuredOutputReminder.injectSchemaInstruction(messages, outputClass));
     }
 
+    /**
+     * 流式发送消息并获取按指定类结构化的回复。
+     */
     @Override
     public Flux<ChatStreamChunk> stream(List<Msg> messages, Class<?> outputClass) {
         return stream(StructuredOutputReminder.injectSchemaInstruction(messages, outputClass));
     }
 
-    // ========================================================================
-    // observe() —— 被动观察，不产生回复
-    // ========================================================================
-
-    @Override
-    public Mono<Void> observe(Msg message) {
-        ensureBuilt();
-        return Mono.deferContextual(ctxView -> {
-            String tenantId = ctxView.getOrDefault("tenantId", null);
-            String userId = ctxView.getOrDefault("userId", null);
-
-            LoopContext ctx = LoopContext.builder()
-                .agentName(name).tenantId(tenantId).userId(userId)
-                .messages(List.of(message))
-                .generateOptions(resolveOptions())
-                .maxIterations(1).stream(false).build();
-
-            eventSource.emit(AgentEventType.STARTED, name).subscribe();
-            return reActLoop.execute(ctx)
-                .doOnSuccess(r -> eventSource.emit(AgentEventType.COMPLETED, name).subscribe())
-                .doOnError(e -> eventSource.emit(AgentEventType.ERROR, name).subscribe())
-                .then();
-        });
+    /**
+     * 创建 Builder。
+     */
+    public static Builder builder() {
+        return new Builder();
     }
 
-    // ========================================================================
-    // 会话
-    // ========================================================================
+    public static class Builder {
+        /**
+         * Agent 名称。
+         */
+        private String name;
+        /**
+         * 聊天模型。
+         */
+        private ChatModel model;
+        /**
+         * 工具注册表。
+         */
+        private final ToolRegistry toolRegistry = new ToolRegistry();
+        /**
+         * Hook 链。
+         */
+        private final HookChain hookChain = new HookChain();
+        /**
+         * AroundHook 链。
+         */
+        private final AroundHookChain aroundHookChain = new AroundHookChain();
+        /**
+         * 状态存储（可选）。
+         */
+        private AgentStateStore stateStore;
+        /**
+         * 最大迭代次数。
+         */
+        private Integer maxIterations;
+        /**
+         * 生成温度参数。
+         */
+        private Double temperature;
+        /**
+         * 最大输出 token 数。
+         */
+        private Integer maxTokens;
+        /**
+         * 工具选择策略。
+         */
+        private ToolChoicePolicy toolChoice = ToolChoicePolicy.AUTO;
+        /**
+         * 总超时毫秒数。
+         */
+        private long totalTimeoutMs = 300_000;
 
-    public Mono<Session> openSession(String sessionId) {
-        if (stateStore == null) {
-            String newId = IdGenerator.nextIdStr();
-            return Mono.just(new Session(new SessionId(newId), 0, name,
-                SessionState.ACTIVE, null, null, null));
+
+        /**
+         * 设置 Agent 名称。
+         */
+        public Builder name(String name) { this.name = name; return this; }
+
+        /**
+         * 设置模型并读取其默认参数（maxTokens/temperature）。maxIterations 是 Agent 属性不在此列。
+         */
+        public Builder model(ChatModel model) {
+            this.model = model;
+            if (this.temperature == null) this.temperature = model.getDefaultTemperature();
+            if (this.maxTokens == null) this.maxTokens = model.getDefaultMaxTokens();
+            return this;
         }
-        if (sessionId != null) {
-            SessionId sid = new SessionId(sessionId);
-            return stateStore.findById(sid)
-                .switchIfEmpty(Mono.defer(() -> stateStore.create(
-                    new Session(sid, 0, name, SessionState.ACTIVE, null, null, null))));
+
+
+        /**
+         * 注册单个工具（支持 Tool 实例或 ToolFunction 注解类）。
+         */
+        public Builder tool(Object toolObj) {
+            this.toolRegistry.registerTool(toolObj);
+            return this;
         }
-        String newId = IdGenerator.nextIdStr();
-        SessionId sid = new SessionId(newId);
-        return stateStore.create(new Session(sid, 0, name, SessionState.ACTIVE, null, null, null));
+
+        /**
+         * 注册多个工具。
+         */
+        public Builder tools(Object... toolObjects) {
+            for (Object obj : toolObjects) tool(obj);
+            return this;
+        }
+
+        /**
+         * 注入外部的 ToolRegistry（会合并，后续 .tool() 调用往此 registry 注册）。
+         */
+        public Builder toolRegistry(ToolRegistry registry) {
+            registry.getAllTools().forEach(this.toolRegistry::register);
+            return this;
+        }
+
+        /**
+         * 添加工具适配器（支持 ToolFunction 注解等非 Tool 接口对象）。
+         */
+        public Builder toolAdapter(ToolAdapter adapter) {
+            this.toolRegistry.addAdapter(adapter);
+            return this;
+        }
+
+
+        /**
+         * 注册单个 Hook。
+         */
+        public Builder hook(Hook hook) {
+            this.hookChain.register(hook);
+            return this;
+        }
+
+        /**
+         * 注册多个 Hook。
+         */
+        public Builder hooks(Hook... hooks) {
+            for (Hook h : hooks) hook(h);
+            return this;
+        }
+
+        /**
+         * 注册 AroundHook。
+         */
+        public Builder aroundHook(AroundHook hook) {
+            this.aroundHookChain.register(hook);
+            return this;
+        }
+
+
+        /**
+         * 设置最大迭代次数。
+         */
+        public Builder maxIterations(int n) { this.maxIterations = n; return this; }
+        /**
+         * 设置生成温度。
+         */
+        public Builder temperature(double t) { this.temperature = t; return this; }
+        /**
+         * 设置最大输出 token 数。
+         */
+        public Builder maxTokens(int n) { this.maxTokens = n; return this; }
+        /**
+         * 设置工具选择策略。
+         */
+        public Builder toolChoice(ToolChoicePolicy p) { this.toolChoice = p; return this; }
+        /**
+         * 设置总超时时间（毫秒）。
+         */
+        public Builder totalTimeoutMs(long ms) { this.totalTimeoutMs = ms; return this; }
+
+
+        /**
+         * 设置状态存储。
+         */
+        public Builder stateStore(AgentStateStore store) { this.stateStore = store; return this; }
+
+
+        /**
+         * 构建并返回 ReActAgent 实例。
+         *
+         * @return 构建完成的 ReActAgent
+         * @throws AgentConfigurationException 如果名称或模型未设置
+         */
+        public ReActAgent build() {
+            if (name == null || name.isBlank())
+                throw new AgentConfigurationException("Agent name 不能为空");
+            if (model == null)
+                throw new AgentConfigurationException("ChatModel 不能为 null");
+
+            int iters = maxIterations != null ? maxIterations : 10;
+            double temp = temperature != null ? temperature : model.getDefaultTemperature();
+            int outTokens = maxTokens != null ? maxTokens : model.getDefaultMaxTokens();
+
+            AgentExecutionConfig execConfig = AgentExecutionConfig.builder()
+                .maxIterations(iters)
+                .temperature(temp)
+                .maxTokens(outTokens)
+                .toolChoice(toolChoice)
+                .totalTimeoutMs(totalTimeoutMs)
+                .build();
+
+            AgentConfig config = AgentConfig.builder()
+                .name(name).model(model)
+                .toolRegistry(toolRegistry)
+                .hookChain(hookChain)
+                .aroundHookChain(aroundHookChain)
+                .stateStore(stateStore)
+                .executionConfig(execConfig)
+                .build();
+
+            return new ReActAgent(config);
+        }
     }
 
-    // ========================================================================
-    // 中断
-    // ========================================================================
+    /**
+     * 构建 Agent，订阅事件并触发初始化。
+     *
+     * @return 构建完成的 Mono
+     */
+    public final Mono<Void> build() {
+        if (built) return Mono.error(new AgentConfigurationException("Agent [" + name + "] 已构建"));
+        built = true;
+        return doBuild();
+    }
 
+    /**
+     * 子类可扩展的构建逻辑。
+     *
+     * @return 构建完成的 Mono
+     */
+    protected Mono<Void> doBuild() { return Mono.empty(); }
+
+
+
+    /**
+     * 解析运行时上下文，优先使用显式传入的，否则从 Reactor Context 回退构建。
+     *
+     * @param ctxView Reactor 上下文视图
+     * @param rtCtx 显式传入的运行时上下文，可为 null
+     * @return 解析后的运行时上下文
+     */
+    private RuntimeContext resolveRuntimeContext(
+            reactor.util.context.ContextView ctxView, RuntimeContext rtCtx) {
+        if (rtCtx != null) return rtCtx;
+        return new RuntimeContext(
+            ctxView.getOrDefault("tenantId", null),
+            ctxView.getOrDefault("userId", null),
+            ctxView.getOrDefault("sessionId", null),
+            name,
+            ctxView.getOrDefault("attributes", null));
+    }
+
+    /**
+     * 将运行时上下文写入 Reactor Context 供子 Agent 传播使用。
+     *
+     * @param c Reactor Context
+     * @param ctx 运行时上下文
+     * @return 更新后的 Context
+     */
+    private reactor.util.context.Context writeContext(
+            reactor.util.context.Context c, RuntimeContext ctx) {
+        if (ctx.getTenantId() != null) c = c.put("tenantId", ctx.getTenantId());
+        if (ctx.getUserId() != null) c = c.put("userId", ctx.getUserId());
+        if (ctx.getSessionId() != null) c = c.put("sessionId", ctx.getSessionId());
+        if (!ctx.getAttributes().isEmpty()) c = c.put("attributes", ctx.getAttributes());
+        return c;
+    }
+
+
+
+    /**
+     * 中断当前执行。
+     */
     @Override
     public void interrupt() {
         LoopContext ctx = activeLoopContext.get();
         if (ctx != null) ctx.interrupt();
     }
 
+    /**
+     * 中断当前执行并附带反馈消息。
+     */
     @Override
     public void interrupt(Msg feedbackMsg) {
         LoopContext ctx = activeLoopContext.get();
         if (ctx != null) ctx.interrupt(feedbackMsg);
     }
 
-    // ========================================================================
-    // 生命周期
-    // ========================================================================
 
+    /**
+     * 关闭 Agent，重置状态。
+     *
+     * @return 关闭完成的 Mono
+     */
     public Mono<Void> shutdown() {
         built = false;
         activeLoopContext.set(null);
         return Mono.empty();
     }
 
-    @Override
-    public Flux<DomainEvent> events() {
-        return Flux.merge(
-            eventBus.subscribe("agent:created"),
-            eventBus.subscribe("agent:completed"),
-            eventBus.subscribe("agent:error"),
-            eventBus.subscribe("hook:*"));
-    }
-
-    @Override
-    public Flux<DomainEvent> events(String eventType) { return eventBus.subscribe(eventType); }
-
-    // ========================================================================
-    // Setter
-    // ========================================================================
-
-    public void setStateStore(AgentStateStore v) { this.stateStore = v; }
-    public void setWorkspace(Workspace v) { this.workspace = v; }
-    public void setHookRecorder(HookRecorder v) {
-        this.hookRecorder = v;
-        if (this.hookDispatcher != null) this.hookDispatcher.setRecorder(v);
-    }
-    public void setContextWindowManager(ContextWindowManager v) { this.contextWindowManager = v; }
-
-    // ========================================================================
-    // Getters
-    // ========================================================================
-
     @Override public String getName() { return name; }
     @Override public String getId() { return id; }
+    /**
+     * 获取 Agent 配置。
+     */
     public AgentConfig getConfig() { return config; }
+    /**
+     * 获取聊天模型。
+     */
     public ChatModel getModel() { return model; }
+    /**
+     * 获取工具注册表。
+     */
     public ToolRegistry getToolRegistry() { return toolRegistry; }
+    /**
+     * 获取 Hook 链。
+     */
     public HookChain getHookChain() { return hookChain; }
-    public EventBus getEventBus() { return eventBus; }
+    /**
+     * 获取事件总线。
+     */
+    /**
+     * 获取状态存储。
+     */
     public AgentStateStore getStateStore() { return stateStore; }
-    public Workspace getWorkspace() { return workspace; }
-    public SessionSummaryService getSummaryService() { return summaryService; }
+    /**
+     * 获取上下文窗口。
+     */
     public ModelContextWindow getContextWindow() { return contextWindow; }
+    /**
+     * 获取 Hook 记录器。
+     */
     public HookRecorder getHookRecorder() { return hookRecorder; }
+    /**
+     * 返回是否已构建。
+     */
     public boolean isBuilt() { return built; }
+    /**
+     * 返回是否正在执行。
+     */
     public boolean isRunning() { return activeLoopContext.get() != null; }
 
-    // ========================================================================
-    // 内部：会话历史 + 检查点恢复
-    // ========================================================================
-
+    /**
+     * 加载会话状态和历史消息，合并检查点恢复。
+     *
+     * @param sessionId 会话 ID
+     * @param messages 当前消息
+     * @return 合并后的消息列表
+     */
     private Mono<List<Msg>> loadSessionAndHistory(String sessionId, List<Msg> messages) {
         if (sessionId == null || stateStore == null) return Mono.just(messages);
 
@@ -384,6 +615,13 @@ public class ReActAgent implements ObservableAgent, StreamableAgent, CallableAge
             .defaultIfEmpty(messages);
     }
 
+    /**
+     * 从状态存储加载会话历史消息。
+     *
+     * @param sessionId 会话 ID
+     * @param messages 当前消息
+     * @return 合并历史后的消息列表
+     */
     private Mono<List<Msg>> loadHistory(String sessionId, List<Msg> messages) {
         return stateStore.getHistory(new SessionId(sessionId))
             .collectList()
@@ -395,86 +633,50 @@ public class ReActAgent implements ObservableAgent, StreamableAgent, CallableAge
             .defaultIfEmpty(messages);
     }
 
-    // ========================================================================
-    // 内部：AGENTS.md 自动注入
-    // ========================================================================
-
-    private Mono<List<Msg>> injectAgentsMd(List<Msg> messages) {
-        if (workspace == null) return Mono.just(messages);
-        try {
-            String agentsMd = workspace.readAgentsMd();
-            if (agentsMd != null && !agentsMd.isBlank()) {
-                List<Msg> enriched = new ArrayList<>();
-                enriched.add(SystemMessage.of(agentsMd));
-                enriched.addAll(messages);
-                return Mono.just(enriched);
-            }
-        } catch (Exception ignored) {}
+    /**
+     * 在消息列表头部注入系统提示消息。
+     *
+     * @param messages 原始消息列表
+     * @return 注入后的消息列表
+     */
+    private Mono<List<Msg>> injectSystemMessage(List<Msg> messages) {
+        String sysMsg = systemMessage;
+        if (sysMsg != null && !sysMsg.isBlank()) {
+            List<Msg> enriched = new ArrayList<>();
+            enriched.add(SystemMessage.of(sysMsg));
+            enriched.addAll(messages);
+            return Mono.just(enriched);
+        }
         return Mono.just(messages);
     }
 
     // ========================================================================
-    // 内部：PreCall / PostCall Hook 调度
+    // Setter
     // ========================================================================
 
-    private Mono<List<Msg>> dispatchPreCall(String tenantId, String userId, String sessionId,
-                                             List<Msg> messages) {
-        final List<Msg> finalMessages;
-        if (contextWindowManager.isNearLimit(messages)) {
-            finalMessages = contextWindowManager.trim(messages, 8);
-        } else {
-            finalMessages = messages;
-        }
-        if (hookChain.size() == 0) return Mono.just(finalMessages);
-
-        HookContext hc = new HookContext(name, tenantId, sessionId, userId, 0, List.of(), null);
-        PreCallEvent event = new PreCallEvent();
-        event.setMessages(finalMessages);
-
-        return hookDispatcher.dispatch(HookEventType.PRE_CALL, event, hc)
-            .map(r -> {
-                if (r.isAbort()) throw new AgentConfigurationException("PreCall Hook 阻止执行: " + r.getAbortReason());
-                return r.isModify() && event.getMessages() != null
-                    ? event.getMessages() : finalMessages;
-            })
-            .defaultIfEmpty(finalMessages);
+    public void setStateStore(AgentStateStore v) { this.stateStore = v; }
+    public void setSystemMessage(String msg) { this.systemMessage = msg; }
+    public void setHookRecorder(HookRecorder v) {
+        this.hookRecorder = v;
+        if (this.hookDispatcher != null) this.hookDispatcher.setRecorder(v);
     }
 
-    private Mono<ChatResponse> dispatchPostCall(String tenantId, String userId, String sessionId,
-                                                 ChatResponse response, boolean stream) {
-        if (hookChain.size() == 0) return Mono.just(response);
-
-        HookContext hc = new HookContext(name, tenantId, sessionId, userId, 0, List.of(), null);
-        PostCallEvent event = new PostCallEvent();
-        event.setChatResponse(response);
-        event.setStream(stream);
-
-        return hookDispatcher.dispatch(HookEventType.POST_CALL, event, hc)
-            .thenReturn(response);
-    }
-
-    private void dispatchPostCallStream(String tenantId, String userId, String sessionId,
-                                         List<ChatStreamChunk> chunks) {
-        if (hookChain.size() == 0 || chunks.isEmpty()) return;
-
-        HookContext hc = new HookContext(name, tenantId, sessionId, userId, 0, List.of(), null);
-        PostCallEvent event = new PostCallEvent();
-        event.setStreamChunks(chunks);
-        event.setStream(true);
-
-        hookDispatcher.dispatch(HookEventType.POST_CALL, event, hc).subscribe();
-    }
-
-    // ========================================================================
-    // 内部：生成选项
-    // ========================================================================
-
+    /**
+     * 从配置中解析生成选项。
+     *
+     * @return 生成选项
+     */
     private GenerateOptions resolveOptions() {
         AgentExecutionConfig ec = config.getExecutionConfig();
         return GenerateOptions.builder().temperature(ec.getTemperature())
             .maxTokens(ec.getMaxTokens()).toolChoice(ec.getToolChoice()).build();
     }
 
+    /**
+     * 检查 Agent 是否已构建，未构建则抛出异常。
+     *
+     * @throws AgentConfigurationException 如果尚未构建
+     */
     private void ensureBuilt() {
         if (!built) throw new AgentConfigurationException("Agent [" + name + "] 尚未构建");
     }

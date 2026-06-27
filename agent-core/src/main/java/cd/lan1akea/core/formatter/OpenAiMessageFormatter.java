@@ -6,13 +6,14 @@ import java.util.*;
 
 /**
  * OpenAI 兼容消息格式化器。
- * <p>
  * 输出格式: [{"role": "...", "content": "..." | [...]}, ...]。
  * 支持 system、user、assistant、tool 四种角色。
- * </p>
  */
 public class OpenAiMessageFormatter implements MessageFormatter {
 
+    /**
+     * 将消息列表格式化为 OpenAI 兼容的 API 请求体。
+     */
     @Override
     public List<Map<String, Object>> format(List<Msg> messages) {
         List<Map<String, Object>> result = new ArrayList<>();
@@ -22,6 +23,12 @@ public class OpenAiMessageFormatter implements MessageFormatter {
         return result;
     }
 
+    /**
+     * 格式化单条消息为 OpenAI 兼容的 Map。
+     *
+     * @param msg 待格式化的消息
+     * @return 格式化后的 Map，包含 role 和 content 字段
+     */
     protected Map<String, Object> formatSingle(Msg msg) {
         Map<String, Object> formatted = new LinkedHashMap<>();
         formatted.put("role", msg.getRole().getValue());
@@ -58,6 +65,12 @@ public class OpenAiMessageFormatter implements MessageFormatter {
         return formatted;
     }
 
+    /**
+     * 将图片块格式化为 OpenAI image_url 格式。
+     *
+     * @param image 图片内容块
+     * @return OpenAI 兼容的图片表示
+     */
     private Map<String, Object> formatImage(ImageBlock image) {
         Map<String, Object> part = new LinkedHashMap<>();
         part.put("type", "image_url");
@@ -69,6 +82,12 @@ public class OpenAiMessageFormatter implements MessageFormatter {
         return part;
     }
 
+    /**
+     * 将工具调用块格式化为 OpenAI tool_use 格式。
+     *
+     * @param toolUse 工具调用内容块
+     * @return OpenAI 兼容的工具调用表示
+     */
     private Map<String, Object> formatToolUse(ToolUseBlock toolUse) {
         Map<String, Object> part = new LinkedHashMap<>();
         part.put("type", "tool_use");
@@ -78,6 +97,12 @@ public class OpenAiMessageFormatter implements MessageFormatter {
         return part;
     }
 
+    /**
+     * 将工具结果块格式化为 OpenAI tool_result 格式。
+     *
+     * @param toolResult 工具结果内容块
+     * @return OpenAI 兼容的工具结果表示
+     */
     private Map<String, Object> formatToolResult(ToolResultBlock toolResult) {
         Map<String, Object> part = new LinkedHashMap<>();
         part.put("type", "tool_result");

@@ -9,28 +9,64 @@ import java.util.List;
 
 /**
  * 对话轮次。
- * <p>
  * 一次请求-响应对，包含用户消息、助手消息、工具调用。
  * 结构化 Msg 列表优先；JSON 字符串字段作为序列化缓存/兼容。
- * </p>
  */
 public class ChatTurn {
 
+    /**
+     * 唯一轮次 ID
+     */
     private final long id;
+    /**
+     * 所属会话 ID
+     */
     private final long sessionId;
+    /**
+     * 会话内轮次顺序
+     */
     private final int turnOrder;
+    /**
+     * 用户消息 JSON（序列化缓存/回退）
+     */
     private final String userMsgJson;
+    /**
+     * 助手消息 JSON（序列化缓存/回退）
+     */
     private final String assistantMsgJson;
+    /**
+     * 工具调用 JSON（序列化缓存/回退）
+     */
     private final String toolCallsJson;
+    /**
+     * 创建时间戳
+     */
     private final LocalDateTime createdAt;
 
-    /** 结构化的用户消息列表（含 ContentBlock），序列化/反序列化保留完整结构 */
+    /**
+     * 结构化用户消息（含内容块）
+     */
     private final List<Msg> userMessages;
-    /** 结构化的助手消息列表（含 ContentBlock） */
+    /**
+     * 结构化助手消息（含内容块）
+     */
     private final List<Msg> assistantMessages;
-    /** 结构化的工具调用消息列表 */
+    /**
+     * 结构化工具调用消息
+     */
     private final List<Msg> toolMessages;
 
+    /**
+     * 创建不含结构化消息列表的对话轮次。
+     *
+     * @param id               轮次 ID
+     * @param sessionId        会话 ID
+     * @param turnOrder        轮次序号
+     * @param userMsgJson      用户消息 JSON
+     * @param assistantMsgJson 助手消息 JSON
+     * @param toolCallsJson    工具调用 JSON
+     * @param createdAt        创建时间戳
+     */
     public ChatTurn(long id, long sessionId, int turnOrder,
                      String userMsgJson, String assistantMsgJson,
                      String toolCallsJson, LocalDateTime createdAt) {
@@ -38,6 +74,20 @@ public class ChatTurn {
             createdAt, null, null, null);
     }
 
+    /**
+     * 创建可含结构化消息列表的对话轮次。
+     *
+     * @param id                轮次 ID
+     * @param sessionId         会话 ID
+     * @param turnOrder         轮次序号
+     * @param userMsgJson       用户消息 JSON
+     * @param assistantMsgJson  助手消息 JSON
+     * @param toolCallsJson     工具调用 JSON
+     * @param createdAt         创建时间戳
+     * @param userMessages      结构化用户消息（可为 null）
+     * @param assistantMessages 结构化助手消息（可为 null）
+     * @param toolMessages      结构化工具消息（可为 null）
+     */
     public ChatTurn(long id, long sessionId, int turnOrder,
                      String userMsgJson, String assistantMsgJson,
                      String toolCallsJson, LocalDateTime createdAt,
@@ -54,15 +104,38 @@ public class ChatTurn {
         this.toolMessages = toolMessages != null ? Collections.unmodifiableList(toolMessages) : null;
     }
 
+    /**
+     * @return 轮次 ID
+     */
     public long getId() { return id; }
+    /**
+     * @return 会话 ID
+     */
     public long getSessionId() { return sessionId; }
+    /**
+     * @return 轮次序号
+     */
     public int getTurnOrder() { return turnOrder; }
+    /**
+     * @return 用户消息 JSON（回退）
+     */
     public String getUserMsgJson() { return userMsgJson; }
+    /**
+     * @return 助手消息 JSON（回退）
+     */
     public String getAssistantMsgJson() { return assistantMsgJson; }
+    /**
+     * @return 工具调用 JSON（回退）
+     */
     public String getToolCallsJson() { return toolCallsJson; }
+    /**
+     * @return 创建时间戳
+     */
     public LocalDateTime getCreatedAt() { return createdAt; }
 
-    /** @return 结构化用户消息（优先），null 时回退到 {@link #getUserMsgJson()} */
+    /**
+     * @return 结构化用户消息（优先），null 时回退到 getUserMsgJson()
+     */
     public List<Msg> getUserMessages() {
         if (userMessages != null) return userMessages;
         if (userMsgJson != null && !userMsgJson.isEmpty()) {
@@ -76,7 +149,9 @@ public class ChatTurn {
         return Collections.emptyList();
     }
 
-    /** @return 结构化助手消息（优先），null 时回退到 {@link #getAssistantMsgJson()} */
+    /**
+     * @return 结构化助手消息（优先），null 时回退到 getAssistantMsgJson()
+     */
     public List<Msg> getAssistantMessages() {
         if (assistantMessages != null) return assistantMessages;
         if (assistantMsgJson != null && !assistantMsgJson.isEmpty()) {
@@ -90,7 +165,9 @@ public class ChatTurn {
         return Collections.emptyList();
     }
 
-    /** @return 结构化工具消息（优先），null 时回退到 {@link #getToolCallsJson()} */
+    /**
+     * @return 结构化工具消息（优先），null 时回退到 getToolCallsJson()
+     */
     public List<Msg> getToolMessages() {
         if (toolMessages != null) return toolMessages;
         if (toolCallsJson != null && !toolCallsJson.isEmpty()) {

@@ -2,22 +2,35 @@ package cd.lan1akea.core.message;
 
 /**
  * 图片内容块。
- * <p>
  * 支持 URL 和 Base64 两种来源。
- * </p>
  */
 public class ImageBlock extends ContentBlock {
 
-    /** 图片来源 */
+    /**
+     * 图片来源
+     */
     private final Source source;
 
-    /** 可选：图片描述（alt text） */
+    /**
+     * 可选：图片描述（alt text）
+     */
     private final String altText;
 
+    /**
+     * 创建带有指定来源的图片块。
+     *
+     * @param source 图片来源
+     */
     public ImageBlock(Source source) {
         this(source, null);
     }
 
+    /**
+     * 创建带有指定来源和描述文本的图片块。
+     *
+     * @param source  图片来源
+     * @param altText 可选的图片描述
+     */
     public ImageBlock(Source source, String altText) {
         super(TYPE_IMAGE);
         this.source = source;
@@ -45,9 +58,13 @@ public class ImageBlock extends ContentBlock {
         return new ImageBlock(new Base64Source(base64Data, mediaType));
     }
 
-    /** @return 图片来源 */
+    /**
+     * @return 图片来源
+     */
     public Source getSource() { return source; }
 
-    /** @return 图片描述 */
+    /**
+     * @return 图片描述
+     */
     public String getAltText() { return altText; }
 }

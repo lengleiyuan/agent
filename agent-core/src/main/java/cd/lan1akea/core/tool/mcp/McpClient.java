@@ -9,27 +9,34 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * MCP JSON-RPC 客户端。
- * <p>
  * 封装与 MCP Server 的 JSON-RPC 2.0 通信，提供工具发现和调用能力。
- * </p>
  */
 public class McpClient implements AutoCloseable {
 
+    /**
+     * MCP 传输层实例，处理底层通信。
+     */
     private final McpTransport transport;
+    /**
+     * 原子递增的 JSON-RPC 请求 ID 生成器。
+     */
     private final AtomicInteger requestId = new AtomicInteger(1);
 
+    /**
+     * 创建 MCP 客户端实例。
+     *
+     * @param transport MCP 传输层实现
+     */
     public McpClient(McpTransport transport) {
         this.transport = transport;
     }
 
-    /** 初始化连接 */
+    /**
+     * 初始化与 MCP Server 的连接（握手协商）。
+     */
     public Mono<Void> connect() {
         return transport.initialize();
     }
-
-    // ========================================================================
-    // 工具发现
-    // ========================================================================
 
     /**
      * 列出 MCP Server 提供的所有工具。
@@ -47,9 +54,6 @@ public class McpClient implements AutoCloseable {
             });
     }
 
-    // ========================================================================
-    // 工具调用
-    // ========================================================================
 
     /**
      * 调用 MCP 工具。
@@ -85,10 +89,15 @@ public class McpClient implements AutoCloseable {
             });
     }
 
-    // ========================================================================
-    // 内部
-    // ========================================================================
 
+    /**
+     * 执行 JSON-RPC 调用并返回结果字典。
+     *
+     * @param method 方法名
+     * @param params 调用参数
+     * @return 包含返回结果的 Map
+     * @throws McpException 当 JSON-RPC 返回错误时
+     */
     @SuppressWarnings("unchecked")
     private Mono<Map<String, Object>> rpcCall(String method, Map<String, Object> params) {
         int id = requestId.getAndIncrement();
@@ -109,6 +118,9 @@ public class McpClient implements AutoCloseable {
             });
     }
 
+    /**
+     * 关闭传输层连接并释放资源。
+     */
     @Override
     public void close() {
         transport.close();

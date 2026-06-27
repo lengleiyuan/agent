@@ -4,7 +4,6 @@ import cd.lan1akea.core.exception.ModelCallException;
 import cd.lan1akea.core.formatter.MessageFormatter;
 import cd.lan1akea.core.message.Msg;
 import cd.lan1akea.core.message.MsgBuilder;
-import cd.lan1akea.core.message.MsgRole;
 import cd.lan1akea.core.message.AssistantMessage;
 import cd.lan1akea.core.model.transport.HttpClientAdapter;
 import cd.lan1akea.core.model.transport.ReactorHttpClientAdapter;
@@ -17,24 +16,41 @@ import java.util.*;
 
 /**
  * 聊天模型抽象基类。
- * <p>
  * 提供消息格式化、请求构建、工具调用解析、重试等共享逻辑。
- * 子类只需实现 {@link #buildAuthHeaders()} 和 {@link #buildApiUrl()}。
- * </p>
+ * 子类只需实现 buildAuthHeaders() 和 buildApiUrl()。
  */
 public abstract class ChatModelBase implements ChatModel {
 
+    /**
+     * AI 提供商名称
+     */
     private final String provider;
+    /**
+     * 模型名称
+     */
     private final String modelName;
+    /**
+     * 消息格式化器
+     */
     private final MessageFormatter formatter;
 
-    /** HTTP 客户端 */
+    /**
+     * HTTP 客户端，用于 API 通信
+     */
     protected final HttpClientAdapter httpClient;
 
-    /** SSE 解析器 */
+    /**
+     * SSE 事件解析器，用于流式响应
+     */
     protected final SseEventParser sseParser;
 
+    /**
+     * 最大重试次数
+     */
     private int maxRetries = 3;
+    /**
+     * 重试间隔（毫秒）
+     */
     private long retryDelayMs = 1000;
 
     protected ChatModelBase(String provider, String modelName, MessageFormatter formatter) {
@@ -45,31 +61,34 @@ public abstract class ChatModelBase implements ChatModel {
         this.sseParser = new SseEventParser();
     }
 
-    // ========================================================================
-    // 子类必须实现
-    // ========================================================================
-
-    /** @return 认证请求头（如 Authorization: Bearer xxx 或 api-key: xxx） */
+    /**
+     * @return 认证请求头（如 Authorization: Bearer xxx 或 api-key: xxx）
+     */
     protected abstract Map<String, String> buildAuthHeaders();
 
-    /** @return API 端点 URL（如 https://api.openai.com/v1/chat/completions） */
+    /**
+     * @return API 端点 URL（如 https://api.openai.com/v1/chat/completions）
+     */
     protected abstract String buildApiUrl();
 
-    // ========================================================================
-    // Identity
-    // ========================================================================
 
     @Override
+    /**
+     * @return 提供商名称
+     */
     public String getProvider() { return provider; }
 
     @Override
+    /**
+     * @return 模型名称
+     */
     public String getModelName() { return modelName; }
 
+    /**
+     * @return 消息格式化器
+     */
     protected MessageFormatter getFormatter() { return formatter; }
 
-    // ========================================================================
-    // 公共请求体构建（子类可复用）
-    // ========================================================================
 
     /**
      * 构建标准 OpenAI 兼容的请求体 JSON。
@@ -129,9 +148,6 @@ public abstract class ChatModelBase implements ChatModel {
         }
     }
 
-    // ========================================================================
-    // doChat / doStream（统一实现，子类通常无需覆盖）
-    // ========================================================================
 
     protected Mono<ChatResponse> doChat(List<Map<String, Object>> formattedMessages,
                                          List<ToolSchema> toolSchemas,
@@ -149,9 +165,6 @@ public abstract class ChatModelBase implements ChatModel {
             .transform(sseParser::parse);
     }
 
-    // ========================================================================
-    // 公共响应解析
-    // ========================================================================
 
     /**
      * 解析聊天响应 JSON（OpenAI 兼容格式）。
@@ -206,9 +219,6 @@ public abstract class ChatModelBase implements ChatModel {
         }
     }
 
-    // ========================================================================
-    // ChatModel 公共入口
-    // ========================================================================
 
     @Override
     public Mono<ChatResponse> chat(List<Msg> messages, GenerateOptions options) {
@@ -242,9 +252,6 @@ public abstract class ChatModelBase implements ChatModel {
         return doChatWithRetry(formatted, toolSchemas, opts, 0);
     }
 
-    // ========================================================================
-    // 重试
-    // ========================================================================
 
     private Mono<ChatResponse> doChatWithRetry(List<Map<String, Object>> formatted,
                                                 List<ToolSchema> toolSchemas,
@@ -260,6 +267,12 @@ public abstract class ChatModelBase implements ChatModel {
             });
     }
 
+    /**
+     * 检查异常是否可重试。
+     *
+     * @param e 要检查的异常
+     * @return 可重试返回 true（429 或 5xx 状态码）
+     */
     protected boolean isRetryable(Throwable e) {
         if (e instanceof ModelException) {
             int status = ((ModelException) e).getHttpStatus();
@@ -268,6 +281,12 @@ public abstract class ChatModelBase implements ChatModel {
         return false;
     }
 
+    /**
+     * 包装异常为 ModelCallException。
+     *
+     * @param e 原始异常
+     * @return ModelCallException
+     */
     protected ModelCallException wrapException(Throwable e) {
         if (e instanceof ModelCallException) return (ModelCallException) e;
         if (e instanceof ModelException me) {
@@ -277,10 +296,13 @@ public abstract class ChatModelBase implements ChatModel {
         return new ModelCallException(provider, modelName, e.getMessage(), e);
     }
 
-    // ========================================================================
-    // 配置
-    // ========================================================================
 
+    /**
+     * 设置最大重试次数
+     */
     public void setMaxRetries(int maxRetries) { this.maxRetries = maxRetries; }
+    /**
+     * 设置重试延迟（毫秒）
+     */
     public void setRetryDelayMs(long retryDelayMs) { this.retryDelayMs = retryDelayMs; }
 }

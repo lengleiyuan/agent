@@ -8,17 +8,19 @@ import java.lang.reflect.Type;
 
 /**
  * JSON 序列化工具，统一使用 fastjson2。
- * <p>
  * 提供常用的序列化/反序列化方法，统一配置（不输出null值、格式化输出等）。
- * </p>
  */
 public final class JsonUtils {
 
+    /**
+     * 私有构造函数，防止实例化。
+     */
     private JsonUtils() {
-        // 工具类，禁止实例化
     }
 
-    /** 默认序列化特性：跳过null值、格式化输出 */
+    /**
+     * 默认序列化特性：跳过null值、格式化输出
+     */
     private static final JSONWriter.Feature[] DEFAULT_WRITE_FEATURES = {
         JSONWriter.Feature.WriteMapNullValue,
         JSONWriter.Feature.PrettyFormat

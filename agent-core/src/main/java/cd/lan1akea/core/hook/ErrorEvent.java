@@ -2,12 +2,13 @@ package cd.lan1akea.core.hook;
 
 /**
  * 错误事件。
- * <p>
  * 在 ON_ERROR 阶段携带异常信息。
- * </p>
  */
 public class ErrorEvent extends HookEvent {
 
+    /**
+     * 创建错误事件。
+     */
     public ErrorEvent(Throwable error) {
         super(HookEventType.ON_ERROR);
         setPayload("error", error);
@@ -17,12 +18,16 @@ public class ErrorEvent extends HookEvent {
         setPayload("errorType", error.getClass().getName());
     }
 
-    /** @return 异常对象 */
+    /**
+     * @return 异常对象
+     */
     public Throwable getError() {
         return getPayload("error");
     }
 
-    /** @return 异常消息 */
+    /**
+     * @return 异常消息
+     */
     public String getErrorMessage() {
         return getPayload("errorMessage");
     }

@@ -31,7 +31,7 @@ class ToolExecutorTest {
     void testExecuteExistingTool() {
         registry.register(new EchoTool());
 
-        ToolCallParam param = new ToolCallParam("tc1", "echo", Map.of("input", "hello"));
+        ToolCallContext param = ToolCallContext.of("tc1", "echo", Map.of("input", "hello"));
         ToolResult result = executor.execute(param).block();
 
         assertNotNull(result);
@@ -41,7 +41,7 @@ class ToolExecutorTest {
 
     @Test
     void testExecuteNonExistentTool() {
-        ToolCallParam param = new ToolCallParam("tc1", "nonexistent", Map.of());
+        ToolCallContext param = ToolCallContext.of("tc1", "nonexistent", Map.of());
 
         ToolResult result = executor.execute(param).block();
         assertNotNull(result);
@@ -53,7 +53,7 @@ class ToolExecutorTest {
     void testExecuteWithTimeout() {
         registry.register(new SlowTool(5000, 100)); // 100ms timeout < 5000ms delay
 
-        ToolCallParam param = new ToolCallParam("tc1", "slow", Map.of());
+        ToolCallContext param = ToolCallContext.of("tc1", "slow", Map.of());
         ToolResult result = executor.execute(param).block();
 
         assertNotNull(result);
@@ -65,7 +65,7 @@ class ToolExecutorTest {
     void testExecuteWithException() {
         registry.register(new FailingTool());
 
-        ToolCallParam param = new ToolCallParam("tc1", "failing", Map.of());
+        ToolCallContext param = ToolCallContext.of("tc1", "failing", Map.of());
         ToolResult result = executor.execute(param).block();
 
         assertNotNull(result);
@@ -113,7 +113,7 @@ class ToolExecutorTest {
         }
 
         @Override
-        public Mono<ToolResult> execute(ToolCallParam params) {
+        public Mono<ToolResult> execute(ToolCallContext params) {
             String input = params.getString("input");
             return Mono.just(ToolResult.success("ECHO: " + input));
         }
@@ -137,7 +137,7 @@ class ToolExecutorTest {
         }
 
         @Override
-        public Mono<ToolResult> execute(ToolCallParam params) {
+        public Mono<ToolResult> execute(ToolCallContext params) {
             return Mono.delay(java.time.Duration.ofMillis(delayMs))
                 .thenReturn(ToolResult.success("done"));
         }
@@ -159,7 +159,7 @@ class ToolExecutorTest {
         }
 
         @Override
-        public Mono<ToolResult> execute(ToolCallParam params) {
+        public Mono<ToolResult> execute(ToolCallContext params) {
             return Mono.error(new RuntimeException("intentional failure"));
         }
     }

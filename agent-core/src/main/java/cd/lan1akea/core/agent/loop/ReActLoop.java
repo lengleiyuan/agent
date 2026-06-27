@@ -1,8 +1,5 @@
 package cd.lan1akea.core.agent.loop;
 
-import cd.lan1akea.core.agent.AgentEvent;
-import cd.lan1akea.core.agent.AgentEventType;
-import cd.lan1akea.core.event.EventBus;
 import cd.lan1akea.core.hook.*;
 import cd.lan1akea.core.message.*;
 import cd.lan1akea.core.model.*;
@@ -24,36 +21,72 @@ import java.util.LinkedHashMap;
 
 /**
  * ReAct 循环引擎。
- * <p>
  * 构建时注入只读服务，每次请求通过 LoopContext（纯数据）驱动。
  * 每次迭代后保存检查点，支持崩溃恢复。
  * 上下文压缩和记忆检索通过 PreReasoningHook 实现，不硬编码在此。
- * </p>
  */
 public class ReActLoop {
 
+    /**
+     * 用于 LLM 推理的聊天模型。
+     */
     private final ChatModel model;
+    /**
+     * 用于执行工具调用的工具执行器。
+     */
     private final ToolExecutor toolExecutor;
+    /**
+     * 用于扩展点的 Hook 分发器。
+     */
     private final HookDispatcher hookDispatcher;
+    /**
+     * 可用工具架构注册表。
+     */
     private final ToolRegistry toolRegistry;
+    /**
+     * 用于持久化和检查点的状态存储。
+     */
     private final AgentStateStore stateStore;
-    private final EventBus eventBus;
+    /**
+     * 封装推理和工具调用执行的 AroundHook 链。
+     */
+    private final AroundHookChain aroundHookChain;
+
+    /**
+     * 使用默认 AroundHookChain 创建 ReActLoop。
+     *
+     * @param model          用于 LLM 推理的聊天模型
+     * @param toolExecutor   用于执行工具调用的执行器
+     * @param hookDispatcher 用于 Hook 扩展点的分发器
+     * @param toolRegistry   可用工具架构注册表
+     * @param stateStore     用于持久化和检查点的存储
+     */
+    public ReActLoop(ChatModel model, ToolExecutor toolExecutor,
+                      HookDispatcher hookDispatcher, ToolRegistry toolRegistry,
+                      AgentStateStore stateStore) {
+        this(model, toolExecutor, hookDispatcher, toolRegistry, stateStore,
+             new AroundHookChain());
+    }
 
     public ReActLoop(ChatModel model, ToolExecutor toolExecutor,
                       HookDispatcher hookDispatcher, ToolRegistry toolRegistry,
-                      AgentStateStore stateStore, EventBus eventBus) {
+                      AgentStateStore stateStore, AroundHookChain aroundHookChain) {
         this.model = model;
         this.toolExecutor = toolExecutor;
         this.hookDispatcher = hookDispatcher;
         this.toolRegistry = toolRegistry;
         this.stateStore = stateStore;
-        this.eventBus = eventBus;
+        this.aroundHookChain = aroundHookChain != null ? aroundHookChain : new AroundHookChain();
     }
 
-    // ========================================================================
-    // 主循环（非流式）
-    // ========================================================================
 
+    /**
+     * 执行 ReAct 循环至完成（非流式）。
+     * 处理中断、最大迭代摘要、推理、行动和观察。
+     *
+     * @param ctx 携带消息和状态的循环上下文
+     * @return 最终聊天响应
+     */
     public Mono<ChatResponse> execute(LoopContext ctx) {
         return Mono.defer(() -> {
             if (ctx.isInterrupted()) {
@@ -69,7 +102,6 @@ public class ReActLoop {
                     if (response.getUsage() != null) ctx.addTokens(response.getUsage().getTotalTokens());
                     List<ToolUseBlock> toolCalls = extractToolCalls(response);
                     if (toolCalls.isEmpty()) {
-                        emitEvent(ctx, AgentEventType.COMPLETED);
                         return Mono.just(response);
                     }
                     return actingStep(ctx, toolCalls)
@@ -79,10 +111,14 @@ public class ReActLoop {
         });
     }
 
-    // ========================================================================
-    // 主循环（流式）—— 完整 ReAct + 工具调用
-    // ========================================================================
 
+    /**
+     * 执行 ReAct 循环（流式），返回流式分块。
+     * 处理中断、最大迭代摘要、推理、行动和观察。
+     *
+     * @param ctx 携带消息和状态的循环上下文
+     * @return 聊天流式分块的 Flux
+     */
 public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
         return Flux.defer(() -> {
             if (ctx.isInterrupted()) {
@@ -105,7 +141,6 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
 
                     List<ToolUseBlock> toolCalls = extractToolCalls(response);
                     if (toolCalls.isEmpty()) {
-                        emitEvent(ctx, AgentEventType.COMPLETED);
                         return Flux.fromIterable(chunks);
                     }
 
@@ -118,13 +153,15 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
         });
     }
 
-    // ========================================================================
-    // 推理阶段（非流式）
-    // ========================================================================
 
+    /**
+     * 执行推理阶段（非流式）：分发 Hook，调用模型并携带工具，通过 around-hook 链处理响应。
+     *
+     * @param ctx 循环上下文
+     * @return 模型的聊天响应
+     */
     Mono<ChatResponse> reasoningStep(LoopContext ctx) {
         HookContext hc = buildHookContext(ctx);
-        emitEvent(ctx, AgentEventType.REASONING_START);
 
         ReasoningEvent pre = new ReasoningEvent(HookEventType.PRE_REASONING);
 
@@ -133,24 +170,44 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
                 if (r.isAbort()) return Mono.error(
                     new cd.lan1akea.core.exception.HookAbortException("hook", r.getAbortReason()));
                 if (r.isInterrupt()) return Mono.just(buildInterrupted(r.getInterruptReason()));
-                List<ToolSchema> schemas = toolRegistry.getSchemas(ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId());
-                return model.chatWithTools(ctx.getMessages(), schemas, ctx.getGenerateOptions());
-            })
-            .flatMap(resp -> {
-                emitEvent(ctx, AgentEventType.REASONING_END);
-                ReasoningEvent post = new ReasoningEvent(HookEventType.POST_REASONING);
-                return hookDispatcher.dispatch(HookEventType.POST_REASONING, post, hc)
-                    .thenReturn(resp);
+
+                List<ToolSchema> schemas = toolRegistry.getSchemas(
+                    ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId());
+
+                return aroundHookChain.aroundReasoning(pre, hc,
+                    (HookEvent e) -> {
+                        HookEvent modelEvent = new HookEvent(HookEventType.PRE_MODEL_CALL);
+                        return hookDispatcher.dispatch(HookEventType.PRE_MODEL_CALL, modelEvent, hc)
+                            .flatMap(mr -> mr.isAbort()
+                                ? Mono.error(new cd.lan1akea.core.exception.HookAbortException("model", mr.getAbortReason()))
+                                : model.chatWithTools(ctx.getMessages(), schemas, ctx.getGenerateOptions()))
+                            .map(resp -> {
+                                e.setPayload("chat_response", resp);
+                                return e;
+                            })
+                            .flatMap(ev ->
+                                hookDispatcher.dispatch(HookEventType.POST_MODEL_CALL,
+                                    new HookEvent(HookEventType.POST_MODEL_CALL), hc)
+                                    .thenReturn(ev));
+                    })
+                    .flatMap(e -> {
+                        ChatResponse resp = e.getPayload("chat_response");
+                        ReasoningEvent post = new ReasoningEvent(HookEventType.POST_REASONING);
+                        return hookDispatcher.dispatch(HookEventType.POST_REASONING, post, hc)
+                            .thenReturn(resp);
+                    });
             });
     }
 
-    // ========================================================================
-    // 推理阶段（流式）
-    // ========================================================================
 
+    /**
+     * 执行推理阶段（流式）：分发 Hook 并流式输出模型结果。
+     *
+     * @param ctx 循环上下文
+     * @return 来自模型的流式分块 Flux
+     */
     Flux<ChatStreamChunk> reasoningStream(LoopContext ctx) {
         HookContext hc = buildHookContext(ctx);
-        emitEvent(ctx, AgentEventType.REASONING_START);
 
         ReasoningEvent pre = new ReasoningEvent(HookEventType.PRE_REASONING);
 
@@ -165,94 +222,125 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
                         .finishReason("interrupted").build());
                 }
                 List<ToolSchema> schemas = toolRegistry.getSchemas(ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId());
-                return model.streamWithTools(ctx.getMessages(), schemas, ctx.getGenerateOptions());
+                return hookDispatcher.dispatch(HookEventType.PRE_MODEL_CALL,
+                        new HookEvent(HookEventType.PRE_MODEL_CALL), hc)
+                    .flatMapMany(mr -> mr.isAbort()
+                        ? Flux.error(new cd.lan1akea.core.exception.HookAbortException("model", mr.getAbortReason()))
+                        : model.streamWithTools(ctx.getMessages(), schemas, ctx.getGenerateOptions()))
+                    .doOnComplete(() ->
+                        hookDispatcher.dispatch(HookEventType.POST_MODEL_CALL,
+                            new HookEvent(HookEventType.POST_MODEL_CALL), hc).subscribe())
+                    .collectList()
+                    .flatMapMany(chunks -> aroundHookChain.aroundReasoning(pre, hc, Mono::just)
+                        .flatMapMany(e -> Flux.fromIterable(chunks)));
             })
-            .doOnNext(chunk ->
-                hookDispatcher.dispatch(HookEventType.ON_STREAM_CHUNK,
-                    new HookEvent(HookEventType.ON_STREAM_CHUNK), hc).subscribe())
             .doOnComplete(() -> {
-                emitEvent(ctx, AgentEventType.REASONING_END);
-                ReasoningEvent post = new ReasoningEvent(HookEventType.POST_REASONING);
-                hookDispatcher.dispatch(HookEventType.POST_REASONING, post, hc).subscribe();
+                hookDispatcher.dispatch(HookEventType.POST_REASONING,
+                    new ReasoningEvent(HookEventType.POST_REASONING), hc).subscribe();
             });
     }
 
-    // ========================================================================
-    // 行动阶段（非流式）
-    // ========================================================================
 
+    /**
+     * 执行行动阶段（非流式）：执行所有工具调用并收集结果。
+     *
+     * @param ctx       循环上下文
+     * @param toolCalls 要执行的工具调用列表
+     * @return 工具执行结果列表
+     */
     Mono<List<ToolResult>> actingStep(LoopContext ctx, List<ToolUseBlock> toolCalls) {
         HookContext hc = buildHookContext(ctx);
-        emitEvent(ctx, AgentEventType.ACTING_START);
-        ActingEvent ae = new ActingEvent(HookEventType.PRE_ACTING);
-        ae.setToolCalls(toolCalls);
-
-        return hookDispatcher.dispatch(HookEventType.PRE_ACTING, ae, hc)
-            .flatMapMany(r -> Flux.fromIterable(toolCalls))
+        return Flux.fromIterable(toolCalls)
             .flatMap(tc -> executeSingleTool(ctx, tc, hc))
-            .collectList()
-            .flatMap(results -> {
-                emitEvent(ctx, AgentEventType.ACTING_END);
-                ActingEvent post = new ActingEvent(HookEventType.POST_ACTING);
-                return hookDispatcher.dispatch(HookEventType.POST_ACTING, post, hc)
-                    .thenReturn(results);
-            });
+            .collectList();
     }
 
-    // ========================================================================
-    // 行动阶段（流式）
-    // ========================================================================
 
+    /**
+     * 执行行动阶段（流式）：执行所有工具调用并以分块形式发射结果。
+     *
+     * @param ctx       循环上下文
+     * @param toolCalls 要执行的工具调用列表
+     * @return 每次工具执行的结果分块 Flux
+     */
     Flux<ChatStreamChunk> actingStream(LoopContext ctx, List<ToolUseBlock> toolCalls) {
         HookContext hc = buildHookContext(ctx);
-        emitEvent(ctx, AgentEventType.ACTING_START);
-        ActingEvent ae = new ActingEvent(HookEventType.PRE_ACTING);
-        ae.setToolCalls(toolCalls);
-
-        return hookDispatcher.dispatch(HookEventType.PRE_ACTING, ae, hc)
-            .flatMapMany(r -> Flux.fromIterable(toolCalls))
+        return Flux.fromIterable(toolCalls)
             .concatMap(tc -> executeSingleTool(ctx, tc, hc))
             .concatMap(result -> {
                 String content = result.isSuccess() ? result.getContent() : "[错误] " + result.getErrorMessage();
                 return Flux.just(ChatStreamChunk.builder()
                     .delta(content).type(ChatStreamChunk.TYPE_TEXT).build());
-            })
-            .doOnComplete(() -> {
-                emitEvent(ctx, AgentEventType.ACTING_END);
-                ActingEvent post = new ActingEvent(HookEventType.POST_ACTING);
-                hookDispatcher.dispatch(HookEventType.POST_ACTING, post, hc).subscribe();
             });
     }
 
+    /**
+     * 通过 Hook 链和工具执行器执行单个工具调用。
+     * 如果工具需要用户批准，处理挂起情况。
+     *
+     * @param ctx 循环上下文
+     * @param tc  要执行的工具使用块
+     * @param hc  Hook 上下文
+     * @return 工具执行结果
+     */
     Mono<ToolResult> executeSingleTool(LoopContext ctx, ToolUseBlock tc, HookContext hc) {
-        ToolCallParam param = new ToolCallParam(tc.getId(), tc.getName(), tc.getArguments(),
-            ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId(), ctx.getAttributes());
+        ToolCallContext param = ToolCallContext.builder()
+            .callId(tc.getId()).toolName(tc.getName())
+            .arguments(tc.getArgumentsMap())
+            .tenantId(ctx.getTenantId()).userId(ctx.getUserId())
+            .sessionId(ctx.getSessionId()).attributes(ctx.getAttributes())
+            .build();
 
-        // 携带工具调用参数的事件
-        ToolCallEvent preEvent = new ToolCallEvent(HookEventType.PRE_TOOL_CALL, param);
+        // 同一个 event 贯穿 PRE → AroundHook → POST
+        ToolCallEvent event = new ToolCallEvent(HookEventType.PRE_TOOL_CALL, param);
+        // 注入 Tool 实例到 event，Hook 无需自行注入 ToolRegistry
+        event.setTool(toolRegistry.getForContext(
+            ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId(), tc.getName()));
 
-        return hookDispatcher.dispatch(HookEventType.PRE_TOOL_CALL, preEvent, hc)
-            .flatMap(r -> r.isAbort()
-                ? Mono.just(ToolResult.failure("工具调用被阻止: " + r.getAbortReason()))
-                : toolExecutor.execute(param))
+        return hookDispatcher.dispatch(HookEventType.PRE_TOOL_CALL, event, hc)
+            .flatMap(r -> {
+                if (r.isAbort()) {
+                    return Mono.just(ToolResult.failure("工具调用被阻止: " + r.getAbortReason()));
+                }
+                if (r.isSkip()) {
+                    ToolResult skipped = ToolResult.success(
+                        "[已跳过] " + (r.getSkipReason() != null ? r.getSkipReason() : "无权限"));
+                    ToolCallEvent postSkip = new ToolCallEvent(HookEventType.POST_TOOL_CALL, param, skipped);
+                    return hookDispatcher.dispatch(HookEventType.POST_TOOL_CALL, postSkip, hc)
+                        .thenReturn(skipped);
+                }
+
+                return aroundHookChain.aroundToolCall(event, hc,
+                        (HookEvent e) -> toolExecutor.execute(param)
+                            .map(result -> {
+                                e.setPayload("tool_result", result);
+                                ((ToolCallEvent) e).setResult(result);
+                                return e;
+                            }))
+                    .flatMap(e -> {
+                        ToolResult result = e.getPayload("tool_result");
+                        if (result == null && e instanceof ToolCallEvent tce) result = tce.getResult();
+                        ToolCallEvent post = new ToolCallEvent(HookEventType.POST_TOOL_CALL, param,
+                            result != null ? result : ToolResult.failure("无结果"));
+                        return hookDispatcher.dispatch(HookEventType.POST_TOOL_CALL, post, hc)
+                            .thenReturn(result != null ? result : ToolResult.failure("无结果"));
+                    });
+            })
             .onErrorResume(ToolSuspendException.class, e ->
                 hookDispatcher.dispatch(HookEventType.ON_INTERRUPT,
                     new InterruptEvent(e.getQuestion(), tc.getName()), hc)
                     .flatMap(ir -> Mono.just(ir.isAbort()
                         ? ToolResult.failure("操作被拒绝")
-                        : ToolResult.failure("等待审批: " + e.getQuestion()))))
-            .flatMap(result -> {
-                // 携带工具结果的事件
-                ToolCallEvent postEvent = new ToolCallEvent(HookEventType.POST_TOOL_CALL, param, result);
-                return hookDispatcher.dispatch(HookEventType.POST_TOOL_CALL, postEvent, hc)
-                    .thenReturn(result);
-            });
+                        : ToolResult.failure("等待审批: " + e.getQuestion()))));
     }
 
-    // ========================================================================
-    // 观察（非流式）
-    // ========================================================================
-
+    /**
+     * 执行观察阶段（非流式）：将工具结果追加到消息中，增加迭代计数，持久化对话轮次并保存检查点。
+     *
+     * @param ctx     循环上下文
+     * @param results 要观察的工具执行结果
+     * @return 更新后的循环上下文
+     */
     Mono<LoopContext> observationStep(LoopContext ctx, List<ToolResult> results) {
         appendToolResults(ctx, results);
         ctx.setIteration(ctx.getIteration() + 1);
@@ -261,16 +349,25 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
         return Mono.just(ctx);
     }
 
-    // ========================================================================
-    // 观察（流式）
-    // ========================================================================
-
+    /**
+     * 执行观察阶段（流式）：持久化对话轮次并保存检查点。
+     *
+     * @param ctx       循环上下文
+     * @param toolCalls 已执行的工具调用（用于持久化）
+     * @return 空 Flux
+     */
     Flux<ChatStreamChunk> observationStream(LoopContext ctx, List<ToolUseBlock> toolCalls) {
         persistTurn(ctx);
         saveCheckpoint(ctx);
         return Flux.empty();
     }
 
+    /**
+     * 将工具结果消息追加到循环上下文，将结果与其调用 ID 配对。
+     *
+     * @param ctx     循环上下文
+     * @param results 要追加的工具结果
+     */
     private void appendToolResults(LoopContext ctx, List<ToolResult> results) {
         Msg lastMsg = ctx.getLastResponse() != null ? ctx.getLastResponse().getMessage() : null;
         List<ToolUseBlock> toolCalls = lastMsg != null ? lastMsg.getToolUseBlocks() : List.of();
@@ -284,10 +381,11 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
         }
     }
 
-    // ========================================================================
-    // 持久化
-    // ========================================================================
-
+    /**
+     * 将当前对话轮次（用户、助手和工具消息）持久化到状态存储。
+     *
+     * @param ctx 循环上下文
+     */
     private void persistTurn(LoopContext ctx) {
         if (stateStore == null || ctx.getSessionId() == null) return;
         Msg userMsg = null, assistantMsg = null;
@@ -311,6 +409,11 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
         stateStore.addTurn(new SessionId(ctx.getSessionId()), turn).subscribe();
     }
 
+    /**
+     * 将当前 agent 状态的检查点保存到状态存储，用于崩溃恢复。
+     *
+     * @param ctx 循环上下文
+     */
     private void saveCheckpoint(LoopContext ctx) {
         if (stateStore == null || ctx.getSessionId() == null) return;
 
@@ -322,12 +425,14 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
         stateStore.saveCheckpoint(state).subscribe();
     }
 
-    // ========================================================================
-    // 超迭代摘要
-    // ========================================================================
 
+    /**
+     * 达到最大迭代次数时生成摘要（非流式）。
+     *
+     * @param ctx 循环上下文
+     * @return 模型的摘要聊天响应
+     */
     private Mono<ChatResponse> summarizeStep(LoopContext ctx) {
-        emitEvent(ctx, AgentEventType.SUMMARIZED);
         List<Msg> messages = ctx.getMessages();
         if (messages.isEmpty()) return Mono.justOrEmpty(ctx.getLastResponse());
 
@@ -343,13 +448,16 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
             .build();
 
         HookContext hc = buildHookContext(ctx);
-        return hookDispatcher.dispatch(HookEventType.ON_SUMMARY,
-                new HookEvent(HookEventType.ON_SUMMARY), hc)
-            .then(model.chatWithTools(messages, schemas, noTools));
+        return model.chatWithTools(messages, schemas, noTools);
     }
 
+    /**
+     * 达到最大迭代次数时生成摘要（流式）。
+     *
+     * @param ctx 循环上下文
+     * @return 模型的摘要流式分块 Flux
+     */
     private Flux<ChatStreamChunk> summarizeStream(LoopContext ctx) {
-        emitEvent(ctx, AgentEventType.SUMMARIZED);
         List<Msg> messages = ctx.getMessages();
         if (messages.isEmpty()) return Flux.empty();
 
@@ -365,17 +473,16 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
             .build();
 
         HookContext hc = buildHookContext(ctx);
-        return hookDispatcher.dispatch(HookEventType.ON_SUMMARY,
-                new HookEvent(HookEventType.ON_SUMMARY), hc)
-            .thenMany(model.streamWithTools(messages, schemas, noTools));
+        return model.streamWithTools(messages, schemas, noTools);
     }
 
-    // ========================================================================
-    // 外部中断处理
-    // ========================================================================
-
+    /**
+     * 处理外部中断（非流式）：分发中断事件，根据反馈恢复循环或返回最后响应。
+     *
+     * @param ctx 循环上下文
+     * @return 处理中断后的最终聊天响应
+     */
     private Mono<ChatResponse> handleExternalInterrupt(LoopContext ctx) {
-        emitEvent(ctx, AgentEventType.INTERRUPTED);
         Msg feedback = ctx.getFeedbackMsg();
         HookContext hc = buildHookContext(ctx);
         InterruptEvent ie = new InterruptEvent(feedback != null ? feedback.getTextContent() : "外部中断", null);
@@ -400,8 +507,13 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
             });
     }
 
+    /**
+     * 处理外部中断（流式）：分发中断事件，根据反馈恢复流式或发射中断分块。
+     *
+     * @param ctx 循环上下文
+     * @return 处理中断后的流式分块 Flux
+     */
     private Flux<ChatStreamChunk> handleInterruptStream(LoopContext ctx) {
-        emitEvent(ctx, AgentEventType.INTERRUPTED);
         Msg feedback = ctx.getFeedbackMsg();
         HookContext hc = buildHookContext(ctx);
         InterruptEvent ie = new InterruptEvent(feedback != null ? feedback.getTextContent() : "外部中断", null);
@@ -426,12 +538,15 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
             });
     }
 
-    // ========================================================================
-    // 错误处理
-    // ========================================================================
 
+    /**
+     * 通过在 Hook 中分发错误事件来处理循环执行中的错误。
+     *
+     * @param ctx   循环上下文
+     * @param error 发生的错误
+     * @return 空 Mono 或如果 Hook 中止则返回错误
+     */
     Mono<Void> handleError(LoopContext ctx, Throwable error) {
-        emitEvent(ctx, AgentEventType.ERROR);
         return hookDispatcher.dispatch(HookEventType.ON_ERROR,
                 new ErrorEvent(error), buildHookContext(ctx))
             .flatMap(r -> r.isAbort()
@@ -439,15 +554,24 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
                 : Mono.empty());
     }
 
-    // ========================================================================
-    // 辅助
-    // ========================================================================
 
+    /**
+     * 从循环上下文构建 Hook 上下文用于 Hook 分发调用。
+     *
+     * @param ctx 循环上下文
+     * @return 新的 Hook 上下文
+     */
     HookContext buildHookContext(LoopContext ctx) {
         return new HookContext(ctx.getAgentName(), ctx.getTenantId(), ctx.getSessionId(),
             ctx.getUserId(), ctx.getIteration(), new ArrayList<>(), ctx.getAttributes());
     }
 
+    /**
+     * 构建表示执行已中断的聊天响应。
+     *
+     * @param reason 中断原因
+     * @return 中断聊天响应
+     */
     ChatResponse buildInterrupted(String reason) {
         Msg msg = Msg.builder(MsgRole.ASSISTANT)
             .addText("[执行已中断: " + reason + "]")
@@ -455,16 +579,32 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
         return new ChatResponse(msg, new ChatUsage(0, 0), "interrupted", "");
     }
 
-    void emitEvent(LoopContext ctx, AgentEventType type) {
-        if (eventBus != null) eventBus.publish(new AgentEvent(type, ctx.getAgentName())).subscribe();
-    }
+    /**
+     * 通过事件总线发射指定类型的 agent 事件。
+     *
+     * @param ctx  循环上下文
+     * @param type 要发射的事件类型
+     */
 
+    /**
+     * 从聊天响应中提取工具使用块，如果没有则返回空列表。
+     *
+     * @param response 要提取的聊天响应
+     * @return 工具使用块列表，不会为 null
+     */
     List<ToolUseBlock> extractToolCalls(ChatResponse response) {
         if (response == null || response.getMessage() == null) return List.of();
         List<ToolUseBlock> blocks = response.getMessage().getToolUseBlocks();
         return blocks != null ? blocks : List.of();
     }
 
+    /**
+     * 从流式分块列表重构单个 ChatResponse。
+     * 将文本增量和工具使用 start/delta 分块聚合为内容块。
+     *
+     * @param chunks 要组装的流式分块
+     * @return 重构后的聊天响应，如果分块为空则返回 null
+     */
     ChatResponse buildResponseFromChunks(List<ChatStreamChunk> chunks) {
         if (chunks == null || chunks.isEmpty()) return null;
 

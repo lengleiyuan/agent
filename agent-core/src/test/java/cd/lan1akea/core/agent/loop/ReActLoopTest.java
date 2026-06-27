@@ -1,7 +1,6 @@
 package cd.lan1akea.core.agent.loop;
 import java.util.Set;
 
-import cd.lan1akea.core.event.EventBus;
 import cd.lan1akea.core.hook.*;
 import cd.lan1akea.core.message.*;
 import cd.lan1akea.core.model.*;
@@ -38,10 +37,9 @@ class ReActLoopTest {
         stateStore = new InMemoryAgentStateStore();
         HookChain chain = new HookChain();
         HookDispatcher dispatcher = new HookDispatcher(chain);
-        EventBus eventBus = new EventBus();
 
         loop = new ReActLoop(model, new ToolExecutor(toolRegistry),
-            dispatcher, toolRegistry, stateStore, eventBus);
+            dispatcher, toolRegistry, stateStore);
     }
 
     // ========================================================================
@@ -89,7 +87,7 @@ class ReActLoopTest {
         });
 
         ReActLoop l = new ReActLoop(model, new ToolExecutor(toolRegistry),
-            new HookDispatcher(chain), toolRegistry, stateStore, new EventBus());
+            new HookDispatcher(chain), toolRegistry, stateStore);
 
         LoopContext ctx = buildContext(List.of(UserMessage.of("Hi")));
         assertThrows(Exception.class, () -> l.reasoningStep(ctx).block());
@@ -109,7 +107,7 @@ class ReActLoopTest {
         });
 
         ReActLoop l = new ReActLoop(model, new ToolExecutor(toolRegistry),
-            new HookDispatcher(chain), toolRegistry, stateStore, new EventBus());
+            new HookDispatcher(chain), toolRegistry, stateStore);
 
         LoopContext ctx = buildContext(List.of(UserMessage.of("Hi")));
         ChatResponse response = l.reasoningStep(ctx).block();
@@ -405,7 +403,7 @@ class ReActLoopTest {
         }
 
         @Override
-        public Mono<ToolResult> execute(ToolCallParam params) {
+        public Mono<ToolResult> execute(ToolCallContext params) {
             return Mono.just(ToolResult.success("ECHO: " + params.getString("input")));
         }
     }

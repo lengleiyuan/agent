@@ -18,7 +18,9 @@ import java.util.List;
 @Configuration
 public class AgentAutoConfiguration {
 
-    /** 全局工具注册表 */
+    /**
+     * 全局工具注册表
+     */
     @Bean
     public ToolRegistry toolRegistry(List<Tool> tools) {
         ToolRegistry registry = new ToolRegistry();
@@ -28,13 +30,17 @@ public class AgentAutoConfiguration {
         return registry;
     }
 
-    /** 全局 Hook 链 */
+    /**
+     * 全局 Hook 链
+     */
     @Bean
     public HookChain hookChain() {
         return new HookChain();
     }
 
-    /** 模型注册表 */
+    /**
+     * 模型注册表
+     */
     @Bean
     public ModelRegistry modelRegistry() {
         return new ModelRegistry();
