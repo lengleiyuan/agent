@@ -87,6 +87,11 @@ public class ReactorHttpClientAdapter implements HttpClientAdapter {
             .send(Mono.just(io.netty.buffer.Unpooled.wrappedBuffer(body.getBytes())))
             .responseContent()
             .asString()
+            .flatMap(chunk -> {
+                // 按 \n 拆分行，处理多个 SSE 事件合并到一个 TCP 包的情况
+                String[] lines = chunk.split("\n");
+                return Flux.fromArray(lines);
+            })
             .filter(line -> !line.isEmpty());
     }
 

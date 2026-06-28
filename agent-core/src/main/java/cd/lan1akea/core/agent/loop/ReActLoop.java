@@ -1,5 +1,6 @@
 package cd.lan1akea.core.agent.loop;
 
+import cd.lan1akea.core.exception.HookAbortException;
 import cd.lan1akea.core.hook.*;
 import cd.lan1akea.core.message.*;
 import cd.lan1akea.core.model.*;
@@ -130,26 +131,27 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
             if (ctx.getIteration() >= ctx.getMaxIterations())
                 return summarizeStream(ctx);
 
+            List<ChatStreamChunk> chunkBuffer = new ArrayList<>();
+
             return reasoningStream(ctx)
-                .collectList()
-                .flatMapMany(chunks -> {
-                    ChatResponse response = buildResponseFromChunks(chunks);
-                    if (response == null) return Flux.fromIterable(chunks);
+                .doOnNext(chunkBuffer::add)
+                .concatWith(Flux.defer(() -> {
+                    ChatResponse response = buildResponseFromChunks(chunkBuffer);
+                    if (response == null) return Flux.empty();
 
                     ctx.setLastResponse(response);
                     if (response.getUsage() != null) ctx.addTokens(response.getUsage().getTotalTokens());
 
                     List<ToolUseBlock> toolCalls = extractToolCalls(response);
                     if (toolCalls.isEmpty()) {
-                        return Flux.fromIterable(chunks);
+                        return Flux.empty();
                     }
 
                     ctx.setIteration(ctx.getIteration() + 1);
-                    return Flux.fromIterable(chunks)
-                        .concatWith(actingStream(ctx, toolCalls))
+                    return actingStream(ctx, toolCalls)
                         .concatWith(observationStream(ctx, toolCalls))
                         .concatWith(executeStream(ctx));
-                });
+                }));
         });
     }
 
@@ -168,8 +170,11 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
         return hookDispatcher.dispatch(HookEventType.PRE_REASONING, pre, hc)
             .flatMap(r -> {
                 if (r.isAbort()) return Mono.error(
-                    new cd.lan1akea.core.exception.HookAbortException("hook", r.getAbortReason()));
+                    new HookAbortException("hook", r.getAbortReason()));
                 if (r.isInterrupt()) return Mono.just(buildInterrupted(r.getInterruptReason()));
+                // KB 命中：绕过模型直接返回
+                if (pre.getBypassMessage() != null)
+                    return Mono.just(new ChatResponse(pre.getBypassMessage(), new ChatUsage(0, 0), "stop", ""));
 
                 List<ToolSchema> schemas = toolRegistry.getSchemas(
                     ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId());
@@ -221,18 +226,23 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
                         .delta(ir.getMessage().getTextContent())
                         .finishReason("interrupted").build());
                 }
+                // KB 命中：绕过模型直接返回
+                if (pre.getBypassMessage() != null) {
+                    String text = pre.getBypassMessage().getTextContent();
+                    return Flux.just(ChatStreamChunk.builder()
+                        .delta(text != null ? text : "").finishReason("stop").build());
+                }
                 List<ToolSchema> schemas = toolRegistry.getSchemas(ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId());
                 return hookDispatcher.dispatch(HookEventType.PRE_MODEL_CALL,
                         new HookEvent(HookEventType.PRE_MODEL_CALL), hc)
                     .flatMapMany(mr -> mr.isAbort()
                         ? Flux.error(new cd.lan1akea.core.exception.HookAbortException("model", mr.getAbortReason()))
                         : model.streamWithTools(ctx.getMessages(), schemas, ctx.getGenerateOptions()))
-                    .doOnComplete(() ->
+                    .doOnComplete(() -> {
                         hookDispatcher.dispatch(HookEventType.POST_MODEL_CALL,
-                            new HookEvent(HookEventType.POST_MODEL_CALL), hc).subscribe())
-                    .collectList()
-                    .flatMapMany(chunks -> aroundHookChain.aroundReasoning(pre, hc, Mono::just)
-                        .flatMapMany(e -> Flux.fromIterable(chunks)));
+                            new HookEvent(HookEventType.POST_MODEL_CALL), hc).subscribe();
+                        aroundHookChain.aroundReasoning(pre, hc, Mono::just).subscribe();
+                    });
             })
             .doOnComplete(() -> {
                 hookDispatcher.dispatch(HookEventType.POST_REASONING,
@@ -447,7 +457,6 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
             .maxTokens(Math.min(ctx.getGenerateOptions().getMaxTokens(), 1024))
             .build();
 
-        HookContext hc = buildHookContext(ctx);
         return model.chatWithTools(messages, schemas, noTools);
     }
 
@@ -472,7 +481,6 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
             .maxTokens(Math.min(ctx.getGenerateOptions().getMaxTokens(), 1024))
             .build();
 
-        HookContext hc = buildHookContext(ctx);
         return model.streamWithTools(messages, schemas, noTools);
     }
 

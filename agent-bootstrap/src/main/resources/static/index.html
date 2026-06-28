@@ -1,274 +1,512 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-bs-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HarnessAgent 测试页面</title>
-    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <title>HarnessAgent — 智能体控制台</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.6/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
+        :root {
+            --sidebar-w: 260px;
+            --accent: #6366f1;
+            --accent-glow: rgba(99,102,241,0.25);
+            --surface: #111827;
+            --surface-2: #131b26;
+            --border: #1e293b;
+            --text: #e2e8f0;
+            --text-muted: #94a3b8;
+            --radius: 12px;
+            --radius-sm: 8px;
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; }
-        .app { max-width: 1200px; margin: 0 auto; padding: 20px; }
-        h1 { font-size: 1.5rem; margin-bottom: 20px; color: #38bdf8; }
-        .tabs { display: flex; gap: 2px; margin-bottom: 20px; border-bottom: 2px solid #1e293b; }
-        .tab { padding: 10px 20px; background: #1e293b; border: none; color: #94a3b8; cursor: pointer; border-radius: 8px 8px 0 0; font-size: 0.9rem; }
-        .tab.active { background: #334155; color: #38bdf8; }
-        .tab:hover { color: #e2e8f0; }
-        .panel { background: #1e293b; border-radius: 0 0 12px 12px; padding: 20px; min-height: 400px; }
-        .input-area { display: flex; gap: 10px; margin-bottom: 15px; }
-        .input-area input { flex: 1; padding: 12px; border: 1px solid #334155; border-radius: 8px; background: #0f172a; color: #e2e8f0; font-size: 1rem; }
-        .input-area input:focus { outline: none; border-color: #38bdf8; }
-        button { padding: 10px 20px; border: none; border-radius: 8px; cursor: pointer; font-size: 0.9rem; transition: all 0.2s; }
-        .btn-primary { background: #38bdf8; color: #0f172a; font-weight: 600; }
-        .btn-primary:hover { background: #7dd3fc; }
-        .btn-secondary { background: #334155; color: #e2e8f0; }
-        .btn-secondary:hover { background: #475569; }
-        .btn-danger { background: #ef4444; color: white; }
-        .btn-danger:hover { background: #f87171; }
-        .response { background: #0f172a; border-radius: 8px; padding: 15px; min-height: 200px; white-space: pre-wrap; font-size: 0.9rem; line-height: 1.5; max-height: 500px; overflow-y: auto; }
-        .response.streaming { border: 1px solid #38bdf8; }
-        .message { margin-bottom: 12px; padding: 8px 12px; border-radius: 6px; }
-        .message.user { background: #1e40af; text-align: right; }
-        .message.assistant { background: #166534; }
-        .row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
-        .badge { padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
-        .badge-green { background: #166534; color: #4ade80; }
-        .badge-blue { background: #1e3a5f; color: #60a5fa; }
-        .badge-red { background: #7f1d1d; color: #f87171; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px; }
-        .card { background: #0f172a; border-radius: 8px; padding: 15px; border: 1px solid #334155; }
-        .card h3 { font-size: 0.95rem; color: #38bdf8; margin-bottom: 8px; }
-        .card p { font-size: 0.8rem; color: #94a3b8; }
-        .status { display: flex; gap: 15px; margin-bottom: 15px; font-size: 0.85rem; color: #94a3b8; }
-        .status span { color: #4ade80; }
-        .stream-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; }
-        .stream-toggle input { width: 18px; height: 18px; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0b0f19; color: var(--text); overflow: hidden; height: 100vh;
+        }
+        .app-shell { display: flex; height: 100vh; }
+        .sidebar {
+            width: var(--sidebar-w); background: var(--surface);
+            border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0;
+        }
+        .sidebar-brand {
+            padding: 20px 20px 16px; font-size: 1.2rem; font-weight: 700;
+            background: linear-gradient(135deg, #818cf8, #6366f1);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+        }
+        .sidebar-nav { flex: 1; padding: 8px 12px; display: flex; flex-direction: column; gap: 2px; }
+        .sidebar-nav button {
+            display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+            border-radius: var(--radius-sm); color: var(--text-muted); font-size: 0.9rem;
+            cursor: pointer; transition: all 0.2s; border: none; background: none; width: 100%; text-align: left;
+        }
+        .sidebar-nav button:hover { background: var(--surface-2); color: var(--text); }
+        .sidebar-nav button.active { background: var(--accent); color: #fff; }
+        .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+        .main-header {
+            padding: 14px 24px; border-bottom: 1px solid var(--border);
+            background: var(--surface); display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+        }
+        .main-body { flex: 1; overflow-y: auto; padding: 24px; }
+
+        /* Chat */
+        .chat-area { display: flex; flex-direction: column; height: 100%; }
+        .chat-messages { flex: 1; overflow-y: auto; padding: 8px 24px; display: flex; flex-direction: column; gap: 14px; }
+        .chat-bubble {
+            max-width: 80%; padding: 12px 16px; border-radius: var(--radius);
+            line-height: 1.6; font-size: 0.92rem; animation: bubbleIn 0.25s ease-out;
+        }
+        .chat-bubble.user {
+            align-self: flex-end; background: linear-gradient(135deg, #6366f1, #4f46e5);
+            color: #fff; border-bottom-right-radius: 4px;
+        }
+        .chat-bubble.assistant {
+            align-self: flex-start; background: var(--surface-2);
+            border: 1px solid var(--border); border-bottom-left-radius: 4px;
+            word-break: break-word;
+        }
+        .chat-bubble .role-tag {
+            font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px;
+            margin-bottom: 6px; opacity: 0.6;
+        }
+        /* Markdown 内容排版 */
+        .chat-bubble.assistant p { margin: 0 0 0.5em 0; }
+        .chat-bubble.assistant p:last-child { margin-bottom: 0; }
+        .chat-bubble.assistant ul, .chat-bubble.assistant ol { margin: 0.3em 0; padding-left: 1.5em; }
+        .chat-bubble.assistant li { margin: 0.15em 0; }
+        .chat-bubble.assistant h1, .chat-bubble.assistant h2, .chat-bubble.assistant h3, .chat-bubble.assistant h4 { margin: 0.6em 0 0.3em 0; font-size: 1em; font-weight: 600; }
+        .chat-bubble.assistant pre { margin: 0.4em 0; padding: 10px 14px; background: #0b0f19; border-radius: 6px; overflow-x: auto; font-size: 0.85em; }
+        .chat-bubble.assistant code { font-size: 0.9em; background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 3px; }
+        .chat-bubble.assistant pre code { background: none; padding: 0; }
+        .chat-bubble.assistant blockquote { margin: 0.4em 0; padding: 4px 12px; border-left: 3px solid var(--accent); color: var(--text-muted); }
+        .chat-bubble.assistant table { margin: 0.4em 0; border-collapse: collapse; font-size: 0.85em; }
+        .chat-bubble.assistant th, .chat-bubble.assistant td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
+        .chat-bubble.assistant hr { margin: 0.6em 0; border: none; border-top: 1px solid var(--border); }
+        .chat-input-row {
+            display: flex; gap: 10px; padding: 16px 24px;
+            border-top: 1px solid var(--border); flex-shrink: 0;
+        }
+        .chat-input-row textarea {
+            flex: 1; resize: none; padding: 12px 14px;
+            border-radius: var(--radius); border: 1px solid var(--border);
+            background: var(--surface); color: var(--text);
+            font-size: 0.92rem; font-family: inherit;
+            transition: border-color 0.2s; line-height: 1.4;
+        }
+        .chat-input-row textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+        .empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
+        .empty-state i { font-size: 3rem; display: block; margin-bottom: 12px; opacity: 0.3; }
+
+        /* Thinking / Tool steps */
+        .steps-container { margin-bottom: 8px; display: flex; flex-direction: column; gap: 4px; }
+        .step-thinking {
+            cursor: pointer; padding: 4px 8px; border-radius: 6px;
+            background: rgba(245,158,11,0.1); color: #fbbf24;
+            display: inline-flex; align-items: center; user-select: none; font-size: 0.82rem;
+        }
+        .step-thinking-content {
+            padding: 6px 10px; margin-top: 2px; border-radius: 6px;
+            background: rgba(245,158,11,0.06); border-left: 2px solid #f59e0b;
+            color: #d4a574; font-size: 0.8rem; white-space: pre-wrap;
+        }
+        .step-tool {
+            padding: 4px 8px; border-radius: 6px; background: rgba(99,102,241,0.1);
+            display: inline-flex; align-items: center; font-size: 0.82rem;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 10px; }
+
+        @keyframes bubbleIn {
+            0% { opacity: 0; transform: translateY(8px); }
+            100% { opacity: 1; transform: translateY(0); }
+        }
     </style>
 </head>
 <body>
-<div id="app">
-    <div class="app">
-        <h1>HarnessAgent 测试控制台</h1>
-
-        <div class="tabs">
-            <button v-for="t in tabs" :key="t" class="tab" :class="{active: activeTab===t}" @click="activeTab=t">{{t}}</button>
-        </div>
-
-        <!-- 聊天 Tab -->
-        <div class="panel" v-if="activeTab==='聊天'">
-            <div class="input-area">
-                <input v-model="chatInput" @keyup.enter="sendMessage" placeholder="输入消息...">
-                <label class="stream-toggle">
-                    <input type="checkbox" v-model="streamMode"> 流式
-                </label>
-                <button class="btn-primary" @click="sendMessage" :disabled="loading">发送</button>
-                <button class="btn-secondary" @click="clearChat">清空</button>
+<div class="app-shell">
+    <aside class="sidebar">
+        <div class="sidebar-brand">⬡ HarnessAgent</div>
+        <nav class="sidebar-nav">
+            <button onclick="switchView('chat')" id="nav-chat"><i class="bi bi-chat-dots"></i> 对话</button>
+            <button onclick="switchView('tools')" id="nav-tools"><i class="bi bi-tools"></i> 工具</button>
+            <button onclick="switchView('hooks')" id="nav-hooks"><i class="bi bi-link-45deg"></i> Hook 链</button>
+            <button onclick="switchView('settings')" id="nav-settings"><i class="bi bi-gear"></i> 设置</button>
+        </nav>
+        <!-- Context usage bar -->
+        <div style="padding:8px 16px;border-top:1px solid var(--border)">
+            <div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:4px">上下文窗口</div>
+            <div style="background:var(--surface-2);border-radius:4px;height:6px;overflow:hidden">
+                <div id="ctxBar" style="background:var(--accent);height:100%;width:0%;transition:width 0.5s;border-radius:4px"></div>
             </div>
-            <div class="response" :class="{streaming}" ref="responseEl">
-                <div v-if="messages.length===0" style="color:#64748b">发送消息开始测试...</div>
-                <div v-for="(msg, i) in messages" :key="i" class="message" :class="msg.role">
-                    <div style="font-size:0.75rem;color:#64748b;margin-bottom:4px">{{msg.role.toUpperCase()}}</div>
-                    {{msg.content}}
+            <div id="ctxLabel" style="font-size:0.65rem;color:var(--text-muted);margin-top:2px">--/-- tokens</div>
+        </div>
+    </aside>
+    <main class="main">
+        <!-- Chat View -->
+        <div id="view-chat" style="display:flex;flex-direction:column;height:100%">
+            <div class="main-header">
+                <h2 style="font-size:1.05rem;font-weight:600;margin:0"><i class="bi bi-chat-dots me-2"></i>对话</h2>
+                <div class="ms-auto d-flex align-items-center gap-2">
+                    <button class="btn btn-outline-secondary btn-sm" onclick="clearChat()"><i class="bi bi-arrow-counterclockwise"></i></button>
                 </div>
             </div>
-            <div class="status" style="margin-top:10px">
-                <span>消息: {{messages.length}}</span>
-                <span v-if="loading">处理中...</span>
+            <div id="chatMessages" class="chat-messages">
+                <div class="empty-state"><i class="bi bi-robot"></i><p>开始一段新的对话</p></div>
+            </div>
+            <div class="chat-input-row">
+                <textarea id="chatInput" rows="1" placeholder="输入消息，⌘+Enter / Ctrl+Enter 发送..." onkeydown="handleChatKey(event)"></textarea>
+                <button class="btn px-4" style="background:var(--accent);color:#fff;border:none;" onclick="sendMessage()" id="sendBtn">
+                    <i class="bi bi-send-fill"></i>
+                </button>
             </div>
         </div>
-
-        <!-- 会话 Tab -->
-        <div class="panel" v-if="activeTab==='会话'">
-            <div class="row">
-                <button class="btn-primary" @click="createSession">新建会话</button>
-                <button class="btn-secondary" @click="loadSessions">刷新</button>
-            </div>
-            <div v-if="sessions.length===0" style="color:#64748b;margin-top:15px">暂无会话</div>
-            <div v-for="s in sessions" :key="s.id" class="card" style="margin-bottom:10px">
-                <h3>{{s.agentName || 'Session'}} <span class="badge badge-green">{{s.state}}</span></h3>
-                <p>ID: {{s.id}} | 租户: {{s.tenantId}} | 轮次: {{s.turnCount}}</p>
-                <p>创建: {{s.createdAt}}</p>
+        <!-- Tools View -->
+        <div id="view-tools" style="display:none;flex-direction:column;height:100%">
+            <div class="main-header"><h2 style="font-size:1.05rem;font-weight:600;margin:0"><i class="bi bi-tools me-2"></i>已注册工具</h2></div>
+            <div class="main-body" id="toolsContent"><div class="empty-state"><i class="bi bi-puzzle"></i><p>加载中...</p></div></div>
+        </div>
+        <!-- Hooks View -->
+        <div id="view-hooks" style="display:none;flex-direction:column;height:100%">
+            <div class="main-header"><h2 style="font-size:1.05rem;font-weight:600;margin:0"><i class="bi bi-link-45deg me-2"></i>Hook 链</h2></div>
+            <div class="main-body" id="hooksContent"><div class="empty-state"><i class="bi bi-link-45deg"></i><p>加载中...</p></div></div>
+        </div>
+        <!-- Settings View -->
+        <div id="view-settings" style="display:none;flex-direction:column;height:100%">
+            <div class="main-header"><h2 style="font-size:1.05rem;font-weight:600;margin:0"><i class="bi bi-gear me-2"></i>设置</h2></div>
+            <div class="main-body" id="settingsContent">
+                <div class="empty-state"><i class="bi bi-gear"></i><p>加载中...</p></div>
             </div>
         </div>
-
-        <!-- 工具 Tab -->
-        <div class="panel" v-if="activeTab==='工具'">
-            <button class="btn-secondary" @click="loadTools" style="margin-bottom:15px">刷新工具列表</button>
-            <div class="grid">
-                <div v-for="tool in tools" :key="tool.name" class="card">
-                    <h3>{{tool.name}}</h3>
-                    <p>{{tool.description}}</p>
-                    <p v-if="tool.requiresApproval"><span class="badge badge-red">需审批</span></p>
-                </div>
-            </div>
-            <div v-if="tools.length===0" style="color:#64748b;margin-top:15px">加载中...</div>
-        </div>
-
-        <!-- Hook Tab -->
-        <div class="panel" v-if="activeTab==='Hook状态'">
-            <div class="status">
-                <span>活跃 Hook 链: {{hookCount}}</span>
-                <span>待处理干预: {{pendingInterrupts}}</span>
-            </div>
-            <p style="color:#94a3b8">Hook 系统提供 LLM 推理前/后、工具调用前/后、错误处理、人工干预等10个干预点。</p>
-        </div>
-
-        <!-- 租户 Tab -->
-        <div class="panel" v-if="activeTab==='租户管理'">
-            <div class="row">
-                <input v-model="tenantName" placeholder="租户名称" style="flex:1">
-                <button class="btn-primary" @click="createTenant">创建租户</button>
-            </div>
-            <div v-for="t in tenants" :key="t.id" class="card" style="margin-bottom:10px">
-                <h3>{{t.name}} <span class="badge" :class="t.status==='ACTIVE'?'badge-green':'badge-red'">{{t.status}}</span></h3>
-                <p>ID: {{t.id}}</p>
-            </div>
-        </div>
-    </div>
+    </main>
 </div>
 
 <script>
-const { createApp, ref, nextTick } = Vue;
+// ===================== App State =====================
+let isLoading = false;
 
-createApp({
-    setup() {
-        const activeTab = ref('聊天');
-        const tabs = ['聊天', '会话', '工具', 'Hook状态', '租户管理'];
-        const chatInput = ref('');
-        const messages = ref([]);
-        const loading = ref(false);
-        const streaming = ref(false);
-        const streamMode = ref(false);
-        const responseEl = ref(null);
-        const sessions = ref([]);
-        const tools = ref([]);
-        const tenants = ref([]);
-        const hookCount = ref(0);
-        const pendingInterrupts = ref(0);
-        const tenantName = ref('');
+// ===================== View Switching =====================
+function switchView(view) {
+    document.querySelectorAll('[id^="view-"]').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('[id^="nav-"]').forEach(el => el.classList.remove('active'));
+    const viewEl = document.getElementById('view-' + view);
+    if (viewEl) viewEl.style.display = 'flex';
+    const navEl = document.getElementById('nav-' + view);
+    if (navEl) navEl.classList.add('active');
+    if (view === 'tools') loadTools();
+    if (view === 'hooks') loadHooks();
+    if (view === 'settings') loadSettings();
+}
+switchView('chat');
 
-        const api = (path, opts = {}) => fetch(path, {
+// ===================== Chat =====================
+const chatMessages = document.getElementById('chatMessages');
+const chatInput = document.getElementById('chatInput');
+const sendBtn = document.getElementById('sendBtn');
+let emptyState = chatMessages.querySelector('.empty-state');
+
+function scrollChat() {
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function clearChat() {
+    chatMessages.innerHTML = '';
+    emptyState = document.createElement('div');
+    emptyState.className = 'empty-state';
+    emptyState.innerHTML = '<i class="bi bi-robot"></i><p>开始一段新的对话</p>';
+    chatMessages.appendChild(emptyState);
+}
+
+function handleChatKey(e) {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendMessage(); }
+}
+
+function addUserBubble(text) {
+    if (emptyState) { emptyState.remove(); emptyState = null; }
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble user';
+    bubble.innerHTML = '<div class="role-tag">user</div><div></div>';
+    bubble.lastChild.textContent = text;
+    chatMessages.appendChild(bubble);
+    scrollChat();
+}
+
+function createStreamingBubble() {
+    const wrapper = document.createElement('div');
+    wrapper.style.display = 'flex'; wrapper.style.flexDirection = 'column'; wrapper.style.alignItems = 'flex-start';
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble assistant';
+    bubble.innerHTML = '<div class="role-tag">assistant</div>';
+    const stepsEl = document.createElement('div');
+    stepsEl.className = 'steps-container';
+    bubble.appendChild(stepsEl);
+    // streaming content — pre-wrap for real-time plain text output
+    const contentEl = document.createElement('div');
+    contentEl.style.whiteSpace = 'pre-wrap';
+    contentEl.style.wordBreak = 'break-word';
+    bubble.appendChild(contentEl);
+    wrapper.appendChild(bubble);
+    chatMessages.appendChild(wrapper);
+    scrollChat();
+    return { wrapper, bubble, stepsEl, contentEl };
+}
+
+async function sendMessage() {
+    const msg = chatInput.value.trim();
+    if (!msg || isLoading) return;
+    chatInput.value = '';
+    isLoading = true;
+    sendBtn.disabled = true;
+
+    addUserBubble(msg);
+
+    try {
+        const resp = await fetch('/api/agent/stream', {
+            method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            ...opts
-        }).then(r => {
-            if (!r.ok) throw new Error(r.status + ': ' + r.statusText);
-            return r.json();
+            body: JSON.stringify({ message: msg })
         });
+        if (!resp.ok) throw new Error(`${resp.status}`);
 
-        // 聊天
-        async function sendMessage() {
-            const msg = chatInput.value.trim();
-            if (!msg) return;
-            messages.value.push({ role: 'user', content: msg });
-            chatInput.value = '';
-            loading.value = true;
+        const stream = createStreamingBubble();
+        const contentEl = stream.contentEl;
+        const stepsEl = stream.stepsEl;
+        let accumulatedText = '';
+        let thinkingText = '';  // 合并所有思考内容
+        let toolCalls = [];     // 实际工具调用（非思考中的）
 
-            try {
-                if (streamMode.value) {
-                    // SSE 流式
-                    streaming.value = true;
-                    messages.value.push({ role: 'assistant', content: '' });
-                    const resp = await fetch('/api/agent/stream', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ message: msg })
-                    });
-                    const reader = resp.body.getReader();
-                    const decoder = new TextDecoder();
-                    let buffer = '';
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-                        buffer += decoder.decode(value, { stream: true });
-                        const lines = buffer.split('\n');
-                        buffer = lines.pop() || '';
-                        for (const line of lines) {
-                            if (line.startsWith('data:')) {
-                                const data = line.substring(5).trim();
-                                if (data === '[DONE]') continue;
-                                try {
-                                    const chunk = JSON.parse(data);
-                                    messages.value[messages.value.length - 1].content += chunk.delta || '';
-                                    if (responseEl.value) {
-                                        responseEl.value.scrollTop = responseEl.value.scrollHeight;
-                                    }
-                                } catch(e) {}
-                            }
-                        }
-                    }
-                } else {
-                    const resp = await api('/api/agent/chat', {
-                        method: 'POST',
-                        body: JSON.stringify({ message: msg })
-                    });
-                    const text = resp.message?.contentBlocks
-                        ?.filter(b => b.type === 'text')
-                        ?.map(b => b.text)
-                        ?.join('') || resp.message?.textContent || JSON.stringify(resp);
-                    messages.value.push({ role: 'assistant', content: text });
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        function renderSteps() {
+            let html = '';
+            // 思考过程 — 合并为一个可折叠块
+            if (thinkingText) {
+                html += `<div class="step-thinking" onclick="var n=this.nextElementSibling;n.style.display=n.style.display==='none'?'block':'none'"><i class="bi bi-lightbulb" style="color:#f59e0b"></i><span style="margin-left:4px">思考过程</span></div>`;
+                html += `<div class="step-thinking-content" style="display:none">${escapeHtml(thinkingText)}</div>`;
+            }
+            // 工具调用
+            for (const tc of toolCalls) {
+                html += `<div class="step-tool"><i class="bi bi-cpu" style="color:#6366f1"></i><span class="badge bg-secondary" style="margin:0 4px">${escapeHtml(tc.name)}</span><span style="color:var(--text-muted);font-size:0.75rem">${escapeHtml(tc.args)}</span></div>`;
+            }
+            stepsEl.innerHTML = html;
+        }
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            let idx;
+            while ((idx = buffer.indexOf('\n\n')) >= 0) {
+                const rawEvent = buffer.slice(0, idx);
+                buffer = buffer.slice(idx + 2);
+                let sseEvent = '', data = '';
+                for (const ln of rawEvent.split('\n')) {
+                    if (ln.startsWith('event:')) sseEvent = ln.slice(6).trim();
+                    else if (ln.startsWith('data:')) data += ln.slice(5).trim();
                 }
-            } catch (e) {
-                messages.value.push({ role: 'assistant', content: '错误: ' + e.message });
-            } finally {
-                loading.value = false;
-                streaming.value = false;
-                await nextTick();
-                if (responseEl.value) responseEl.value.scrollTop = responseEl.value.scrollHeight;
+                if (!data) continue;
+                try {
+                    const chunk = JSON.parse(data);
+                    const eventType = sseEvent || chunk.type || 'text';
+                    const delta = chunk.delta || '';
+                    if (delta && eventType !== 'tool_use_start' && eventType !== 'tool_use_delta') {
+                        accumulatedText += delta;
+                        contentEl.textContent = accumulatedText;  // 逐字纯文本，流畅不卡
+                    }
+                    if (eventType === 'thinking') {
+                        thinkingText += delta;
+                    } else if (eventType === 'tool_use_start') {
+                        toolCalls.push({ name: chunk.toolName || '', args: '' });
+                    } else if (eventType === 'tool_use_delta') {
+                        const last = toolCalls[toolCalls.length - 1];
+                        if (last) last.args += delta;
+                    }
+                    renderSteps();
+                    scrollChat();
+                } catch(e) {}
             }
         }
-
-        function clearChat() { messages.value = []; }
-
-        // 会话
-        async function loadSessions() { /* TODO */ }
-        async function createSession() { /* TODO */ }
-
-        // 工具
-        async function loadTools() {
-            try {
-                // 从健康检查获取基本信息
-                const resp = await api('/api/health');
-                // 工具列表通过内置注册展示
-                tools.value = [
-                    { name: 'calculator', description: '数学表达式计算器', requiresApproval: false },
-                    { name: 'web_search', description: '网络搜索（需配置API）', requiresApproval: false },
-                    { name: 'http_client', description: 'HTTP请求工具', requiresApproval: false },
-                    { name: 'file_read', description: '读取文件内容', requiresApproval: false },
-                    { name: 'file_write', description: '写入文件（需审批）', requiresApproval: true },
-                    { name: 'code_interpreter', description: '代码解释器（需审批）', requiresApproval: true },
-                    { name: 'database_query', description: '数据库查询（需审批）', requiresApproval: true },
-                    { name: 'memory_store', description: '存储记忆', requiresApproval: false },
-                    { name: 'memory_retrieve', description: '检索记忆', requiresApproval: false },
-                    { name: 'memory_forget', description: '遗忘记忆', requiresApproval: false },
-                    { name: 'plan_notebook', description: '任务计划管理', requiresApproval: false },
-                    { name: 'plan_step', description: '步骤状态管理', requiresApproval: false }
-                ];
-            } catch(e) {}
+        // 流结束 → 切换为 markdown 渲染（完整语法可正确解析）
+        if (accumulatedText && typeof marked !== 'undefined') {
+            try { contentEl.innerHTML = marked.parse(accumulatedText); } catch(e) {}
         }
-
-        // 租户
-        async function createTenant() {
-            if (!tenantName.value) return;
-            try {
-                const resp = await api('/api/tenant', {
-                    method: 'POST',
-                    body: JSON.stringify({ name: tenantName.value })
-                });
-                tenants.value.push(resp);
-                tenantName.value = '';
-            } catch(e) {}
-        }
-
-        // 初始化加载
-        loadTools();
-
-        return {
-            activeTab, tabs, chatInput, messages, loading, streaming, streamMode, responseEl,
-            sessions, tools, tenants, hookCount, pendingInterrupts, tenantName,
-            sendMessage, clearChat, loadSessions, createSession, loadTools, createTenant
-        };
+        scrollChat();
+        updateContextUsage();
+    } catch (e) {
+        const errBubble = document.createElement('div');
+        errBubble.className = 'chat-bubble assistant';
+        errBubble.innerHTML = '<div class="role-tag">assistant</div><div style="color:#ef4444">错误: ' + escapeHtml(e.message) + '</div>';
+        chatMessages.appendChild(errBubble);
+    } finally {
+        isLoading = false;
+        sendBtn.disabled = false;
+        chatInput.focus();
     }
-}).mount('#app');
+}
+
+function escapeHtml(s) {
+    if (!s) return '';
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ===================== Tools =====================
+async function loadTools() {
+    const el = document.getElementById('toolsContent');
+    try {
+        const resp = await fetch('/api/tools');
+        const data = await resp.json();
+        if (!data.groups || data.groups.length === 0) {
+            el.innerHTML = '<div class="empty-state"><i class="bi bi-puzzle"></i><p>无已注册工具</p></div>';
+            return;
+        }
+        el.innerHTML = data.groups.map(g => `
+            <div style="margin-bottom:20px">
+                <h6 style="color:var(--accent);text-transform:uppercase;font-size:0.8rem;letter-spacing:0.5px">${escapeHtml(g.name)} <span class="badge bg-secondary ms-1">${escapeHtml(g.scope)}</span></h6>
+                <div class="d-flex flex-wrap gap-3">
+                    ${(g.tools||[]).map(t => `
+                        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;width:240px">
+                            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><i class="bi bi-cpu" style="color:var(--accent)"></i><strong>${escapeHtml(t.name)}</strong></div>
+                            <p style="font-size:0.8rem;color:var(--text-muted);margin:0">${escapeHtml(t.description||'')}</p>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `).join('');
+    } catch(e) {
+        el.innerHTML = '<div class="empty-state"><i class="bi bi-exclamation-triangle"></i><p>加载失败</p></div>';
+    }
+}
+
+// ===================== Settings =====================
+let settingsCache = {};
+
+async function loadSettings() {
+    try {
+        const r = await fetch('/api/settings');
+        settingsCache = await r.json();
+        updateContextBar();
+        renderSettings();
+    } catch(e) {
+        document.getElementById('settingsContent').innerHTML = '<div class="empty-state"><i class="bi bi-exclamation-triangle"></i><p>加载失败</p></div>';
+    }
+}
+
+function updateContextBar() {
+    const max = settingsCache.maxInputTokens || 128000;
+    const used = settingsCache.usedTokens || 0;
+    const pct = max > 0 ? Math.min(100, (used / max) * 100) : 0;
+    document.getElementById('ctxBar').style.width = pct + '%';
+    document.getElementById('ctxLabel').textContent = (used/1000).toFixed(0) + 'K / ' + (max/1000).toFixed(0) + 'K tokens';
+}
+
+function renderSettings() {
+    const s = settingsCache;
+    const el = document.getElementById('settingsContent');
+    el.innerHTML = `<div style="max-width:600px">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px">
+            <h6 style="margin:0 0 16px;font-weight:600">模型配置</h6>
+            <div style="margin-bottom:12px">
+                <label style="font-size:0.85rem;color:var(--text-muted);display:block;margin-bottom:4px">提供商</label>
+                <select id="setProvider" style="width:100%;padding:8px 12px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:0.9rem">
+                    <option value="deepseek" ${s.provider==='deepseek'?'selected':''}>DeepSeek</option>
+                    <option value="openai" ${s.provider==='openai'?'selected':''}>OpenAI</option>
+                    <option value="dashscope" ${s.provider==='dashscope'?'selected':''}>DashScope (阿里)</option>
+                </select>
+            </div>
+            <div style="margin-bottom:12px">
+                <label style="font-size:0.85rem;color:var(--text-muted);display:block;margin-bottom:4px">模型名称</label>
+                <input id="setModel" value="${escapeHtml(s.model||'')}" placeholder="deepseek-chat" style="width:100%;padding:8px 12px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:0.9rem">
+            </div>
+            <div style="margin-bottom:12px">
+                <label style="font-size:0.85rem;color:var(--text-muted);display:block;margin-bottom:4px">API Key</label>
+                <input id="setApiKey" type="password" placeholder="sk-..." style="width:100%;padding:8px 12px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:0.9rem">
+                <div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px">当前: ${escapeHtml(s.apiKey||'(未设置)')}</div>
+            </div>
+            <div style="margin-bottom:16px">
+                <label style="font-size:0.85rem;color:var(--text-muted);display:block;margin-bottom:4px">自定义 Base URL（可选）</label>
+                <input id="setBaseUrl" placeholder="默认" style="width:100%;padding:8px 12px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:0.9rem">
+            </div>
+            <button onclick="saveSettings()" style="width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:0.9rem;font-weight:600;cursor:pointer">保存并切换（即时生效）</button>
+            <div id="saveMsg" style="margin-top:8px;font-size:0.8rem"></div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px">
+            <h6 style="margin:0 0 12px;font-weight:600">当前状态</h6>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:0.85rem">
+                <div style="color:var(--text-muted)">提供商</div><div>${escapeHtml(s.provider)}</div>
+                <div style="color:var(--text-muted)">模型</div><div>${escapeHtml(s.model)}</div>
+                <div style="color:var(--text-muted)">API Key</div><div>${escapeHtml(s.apiKey)}</div>
+                <div style="color:var(--text-muted)">最大输入</div><div>${(s.maxInputTokens/1000).toFixed(0)}K tokens</div>
+                <div style="color:var(--text-muted)">流式输出</div><div>${s.supportsStreaming?'<span style="color:#22c55e">支持</span>':'<span style="color:#ef4444">不支持</span>'}</div>
+                <div style="color:var(--text-muted)">工具调用</div><div>${s.supportsToolCalling?'<span style="color:#22c55e">支持</span>':'<span style="color:#ef4444">不支持</span>'}</div>
+            </div>
+        </div>
+    </div>`;
+}
+
+async function saveSettings() {
+    const body = {
+        provider: document.getElementById('setProvider').value,
+        model: document.getElementById('setModel').value,
+        apiKey: document.getElementById('setApiKey').value,
+        baseUrl: document.getElementById('setBaseUrl').value
+    };
+    try {
+        const r = await fetch('/api/settings', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+        const data = await r.json();
+        document.getElementById('saveMsg').innerHTML = data.ok
+            ? '<span style="color:#22c55e">✓ ' + data.message + '</span>'
+            : '<span style="color:#ef4444">✗ 保存失败</span>';
+        loadSettings();
+    } catch(e) {
+        document.getElementById('saveMsg').innerHTML = '<span style="color:#ef4444">✗ ' + e.message + '</span>';
+    }
+}
+
+// ===================== Hooks =====================
+async function loadHooks() {
+    const el = document.getElementById('hooksContent');
+    try {
+        const resp = await fetch('/api/hooks');
+        const data = await resp.json();
+        const hooks = data.hooks || [];
+        if (hooks.length === 0) {
+            el.innerHTML = '<div class="empty-state"><i class="bi bi-link-45deg"></i><p>无活跃 Hook</p></div>';
+            return;
+        }
+        el.innerHTML = `<div style="font-size:1.4rem;font-weight:700;margin-bottom:16px" class="text-gradient">${hooks.length} 活跃 Hook</div>`
+            + hooks.map(h => `
+                <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px 18px;margin-bottom:10px">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><i class="bi bi-link" style="color:var(--accent)"></i><strong>${escapeHtml(h.name)}</strong><span class="badge bg-secondary">优先级 ${h.priority}</span></div>
+                    <p style="font-size:0.85rem;color:var(--text-muted);margin:0 0 6px">${escapeHtml(h.description||'')}</p>
+                    <div>${(h.events||[]).map(e => `<span class="badge bg-dark me-1" style="font-size:0.65rem">${escapeHtml(e)}</span>`).join('')}</div>
+                </div>
+            `).join('');
+    } catch(e) {
+        el.innerHTML = '<div class="empty-state"><i class="bi bi-exclamation-triangle"></i><p>加载失败</p></div>';
+    }
+}
+
+// ===================== Init =====================
+loadTools();
+loadHooks();
+loadSettings();
+
+// 每次发送消息后更新上下文用量（按字符数估算）
+function updateContextUsage() {
+    const max = settingsCache.maxInputTokens || 128000;
+    let totalChars = 0;
+    for (const el of chatMessages.querySelectorAll('.chat-bubble')) {
+        totalChars += (el.textContent || '').length;
+    }
+    // 粗略估算：中文约1.5 chars/token，英文约4 chars/token
+    settingsCache.usedTokens = Math.ceil(totalChars / 2.5);
+    updateContextBar();
+}
 </script>
 </body>
 </html>

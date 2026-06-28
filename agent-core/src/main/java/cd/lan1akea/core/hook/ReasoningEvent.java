@@ -33,4 +33,19 @@ public class ReasoningEvent extends HookEvent {
         List<Msg> msgs = getPayload("messages");
         return msgs != null ? msgs : Collections.emptyList();
     }
+
+    /**
+     * 设置绕过模型调用的直接回复消息。
+     * 非 null 时 ReActLoop 将跳过模型，直接返回此消息。
+     */
+    public void setBypassMessage(Msg msg) {
+        setPayload("bypassMessage", msg);
+    }
+
+    /**
+     * @return 绕过消息，null 表示正常走模型
+     */
+    public Msg getBypassMessage() {
+        return getPayload("bypassMessage");
+    }
 }

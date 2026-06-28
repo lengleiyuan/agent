@@ -1,12 +1,14 @@
 package cd.lan1akea.bootstrap.config;
 
-import cd.lan1akea.core.agent.ReActAgent;
+import cd.lan1akea.bootstrap.controller.KBController;
 import cd.lan1akea.core.formatter.OpenAiMessageFormatter;
-import cd.lan1akea.core.hook.HookChain;
-import cd.lan1akea.core.hook.impl.LoggingHook;
 import cd.lan1akea.core.hook.impl.AuditHook;
-import cd.lan1akea.core.hook.impl.RateLimitHook;
+import cd.lan1akea.core.hook.impl.ContentFilterHook;
+import cd.lan1akea.core.hook.impl.KnowledgeBaseHook;
 import cd.lan1akea.core.model.*;
+import cd.lan1akea.core.model.dashscope.DashScopeChatModel;
+import cd.lan1akea.core.model.deepseek.DeepSeekChatModel;
+import cd.lan1akea.core.model.openai.OpenAIChatModel;
 import cd.lan1akea.core.state.AgentStateStore;
 import cd.lan1akea.core.state.InMemoryAgentStateStore;
 import cd.lan1akea.core.tool.ToolGroup;
@@ -14,9 +16,12 @@ import cd.lan1akea.core.tool.ToolGroupScope;
 import cd.lan1akea.core.tool.ToolRegistry;
 import cd.lan1akea.core.tool.builtin.CalculatorTool;
 import cd.lan1akea.harness.HarnessAgent;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -26,102 +31,217 @@ import java.util.Map;
 /**
  * 开发环境默认 Agent 配置。
  * <p>
- * 自动装配 Hook 链（日志/审计/内容过滤/频率限制）、状态存储。
- * 使用回显模型用于开发测试，配置真实 API Key 后自动切换。
+ * 通过 HarnessAgent.Builder 完整装配所有子系统。
+ * API Key 读取优先级：VM 参数 -Dagent.api.key > application.properties 的 agent.api.key
  * </p>
  */
 @Configuration
 public class DevAgentConfig {
 
+    private static final Logger log = LoggerFactory.getLogger(DevAgentConfig.class);
+
+    @Bean
+    public CalculatorTool calculatorTool() {
+        return new CalculatorTool();
+    }
+
+    @Bean
+    public ToolGroup globalToolGroup(ToolRegistry toolRegistry, CalculatorTool calculator) {
+        ToolGroup group = new ToolGroup("global-tools", ToolGroupScope.GLOBAL);
+        group.addTool(calculator);
+        toolRegistry.registerGroup(group);
+        return group;
+    }
+
     /**
-     * 回显模型
+     * ChatModel Bean — VM 参数或 application.properties 配置真实模型，否则回退到回显模式。
+     *
+     * <p>VM 参数示例：{@code -Dagent.api.key=sk-xxx -Dagent.api.provider=deepseek}</p>
+     * <p>application.properties 示例：{@code agent.api.key=sk-xxx}</p>
      */
     @Bean
     @ConditionalOnMissingBean(ChatModel.class)
-    public ChatModel echoModel() {
+    public DynamicChatModel chatModel(Environment env) {
+        String apiKey = System.getProperty("agent.api.key",
+            env.getProperty("agent.api.key", ""));
+        String provider = System.getProperty("agent.api.provider",
+            env.getProperty("agent.api.provider", "deepseek"));
+        String model = System.getProperty("agent.api.model",
+            env.getProperty("agent.api.model", "deepseek-chat"));
+        String baseUrl = System.getProperty("agent.api.base-url",
+            env.getProperty("agent.api.base-url", ""));
+
+        ChatModel initial;
+        if (!apiKey.isBlank()) {
+            log.info("使用真实模型: provider={}, model={}", provider, model);
+            initial = buildRealModel(apiKey, provider, model, baseUrl);
+        } else {
+            log.info("未配置 API Key，使用回显演示模式。启动时加 -Dagent.api.key=xxx 接入真实 LLM");
+            initial = buildEchoModel();
+        }
+        return new DynamicChatModel(initial);
+    }
+
+    public static ChatModel buildRealModel(String apiKey, String provider, String modelName, String baseUrl) {
+        boolean customUrl = !baseUrl.isBlank();
+        return switch (provider.toLowerCase()) {
+            case "openai" -> customUrl
+                ? new OpenAIChatModel(apiKey, modelName, baseUrl)
+                : new OpenAIChatModel(apiKey, modelName);
+            case "deepseek" -> customUrl
+                ? new DeepSeekChatModel(apiKey, modelName, baseUrl)
+                : new DeepSeekChatModel(apiKey, modelName);
+            case "dashscope" -> customUrl
+                ? new DashScopeChatModel(apiKey, modelName, baseUrl)
+                : new DashScopeChatModel(apiKey, modelName);
+            default -> customUrl
+                ? new OpenAIChatModel(apiKey, modelName, baseUrl)
+                : new OpenAIChatModel(apiKey, modelName);
+        };
+    }
+
+    /**
+     * 回显模型 — 模拟 ReAct 循环，演示 思考 → 工具调用 → 观察 → 回复 完整流程。
+     * <p>
+     * 第一轮返回 tool_use 让 ReActLoop 真正执行 CalculatorTool；
+     * 第二轮（拿到工具结果后）返回文本回复。
+     * </p>
+     */
+    private ChatModel buildEchoModel() {
         return new ChatModelBase("dev", "echo-model", new OpenAiMessageFormatter()) {
             @Override
             protected Map<String, String> buildAuthHeaders() { return Map.of(); }
             @Override
             protected String buildApiUrl() { return "http://localhost/echo"; }
+            @Override
+            public int getMaxInputTokens() { return 8192; }
 
+            // ── 非流式 ──
             @Override
             protected Mono<ChatResponse> doChat(List<Map<String, Object>> messages,
                                                  List<ToolSchema> toolSchemas,
                                                  GenerateOptions options) {
-                String last = "";
-                if (!messages.isEmpty()) {
-                    last = String.valueOf(messages.get(messages.size() - 1).getOrDefault("content", ""));
+                String lastUser = lastUserContent(messages);
+                boolean hasToolResult = hasToolResult(messages);
+
+                if (hasToolResult) {
+                    String toolContent = lastToolContent(messages);
+                    var msg = cd.lan1akea.core.message.AssistantMessage.of(
+                        "[回显·ReAct] 问: " + lastUser + "\n工具返回: " + toolContent +
+                        "\n---\n配置 -Dagent.api.key=xxx 接入真实 LLM");
+                    return Mono.just(new ChatResponse(msg, new ChatUsage(0, 0), "stop", "echo"));
                 }
-                cd.lan1akea.core.message.Msg msg = cd.lan1akea.core.message.AssistantMessage.of(
-                    "[回显模式] 你说: " + last + "\n" +
-                    "可用工具: calculator\n" +
-                    "配置真实 API Key 后将正常调用 LLM。");
-                return Mono.just(new ChatResponse(msg, new ChatUsage(0, 0), "stop", "echo"));
+
+                String expr = extractExpression(messages);
+                var msg = cd.lan1akea.core.message.AssistantMessage.builder()
+                    .addToolUse("echo_calc", "calculator",
+                        "{\"expression\": \"" + expr + "\"}")
+                    .build();
+                return Mono.just(new ChatResponse(msg, new ChatUsage(0, 0), "tool_calls", "echo"));
             }
 
+            // ── 流式 ──
             @Override
             protected Flux<ChatStreamChunk> doStream(List<Map<String, Object>> messages,
                                                       List<ToolSchema> toolSchemas,
                                                       GenerateOptions options) {
-                return Flux.just(ChatStreamChunk.builder()
-                    .delta("[回显模式] 流式功能已就绪")
-                    .type(ChatStreamChunk.TYPE_TEXT).build());
+                String lastUser = lastUserContent(messages);
+                boolean hasToolResult = hasToolResult(messages);
+
+                if (hasToolResult) {
+                    String toolContent = lastToolContent(messages);
+                    return Flux.just(
+                        ChatStreamChunk.builder().delta("综合工具结果，组织回复...")
+                            .type(ChatStreamChunk.TYPE_THINKING).index(0).build(),
+                        ChatStreamChunk.builder()
+                            .delta("[回显·ReAct]\n问: " + lastUser + "\n工具结果: " + toolContent +
+                                   "\n---\n配置 -Dagent.api.key=xxx 接入真实 LLM")
+                            .type(ChatStreamChunk.TYPE_TEXT).finishReason("stop").index(1).build()
+                    );
+                }
+
+                // 第一轮：思考 → 调用 calculator
+                String expr = extractExpression(messages);
+                return Flux.just(
+                    ChatStreamChunk.builder().delta("用户问: " + lastUser + " — 决定使用 calculator 工具")
+                        .type(ChatStreamChunk.TYPE_THINKING).index(0).build(),
+                    ChatStreamChunk.builder()
+                        .delta("calculator").toolName("calculator")
+                        .type(ChatStreamChunk.TYPE_TOOL_USE_START).toolUseId("echo_calc").index(1).build(),
+                    ChatStreamChunk.builder()
+                        .delta("{\"expression\": \"" + expr + "\"}")
+                        .type(ChatStreamChunk.TYPE_TOOL_USE_DELTA).toolUseId("echo_calc").index(2).build()
+                );
+            }
+
+            private String lastUserContent(List<Map<String, Object>> messages) {
+                for (int i = messages.size() - 1; i >= 0; i--) {
+                    if ("user".equals(messages.get(i).get("role")))
+                        return String.valueOf(messages.get(i).getOrDefault("content", ""));
+                }
+                return "";
+            }
+
+            private boolean hasToolResult(List<Map<String, Object>> messages) {
+                return messages.stream().anyMatch(m -> "tool".equals(m.get("role")));
+            }
+
+            private String lastToolContent(List<Map<String, Object>> messages) {
+                for (int i = messages.size() - 1; i >= 0; i--) {
+                    Map<String, Object> m = messages.get(i);
+                    if ("tool".equals(m.get("role"))) {
+                        Object c = m.get("content");
+                        if (c instanceof String s) return s;
+                        if (c instanceof List<?> list && !list.isEmpty()) {
+                            if (list.get(0) instanceof Map<?, ?> block
+                                && block.containsKey("content"))
+                                return String.valueOf(block.get("content"));
+                        }
+                        return String.valueOf(c);
+                    }
+                }
+                return "";
+            }
+
+            /** 从用户消息中提取数学表达式 */
+            private String extractExpression(List<Map<String, Object>> messages) {
+                String last = lastUserContent(messages);
+                // 尝试匹配常见数学表达式
+                java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("[\\d\\s+\\-*/().%^]+").matcher(last);
+                if (m.find()) return m.group().trim();
+                return "1+1";
             }
         };
     }
 
-    /**
-     * Hook 链（含完整预处理链）
-     */
-    @Bean
-    @ConditionalOnMissingBean(HookChain.class)
-    public HookChain hookChain() {
-        HookChain chain = new HookChain();
-        chain.register(new cd.lan1akea.core.hook.impl.ContentFilterHook());
-        chain.register(new LoggingHook("DevLogger"));
-        chain.register(new AuditHook("DevAudit"));
-        chain.register(new RateLimitHook(20, 60_000));
-        return chain;
-    }
-
-    /**
-     * 状态存储（开发用内存）
-     */
     @Bean
     @ConditionalOnMissingBean(AgentStateStore.class)
     public AgentStateStore stateStore() {
         return new InMemoryAgentStateStore();
     }
 
-    /**
-     * 默认 Agent（完整装配所有子系统）
-     */
+    @Bean
+    public KnowledgeBaseHook knowledgeBaseHook() {
+        return KBController.createHook();
+    }
+
     @Bean
     @ConditionalOnMissingBean(HarnessAgent.class)
-    public HarnessAgent defaultAgent(ChatModel model, ToolRegistry toolRegistry,
-                                      AgentStateStore stateStore) {
-        // 全局工具组：所有租户可见
-        ToolGroup globalGroup = new ToolGroup("global-tools", ToolGroupScope.GLOBAL);
-        globalGroup.addTool(new CalculatorTool());
-        toolRegistry.registerGroup(globalGroup);
-
-        ReActAgent inner = ReActAgent.builder()
+    public HarnessAgent defaultAgent(DynamicChatModel model, AgentStateStore stateStore,
+                                      KnowledgeBaseHook kbHook) {
+        log.info("启动 HarnessAgent: DevAgent, model={}:{}", model.getProvider(), model.getModelName());
+        return HarnessAgent.builder()
             .name("DevAgent")
             .model(model)
-            .toolRegistry(toolRegistry)
-            .hooks(
-                new cd.lan1akea.core.hook.impl.ContentFilterHook(),
-                new LoggingHook("DevLogger"),
-                new AuditHook("DevAudit"),
-                new RateLimitHook(20, 60_000))
+            .tool(new CalculatorTool())
+            .hook(new ContentFilterHook())
+            .hook(new AuditHook("DevAudit"))
+            .hook(kbHook)
             .maxIterations(5)
             .temperature(0.7)
             .maxTokens(2048)
             .stateStore(stateStore)
             .build();
-
-        inner.build().block();
-        return new HarnessAgent(inner);
     }
 }

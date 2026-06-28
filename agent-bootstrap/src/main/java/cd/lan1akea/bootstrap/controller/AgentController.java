@@ -14,17 +14,6 @@ import reactor.core.publisher.Mono;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Agent REST API 控制器。
- * <p>
- * 支持通过请求头传递租户上下文：
- * <ul>
- * <li>{@code X-Tenant-Id} — 租户ID</li>
- * <li>{@code X-User-Id} — 用户ID</li>
- * <li>{@code X-Session-Id} — 会话ID（可选，不传则自动创建）</li>
- * </ul>
- * </p>
- */
 @RestController
 @RequestMapping("/api/agent")
 public class AgentController {
@@ -35,9 +24,6 @@ public class AgentController {
         this.defaultAgent = defaultAgent;
     }
 
-    /**
-     * 单次对话。
-     */
     @PostMapping("/chat")
     public Mono<ChatResponse> chat(@RequestBody Map<String, Object> request,
                                     @RequestHeader(value = "X-Tenant-Id", required = false) String tenantId,
@@ -53,9 +39,6 @@ public class AgentController {
         return defaultAgent.chat(List.of(userMsg), ctx);
     }
 
-    /**
-     * 流式对话（SSE）。
-     */
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ChatStreamChunk> stream(@RequestBody Map<String, Object> request,
                                          @RequestHeader(value = "X-Tenant-Id", required = false) String tenantId,

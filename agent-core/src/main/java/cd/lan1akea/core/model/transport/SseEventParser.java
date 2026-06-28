@@ -29,7 +29,6 @@ public class SseEventParser {
                 if (chunk != null) {
                     sink.next(chunk);
                 }
-                // 静默跳过 null chunk
             });
     }
 
@@ -57,9 +56,14 @@ public class SseEventParser {
                 Map<String, Object> delta = (Map<String, Object>) choice.get("delta");
 
                 if (delta != null) {
-                    // 文本增量
+                    // 推理/思考内容优先 (DeepSeek R1, Claude thinking, etc.)
+                    Object reasoningContent = delta.get("reasoning_content");
                     Object content = delta.get("content");
-                    if (content != null) {
+
+                    if (reasoningContent != null && !reasoningContent.toString().isEmpty()) {
+                        builder.delta(reasoningContent.toString())
+                            .type(ChatStreamChunk.TYPE_THINKING);
+                    } else if (content != null && !content.toString().isEmpty()) {
                         builder.delta(content.toString())
                             .type(ChatStreamChunk.TYPE_TEXT);
                     }

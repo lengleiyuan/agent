@@ -235,9 +235,7 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
                                 .stream(true).build();
 
                         activeLoopContext.set(loopCtx);
-                        List<ChatStreamChunk> collected = new ArrayList<>();
                         return reActLoop.executeStream(loopCtx)
-                                .doOnNext(collected::add)
                                 .doFinally(s -> activeLoopContext.set(null));
                     })
                     .contextWrite(c -> writeContext(c, ctx));
