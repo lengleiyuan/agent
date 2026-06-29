@@ -1,5 +1,7 @@
 package cd.lan1akea.core.hook;
 
+import cd.lan1akea.core.model.ChatStreamChunk;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.util.ArrayList;
@@ -98,25 +100,53 @@ public class AroundHookChain {
 
 
     /**
-     * 四参数函数式接口，Hook 的阶段方法（如 aroundReasoning）。
+     * 包裹整个 call（流式）。
      */
+    public Flux<ChatStreamChunk> aroundCallStream(HookEvent event, HookContext ctx,
+                                                   Function<HookEvent, Flux<ChatStreamChunk>> core) {
+        if (hooks.isEmpty()) return core.apply(event);
+        return wrapStream(event, ctx, core, AroundHook::aroundCallStream);
+    }
+
+    /**
+     * 包裹推理阶段（流式）。
+     */
+    public Flux<ChatStreamChunk> aroundReasoningStream(HookEvent event, HookContext ctx,
+                                                        Function<HookEvent, Flux<ChatStreamChunk>> core) {
+        if (hooks.isEmpty()) return core.apply(event);
+        return wrapStream(event, ctx, core, AroundHook::aroundReasoningStream);
+    }
+
+    /**
+     * 洋葱构建（流式版）。Function 链天然延迟求值，无需 defer。
+     */
+    private Flux<ChatStreamChunk> wrapStream(HookEvent event, HookContext ctx,
+                                              Function<HookEvent, Flux<ChatStreamChunk>> core,
+                                              StreamWrapFunction wf) {
+        Function<HookEvent, Flux<ChatStreamChunk>> chain = core;
+        for (int i = hooks.size() - 1; i >= 0; i--) {
+            final AroundHook hook = hooks.get(i);
+            final Function<HookEvent, Flux<ChatStreamChunk>> inner = chain;
+            chain = e -> wf.apply(hook, e, ctx, inner);
+        }
+        return chain.apply(event);
+    }
+
+    @FunctionalInterface
+    private interface StreamWrapFunction {
+        Flux<ChatStreamChunk> apply(AroundHook hook, HookEvent event, HookContext ctx,
+                                     Function<HookEvent, Flux<ChatStreamChunk>> next);
+    }
+
     @FunctionalInterface
     private interface WrapFunction {
         Mono<HookEvent> apply(AroundHook hook, HookEvent event, HookContext ctx,
                               Function<HookEvent, Mono<HookEvent>> next);
     }
 
-    /**
-     * 洋葱构建：逆序遍历 hooks 列表，从最内层往外包裹。
-     * hooks = [A, B, C]，核心操作 = core：
-     * A.wrap(e0, ctx, e1 ->
-     *   B.wrap(e1, ctx, e2 ->
-     *     C.wrap(e2, ctx, core)))
-     */
     private Mono<HookEvent> wrap(HookEvent event, HookContext ctx,
                                   Function<HookEvent, Mono<HookEvent>> core,
                                   WrapFunction wf) {
-        // 从内向外构建：chain 初始为 core，每次用外层 hook 包裹
         Function<HookEvent, Mono<HookEvent>> chain = core;
         for (int i = hooks.size() - 1; i >= 0; i--) {
             final AroundHook hook = hooks.get(i);

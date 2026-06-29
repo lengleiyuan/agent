@@ -52,6 +52,9 @@ public class DeepSeekChatModel extends ChatModelBase {
         return headers;
     }
 
+    @Override
+    public int getMaxInputTokens() { return 1024_000; }
+
     /**
      * 构造 DeepSeek Chat API 的请求 URL。
      */

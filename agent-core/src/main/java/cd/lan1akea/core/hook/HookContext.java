@@ -1,5 +1,7 @@
 package cd.lan1akea.core.hook;
 
+import cd.lan1akea.core.context.RuntimeContext;
+
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -8,6 +10,9 @@ import java.util.Map;
 /**
  * Hook 执行上下文。
  * 携带 Agent 执行时的运行时信息（租户、会话、用户、迭代次数等）。
+ *
+ * <p>推荐使用工厂方法创建：</p>
+ * <pre>{@code HookContext.from(runtimeContext, 0);}</pre>
  */
 public class HookContext {
 
@@ -45,6 +50,22 @@ public class HookContext {
      * 扩展属性
      */
     private final Map<String, Object> attributes;
+
+    /**
+     * 从 RuntimeContext 创建 HookContext（最常用）。
+     */
+    public static HookContext from(RuntimeContext ctx, int iteration) {
+        return new HookContext(ctx.getAgentName(), ctx.getTenantId(), ctx.getSessionId(),
+            ctx.getUserId(), iteration, List.of(), ctx.getAttributes());
+    }
+
+    /**
+     * 从 RuntimeContext 创建 HookContext，指定迭代次数和已调用工具。
+     */
+    public static HookContext from(RuntimeContext ctx, int iteration, List<String> calledTools) {
+        return new HookContext(ctx.getAgentName(), ctx.getTenantId(), ctx.getSessionId(),
+            ctx.getUserId(), iteration, calledTools, ctx.getAttributes());
+    }
 
     /**
      * 构造 HookContext。

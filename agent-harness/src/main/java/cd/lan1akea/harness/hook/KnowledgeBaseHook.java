@@ -1,4 +1,4 @@
-package cd.lan1akea.core.hook.impl;
+package cd.lan1akea.harness.hook;
 
 import cd.lan1akea.core.hook.*;
 import cd.lan1akea.core.message.Msg;
@@ -9,18 +9,19 @@ import java.util.Set;
 import java.util.function.BiFunction;
 
 /**
- * 知识库拦截 Hook（门面层注入匹配逻辑）。
+ * 知识库拦截 Hook（门面层，可选注入）。
+ * PRE_REASONING 阶段匹配用户输入，命中则绕过模型直接返回预设答案。
  *
  * <p>使用示例：
  * <pre>{@code
  * ConcurrentHashMap<String, String> kb = new ConcurrentHashMap<>();
  * kb.put("你好", "你好！有什么可以帮您？");
  * HarnessAgent.builder()
- *     .hook(new KnowledgeBaseHook((query, ctx) -> kb.retrieve(query)))
+ *     .hook(new KnowledgeBaseHook((query, ctx) -> kb.get(query)))
  *     .build();
  * }</pre>
  */
-public class KnowledgeBaseHook implements Hook {
+public class KnowledgeBaseHook implements IHook {
 
     private final String name;
     private final BiFunction<String, HookContext, String> matcher;

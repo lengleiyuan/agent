@@ -10,9 +10,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.test.StepVerifier;
 
-import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -53,7 +51,7 @@ class ReActLoopTest {
             new ChatUsage(10, 5), "stop", null));
 
         LoopContext ctx = buildContext(List.of(UserMessage.of("Hi")));
-        ChatResponse response = loop.reasoningStep(ctx).block();
+        ChatResponse response = loop.reasoning(ctx).block();
 
         assertNotNull(response);
         assertEquals("Hello, I am an AI", response.getMessage().getTextContent());
@@ -67,7 +65,7 @@ class ReActLoopTest {
             new ChatUsage(10, 5), "stop", null));
 
         LoopContext ctx = buildContext(List.of(UserMessage.of("echo hello")));
-        ChatResponse response = loop.reasoningStep(ctx).block();
+        ChatResponse response = loop.reasoning(ctx).block();
 
         assertNotNull(response);
         assertEquals("I will use echo", response.getMessage().getTextContent());
@@ -90,7 +88,7 @@ class ReActLoopTest {
             new HookDispatcher(chain), toolRegistry, stateStore);
 
         LoopContext ctx = buildContext(List.of(UserMessage.of("Hi")));
-        assertThrows(Exception.class, () -> l.reasoningStep(ctx).block());
+        assertThrows(Exception.class, () -> l.reasoning(ctx).block());
     }
 
     @Test
@@ -110,7 +108,7 @@ class ReActLoopTest {
             new HookDispatcher(chain), toolRegistry, stateStore);
 
         LoopContext ctx = buildContext(List.of(UserMessage.of("Hi")));
-        ChatResponse response = l.reasoningStep(ctx).block();
+        ChatResponse response = l.reasoning(ctx).block();
 
         assertNotNull(response);
         assertTrue(response.getMessage().getTextContent().contains("中断"));

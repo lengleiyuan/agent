@@ -164,20 +164,18 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
         ensureBuilt();
         return Mono.deferContextual(ctxView -> {
             final RuntimeContext ctx = resolveRuntimeContext(ctxView, rtCtx);
-            String tenantId = ctx.getTenantId();
-            String userId = ctx.getUserId();
             String sessId = ctx.getSessionId();
 
-            // aroundCall — 包裹整个 chat（traceId/全链路计时）
-            // 上下文压缩由 ContextCompressionHook（PRE_REASONING 优先级5）统一处理
-            HookContext callHc = new HookContext(name, tenantId, userId, sessId, 0, List.of(), ctx.getAttributes());
+            HookContext callHc = HookContext.from(ctx, 0);
             return aroundHookChain.aroundCall(new HookEvent(null), callHc,
                             e -> loadSessionAndHistory(sessId, messages)
                                     .flatMap(this::injectSystemMessage)
                                     .flatMap(m -> {
                                         LoopContext loopCtx = LoopContext.builder()
-                                                .agentName(name).fromRuntimeContext(ctx)
-                                                .messages(m).generateOptions(resolveOptions())
+                                                .agentName(name)
+                                                .fromRuntimeContext(ctx)
+                                                .messages(m)
+                                                .generateOptions(resolveOptions())
                                                 .maxIterations(config.getExecutionConfig().getMaxIterations())
                                                 .stream(false).build();
                                         activeLoopContext.set(loopCtx);
@@ -224,7 +222,9 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
             String sessId = ctx.getSessionId();
             GenerateOptions opts = resolveOptions();
 
-            return loadSessionAndHistory(sessId, messages)
+            HookContext callHc = HookContext.from(ctx, 0);
+            return aroundHookChain.aroundCallStream(new HookEvent(null), callHc,
+                e -> loadSessionAndHistory(sessId, messages)
                     .flatMapMany(msgs -> injectSystemMessage(msgs).flatMapMany(Flux::just))
                     .concatMap(m -> {
                         LoopContext loopCtx = LoopContext.builder()
@@ -238,7 +238,7 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
                         return reActLoop.executeStream(loopCtx)
                                 .doFinally(s -> activeLoopContext.set(null));
                     })
-                    .contextWrite(c -> writeContext(c, ctx));
+                    .contextWrite(c -> writeContext(c, ctx)));
         });
     }
 

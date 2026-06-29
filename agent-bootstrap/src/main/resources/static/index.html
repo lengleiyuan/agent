@@ -136,11 +136,11 @@
             <button onclick="switchView('hooks')" id="nav-hooks"><i class="bi bi-link-45deg"></i> Hook 链</button>
             <button onclick="switchView('settings')" id="nav-settings"><i class="bi bi-gear"></i> 设置</button>
         </nav>
-        <!-- Context usage bar -->
+        <!-- Context usage bar — 显示剩余 -->
         <div style="padding:8px 16px;border-top:1px solid var(--border)">
-            <div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:4px">上下文窗口</div>
+            <div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:4px">剩余上下文</div>
             <div style="background:var(--surface-2);border-radius:4px;height:6px;overflow:hidden">
-                <div id="ctxBar" style="background:var(--accent);height:100%;width:0%;transition:width 0.5s;border-radius:4px"></div>
+                <div id="ctxBar" style="background:var(--accent);height:100%;width:100%;transition:width 0.5s;border-radius:4px"></div>
             </div>
             <div id="ctxLabel" style="font-size:0.65rem;color:var(--text-muted);margin-top:2px">--/-- tokens</div>
         </div>
@@ -151,6 +151,7 @@
             <div class="main-header">
                 <h2 style="font-size:1.05rem;font-weight:600;margin:0"><i class="bi bi-chat-dots me-2"></i>对话</h2>
                 <div class="ms-auto d-flex align-items-center gap-2">
+                    <button class="btn btn-sm" id="streamToggle" style="background:var(--accent);color:#fff;border:none" onclick="toggleStreamMode()">流式</button>
                     <button class="btn btn-outline-secondary btn-sm" onclick="clearChat()"><i class="bi bi-arrow-counterclockwise"></i></button>
                 </div>
             </div>
@@ -187,6 +188,16 @@
 <script>
 // ===================== App State =====================
 let isLoading = false;
+let streamMode = true;
+
+function toggleStreamMode() {
+    streamMode = !streamMode;
+    const btn = document.getElementById('streamToggle');
+    btn.textContent = streamMode ? '流式' : '非流式';
+    btn.style.background = streamMode ? 'var(--accent)' : 'var(--surface-2)';
+    btn.style.color = streamMode ? '#fff' : 'var(--text-muted)';
+    btn.style.border = streamMode ? 'none' : '1px solid var(--border)';
+}
 
 // ===================== View Switching =====================
 function switchView(view) {
@@ -234,6 +245,30 @@ function addUserBubble(text) {
     scrollChat();
 }
 
+function addAssistantBubble(text, thinking, tools) {
+    if (emptyState) { emptyState.remove(); emptyState = null; }
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble assistant';
+    bubble.innerHTML = '<div class="role-tag">assistant</div>';
+    if (thinking) {
+        const stepsEl = document.createElement('div');
+        stepsEl.className = 'steps-container';
+        stepsEl.innerHTML = `<div class="step-thinking" onclick="var n=this.nextElementSibling;n.style.display=n.style.display==='none'?'block':'none'"><i class="bi bi-lightbulb" style="color:#f59e0b"></i><span style="margin-left:4px">思考过程</span></div><div class="step-thinking-content" style="display:none">${escapeHtml(thinking)}</div>`;
+        for (const tc of tools) {
+            stepsEl.innerHTML += `<div class="step-tool"><i class="bi bi-cpu" style="color:#6366f1"></i><span class="badge bg-secondary" style="margin:0 4px">${escapeHtml(tc.name)}</span><span style="color:var(--text-muted);font-size:0.75rem">${escapeHtml(tc.args)}</span></div>`;
+        }
+        bubble.appendChild(stepsEl);
+    }
+    const contentEl = document.createElement('div');
+    if (text && typeof marked !== 'undefined') {
+        try { contentEl.innerHTML = marked.parse(text); } catch(e) { contentEl.textContent = text; }
+    } else {
+        contentEl.textContent = text || '';
+    }
+    bubble.appendChild(contentEl);
+    chatMessages.appendChild(bubble);
+}
+
 function createStreamingBubble() {
     const wrapper = document.createElement('div');
     wrapper.style.display = 'flex'; wrapper.style.flexDirection = 'column'; wrapper.style.alignItems = 'flex-start';
@@ -264,11 +299,30 @@ async function sendMessage() {
     addUserBubble(msg);
 
     try {
-        const resp = await fetch('/api/agent/stream', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: msg })
-        });
+        if (!streamMode) {
+            // 非流式
+            const resp = await fetch('/api/agent/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: msg })
+            });
+            if (!resp.ok) throw new Error(`${resp.status}`);
+            const data = await resp.json();
+            const text = data.message?.contentBlocks?.filter(b => b.type === 'text').map(b => b.text).join('')
+                || data.message?.textContent || '';
+            const tools = (data.message?.toolUseBlocks || []).map(tb => ({ name: tb.name, args: tb.arguments || '' }));
+            const thinking = data.message?.thinkingBlocks?.map(b => b.text).join('') || '';
+            if (emptyState) { emptyState.remove(); emptyState = null; }
+            addAssistantBubble(text, thinking, tools);
+            scrollChat();
+            updateContextUsage();
+        } else {
+            // 流式
+            const resp = await fetch('/api/agent/stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: msg })
+            });
         if (!resp.ok) throw new Error(`${resp.status}`);
 
         const stream = createStreamingBubble();
@@ -337,6 +391,7 @@ async function sendMessage() {
         }
         scrollChat();
         updateContextUsage();
+        } // end stream mode
     } catch (e) {
         const errBubble = document.createElement('div');
         errBubble.className = 'chat-bubble assistant';
@@ -399,9 +454,10 @@ async function loadSettings() {
 function updateContextBar() {
     const max = settingsCache.maxInputTokens || 128000;
     const used = settingsCache.usedTokens || 0;
-    const pct = max > 0 ? Math.min(100, (used / max) * 100) : 0;
+    const remaining = Math.max(0, max - used);
+    const pct = max > 0 ? (remaining / max) * 100 : 100;
     document.getElementById('ctxBar').style.width = pct + '%';
-    document.getElementById('ctxLabel').textContent = (used/1000).toFixed(0) + 'K / ' + (max/1000).toFixed(0) + 'K tokens';
+    document.getElementById('ctxLabel').textContent = '剩余 ' + (remaining/1000).toFixed(0) + 'K / ' + (max/1000).toFixed(0) + 'K';
 }
 
 function renderSettings() {

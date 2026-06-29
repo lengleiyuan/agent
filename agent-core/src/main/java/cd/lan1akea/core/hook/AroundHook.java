@@ -1,5 +1,7 @@
 package cd.lan1akea.core.hook;
 
+import cd.lan1akea.core.model.ChatStreamChunk;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.util.function.Function;
@@ -21,7 +23,7 @@ public interface AroundHook {
     String getName();
 
     /**
-     * 包裹推理阶段（PRE_REASONING 到 LLM 调用再到 POST_REASONING）。
+     * 包裹推理阶段（非流式）。
      *
      * @param event 当前事件（同一对象贯穿整个阶段，payload 可跨前置/后置共享）
      * @param ctx   Hook 上下文
@@ -34,6 +36,19 @@ public interface AroundHook {
     }
 
     /**
+     * 包裹推理阶段（流式）。默认实现直接透传，子类可覆盖。
+     *
+     * @param event 当前事件
+     * @param ctx   Hook 上下文
+     * @param next  下游，可能是内层 AroundHook 或核心流式模型调用
+     * @return 处理后的流式分块
+     */
+    default Flux<ChatStreamChunk> aroundReasoningStream(HookEvent event, HookContext ctx,
+                                                         Function<HookEvent, Flux<ChatStreamChunk>> next) {
+        return next.apply(event);
+    }
+
+    /**
      * 包裹单次工具调用（PRE_TOOL_CALL → 工具执行 → POST_TOOL_CALL）。
      */
     default Mono<HookEvent> aroundToolCall(HookEvent event, HookContext ctx,
@@ -42,10 +57,23 @@ public interface AroundHook {
     }
 
     /**
-     * 包裹整个 call（aroundCall 包裹整个调用）。
+     * 包裹整个 call（非流式）。
      */
     default Mono<HookEvent> aroundCall(HookEvent event, HookContext ctx,
                                         Function<HookEvent, Mono<HookEvent>> next) {
         return next.apply(event);
+    }
+
+    /**
+     * 包裹整个 call（流式）。默认直接透传，子类可覆盖。
+     *
+     * @param event 当前事件
+     * @param ctx   Hook 上下文
+     * @param core  下游，可能是内层 AroundHook 或核心流
+     * @return 处理后的流式分块
+     */
+    default Flux<ChatStreamChunk> aroundCallStream(HookEvent event, HookContext ctx,
+                                                    Function<HookEvent, Flux<ChatStreamChunk>> core) {
+        return core.apply(event);
     }
 }

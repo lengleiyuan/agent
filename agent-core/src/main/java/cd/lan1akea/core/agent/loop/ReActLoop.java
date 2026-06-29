@@ -94,9 +94,9 @@ public class ReActLoop {
                 return handleExternalInterrupt(ctx);
             }
             if (ctx.getIteration() >= ctx.getMaxIterations()) {
-                return summarizeStep(ctx);
+                return summarize(ctx);
             }
-            return reasoningStep(ctx)
+            return reasoning(ctx)
                 .onErrorResume(e -> handleError(ctx, e).then(Mono.error(e)))
                 .flatMap(response -> {
                     ctx.setLastResponse(response);
@@ -105,7 +105,7 @@ public class ReActLoop {
                     if (toolCalls.isEmpty()) {
                         return Mono.just(response);
                     }
-                    return actingStep(ctx, toolCalls)
+                    return acting(ctx, toolCalls)
                         .flatMap(results -> observationStep(ctx, results))
                         .flatMap(this::execute);
                 });
@@ -148,8 +148,13 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
                     }
 
                     ctx.setIteration(ctx.getIteration() + 1);
-                    return actingStream(ctx, toolCalls)
-                        .concatWith(observationStream(ctx, toolCalls))
+                    List<ToolResult> toolResults = new ArrayList<>();
+                    return actingStream(ctx, toolCalls, toolResults)
+                        .doOnComplete(() -> {
+                            appendToolResults(ctx, toolResults);
+                            persistTurn(ctx);
+                            saveCheckpoint(ctx);
+                        })
                         .concatWith(executeStream(ctx));
                 }));
         });
@@ -162,7 +167,7 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
      * @param ctx 循环上下文
      * @return 模型的聊天响应
      */
-    Mono<ChatResponse> reasoningStep(LoopContext ctx) {
+    Mono<ChatResponse> reasoning(LoopContext ctx) {
         HookContext hc = buildHookContext(ctx);
 
         ReasoningEvent pre = new ReasoningEvent(HookEventType.PRE_REASONING);
@@ -237,12 +242,11 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
                         new HookEvent(HookEventType.PRE_MODEL_CALL), hc)
                     .flatMapMany(mr -> mr.isAbort()
                         ? Flux.error(new cd.lan1akea.core.exception.HookAbortException("model", mr.getAbortReason()))
-                        : model.streamWithTools(ctx.getMessages(), schemas, ctx.getGenerateOptions()))
-                    .doOnComplete(() -> {
+                        : aroundHookChain.aroundReasoningStream(pre, hc,
+                            e -> model.streamWithTools(ctx.getMessages(), schemas, ctx.getGenerateOptions())))
+                    .doOnComplete(() ->
                         hookDispatcher.dispatch(HookEventType.POST_MODEL_CALL,
-                            new HookEvent(HookEventType.POST_MODEL_CALL), hc).subscribe();
-                        aroundHookChain.aroundReasoning(pre, hc, Mono::just).subscribe();
-                    });
+                            new HookEvent(HookEventType.POST_MODEL_CALL), hc).subscribe());
             })
             .doOnComplete(() -> {
                 hookDispatcher.dispatch(HookEventType.POST_REASONING,
@@ -258,7 +262,7 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
      * @param toolCalls 要执行的工具调用列表
      * @return 工具执行结果列表
      */
-    Mono<List<ToolResult>> actingStep(LoopContext ctx, List<ToolUseBlock> toolCalls) {
+    Mono<List<ToolResult>> acting(LoopContext ctx, List<ToolUseBlock> toolCalls) {
         HookContext hc = buildHookContext(ctx);
         return Flux.fromIterable(toolCalls)
             .flatMap(tc -> executeSingleTool(ctx, tc, hc))
@@ -273,11 +277,13 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
      * @param toolCalls 要执行的工具调用列表
      * @return 每次工具执行的结果分块 Flux
      */
-    Flux<ChatStreamChunk> actingStream(LoopContext ctx, List<ToolUseBlock> toolCalls) {
+    Flux<ChatStreamChunk> actingStream(LoopContext ctx, List<ToolUseBlock> toolCalls,
+                                        List<ToolResult> resultsCollector) {
         HookContext hc = buildHookContext(ctx);
         return Flux.fromIterable(toolCalls)
             .concatMap(tc -> executeSingleTool(ctx, tc, hc))
             .concatMap(result -> {
+                resultsCollector.add(result);
                 String content = result.isSuccess() ? result.getContent() : "[错误] " + result.getErrorMessage();
                 return Flux.just(ChatStreamChunk.builder()
                     .delta(content).type(ChatStreamChunk.TYPE_TEXT).build());
@@ -360,13 +366,16 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
     }
 
     /**
-     * 执行观察阶段（流式）：持久化对话轮次并保存检查点。
+     * 执行观察阶段（流式）：追加工具结果到消息、持久化对话轮次并保存检查点。
      *
-     * @param ctx       循环上下文
+     * @param ctx     循环上下文
+     * @param results 工具执行结果
      * @param toolCalls 已执行的工具调用（用于持久化）
      * @return 空 Flux
      */
-    Flux<ChatStreamChunk> observationStream(LoopContext ctx, List<ToolUseBlock> toolCalls) {
+    Flux<ChatStreamChunk> observationStream(LoopContext ctx, List<ToolResult> results,
+                                             List<ToolUseBlock> toolCalls) {
+        appendToolResults(ctx, results);
         persistTurn(ctx);
         saveCheckpoint(ctx);
         return Flux.empty();
@@ -380,7 +389,10 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
      */
     private void appendToolResults(LoopContext ctx, List<ToolResult> results) {
         Msg lastMsg = ctx.getLastResponse() != null ? ctx.getLastResponse().getMessage() : null;
-        List<ToolUseBlock> toolCalls = lastMsg != null ? lastMsg.getToolUseBlocks() : List.of();
+        if (lastMsg == null) return;
+        // 先追加 ASSISTANT 消息（含 tool_calls），API 要求 TOOL 前必须有 tool_calls
+        ctx.addMessage(lastMsg);
+        List<ToolUseBlock> toolCalls = lastMsg.getToolUseBlocks();
         for (int i = 0; i < results.size(); i++) {
             ToolResult r = results.get(i);
             String callId = i < toolCalls.size() ? toolCalls.get(i).getId() : "tool_" + i;
@@ -442,7 +454,7 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
      * @param ctx 循环上下文
      * @return 模型的摘要聊天响应
      */
-    private Mono<ChatResponse> summarizeStep(LoopContext ctx) {
+    private Mono<ChatResponse> summarize(LoopContext ctx) {
         List<Msg> messages = ctx.getMessages();
         if (messages.isEmpty()) return Mono.justOrEmpty(ctx.getLastResponse());
 
@@ -571,7 +583,7 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
      */
     HookContext buildHookContext(LoopContext ctx) {
         return new HookContext(ctx.getAgentName(), ctx.getTenantId(), ctx.getSessionId(),
-            ctx.getUserId(), ctx.getIteration(), new ArrayList<>(), ctx.getAttributes());
+            ctx.getUserId(), ctx.getIteration(), List.of(), ctx.getAttributes());
     }
 
     /**

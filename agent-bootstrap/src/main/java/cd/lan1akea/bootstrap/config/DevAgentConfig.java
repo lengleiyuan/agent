@@ -1,10 +1,8 @@
 package cd.lan1akea.bootstrap.config;
 
-import cd.lan1akea.bootstrap.controller.KBController;
 import cd.lan1akea.core.formatter.OpenAiMessageFormatter;
 import cd.lan1akea.core.hook.impl.AuditHook;
 import cd.lan1akea.core.hook.impl.ContentFilterHook;
-import cd.lan1akea.core.hook.impl.KnowledgeBaseHook;
 import cd.lan1akea.core.model.*;
 import cd.lan1akea.core.model.dashscope.DashScopeChatModel;
 import cd.lan1akea.core.model.deepseek.DeepSeekChatModel;
@@ -222,14 +220,8 @@ public class DevAgentConfig {
     }
 
     @Bean
-    public KnowledgeBaseHook knowledgeBaseHook() {
-        return KBController.createHook();
-    }
-
-    @Bean
     @ConditionalOnMissingBean(HarnessAgent.class)
-    public HarnessAgent defaultAgent(DynamicChatModel model, AgentStateStore stateStore,
-                                      KnowledgeBaseHook kbHook) {
+    public HarnessAgent defaultAgent(DynamicChatModel model, AgentStateStore stateStore) {
         log.info("启动 HarnessAgent: DevAgent, model={}:{}", model.getProvider(), model.getModelName());
         return HarnessAgent.builder()
             .name("DevAgent")
@@ -237,7 +229,6 @@ public class DevAgentConfig {
             .tool(new CalculatorTool())
             .hook(new ContentFilterHook())
             .hook(new AuditHook("DevAudit"))
-            .hook(kbHook)
             .maxIterations(5)
             .temperature(0.7)
             .maxTokens(2048)

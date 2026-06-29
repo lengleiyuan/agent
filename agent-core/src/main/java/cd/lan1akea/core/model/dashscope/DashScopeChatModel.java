@@ -1,6 +1,6 @@
 package cd.lan1akea.core.model.dashscope;
 
-import cd.lan1akea.core.formatter.OpenAiMessageFormatter;
+import cd.lan1akea.core.formatter.DashScopeMessageFormatter;
 import cd.lan1akea.core.model.ChatModelBase;
 
 import java.util.LinkedHashMap;
@@ -19,7 +19,7 @@ public class DashScopeChatModel extends ChatModelBase {
     }
 
     public DashScopeChatModel(String apiKey, String modelName, String baseUrl) {
-        super("dashscope", modelName, new OpenAiMessageFormatter());
+        super("dashscope", modelName, new DashScopeMessageFormatter());
         this.apiKey = apiKey;
         this.baseUrl = baseUrl;
     }
