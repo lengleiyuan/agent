@@ -27,6 +27,7 @@ import cd.lan1akea.core.model.ChatResponse;
 import cd.lan1akea.core.model.ChatStreamChunk;
 import cd.lan1akea.core.model.ToolChoicePolicy;
 import cd.lan1akea.core.state.AgentStateStore;
+import cd.lan1akea.core.state.InMemoryAgentStateStore;
 import cd.lan1akea.core.tool.ToolAccessPolicy;
 import cd.lan1akea.core.tool.builtin.TodoWriteTool;
 import cd.lan1akea.core.tool.mcp.HttpSseTransport;
@@ -419,7 +420,7 @@ public class HarnessAgent implements StreamableAgent, CallableAgent {
             // === 用户 Hook ===
             for (Hook hook : hooks) agentBuilder.hook(hook);
             for (AroundHook ah : aroundHooks) agentBuilder.aroundHook(ah);
-            if (stateStore != null) agentBuilder.stateStore(stateStore);
+            agentBuilder.stateStore(stateStore != null ? stateStore : new InMemoryAgentStateStore());
             if (maxIterations != null) agentBuilder.maxIterations(maxIterations);
             if (temperature != null) agentBuilder.temperature(temperature);
             if (maxTokens != null) agentBuilder.maxTokens(maxTokens);

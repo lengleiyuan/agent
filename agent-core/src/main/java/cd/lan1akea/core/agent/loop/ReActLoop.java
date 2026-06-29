@@ -265,7 +265,7 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
     Mono<List<ToolResult>> acting(LoopContext ctx, List<ToolUseBlock> toolCalls) {
         HookContext hc = buildHookContext(ctx);
         return Flux.fromIterable(toolCalls)
-            .flatMap(tc -> executeSingleTool(ctx, tc, hc))
+            .concatMap(tc -> executeSingleTool(ctx, tc, hc))
             .collectList();
     }
 

@@ -7,8 +7,6 @@ import cd.lan1akea.core.model.*;
 import cd.lan1akea.core.model.dashscope.DashScopeChatModel;
 import cd.lan1akea.core.model.deepseek.DeepSeekChatModel;
 import cd.lan1akea.core.model.openai.OpenAIChatModel;
-import cd.lan1akea.core.state.AgentStateStore;
-import cd.lan1akea.core.state.InMemoryAgentStateStore;
 import cd.lan1akea.core.tool.ToolGroup;
 import cd.lan1akea.core.tool.ToolGroupScope;
 import cd.lan1akea.core.tool.ToolRegistry;
@@ -214,14 +212,8 @@ public class DevAgentConfig {
     }
 
     @Bean
-    @ConditionalOnMissingBean(AgentStateStore.class)
-    public AgentStateStore stateStore() {
-        return new InMemoryAgentStateStore();
-    }
-
-    @Bean
     @ConditionalOnMissingBean(HarnessAgent.class)
-    public HarnessAgent defaultAgent(DynamicChatModel model, AgentStateStore stateStore) {
+    public HarnessAgent defaultAgent(DynamicChatModel model) {
         log.info("启动 HarnessAgent: DevAgent, model={}:{}", model.getProvider(), model.getModelName());
         return HarnessAgent.builder()
             .name("DevAgent")
@@ -230,9 +222,6 @@ public class DevAgentConfig {
             .hook(new ContentFilterHook())
             .hook(new AuditHook("DevAudit"))
             .maxIterations(5)
-            .temperature(0.7)
-            .maxTokens(2048)
-            .stateStore(stateStore)
             .build();
     }
 }

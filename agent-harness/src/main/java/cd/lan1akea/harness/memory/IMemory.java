@@ -7,7 +7,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
- * 记忆接口（门面层）。
+ * 记忆接口（门面层，可选注入）。
  *
  * 示例：
  *     public class RedisMemory implements IMemory {

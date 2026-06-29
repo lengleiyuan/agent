@@ -4,6 +4,7 @@ import cd.lan1akea.core.hook.*;
 import reactor.core.publisher.Mono;
 
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 日志 Hook。
@@ -18,9 +19,9 @@ public class LoggingHook implements Hook {
      */
     private final String name;
     /**
-     * 事件计数器
+     * 事件计数器（原子变量，保证并发安全）
      */
-    private int eventCount = 0;
+    private final AtomicInteger eventCount = new AtomicInteger(0);
 
     /**
      * 创建指定名称的日志 Hook。
@@ -61,11 +62,11 @@ public class LoggingHook implements Hook {
      */
     @Override
     public Mono<HookResult> onEvent(HookEvent event, HookContext context) {
-        eventCount++;
+        int count = eventCount.incrementAndGet();
         String eventType = context != null && event != null
             ? event.getEventType() : "unknown";
         System.out.printf("[%s] #%d | 事件=%s | Agent=%s | 迭代=%d%n",
-            name, eventCount, eventType,
+            name, count, eventType,
             context != null ? context.getAgentName() : "?",
             context != null ? context.getCurrentIteration() : 0);
         return Mono.just(HookResult.continue_());
@@ -74,10 +75,10 @@ public class LoggingHook implements Hook {
     /**
      * @return 已处理事件数
      */
-    public int getEventCount() { return eventCount; }
+    public int getEventCount() { return eventCount.get(); }
 
     /**
      * 重置计数器
      */
-    public void reset() { eventCount = 0; }
+    public void reset() { eventCount.set(0); }
 }

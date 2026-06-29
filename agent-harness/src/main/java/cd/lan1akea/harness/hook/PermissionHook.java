@@ -8,7 +8,7 @@ import java.util.Set;
 import java.util.function.BiFunction;
 
 /**
- * 业务权限 Hook（门面层）。
+ * 业务权限 Hook（门面层，可选注入）。
  * 无权限时返回 HookResult.skip(String) 跳过该工具并继续推理。
  * Tool 实例由框架自动注入到 ToolCallEvent.getTool()，无需自行注入 ToolRegistry。
  *
