@@ -18,7 +18,7 @@ public class Session {
     /**
      * 租户 ID（多租户隔离）
      */
-    private final long tenantId;
+    private final String tenantId;
     /**
      * 关联的 Agent 名称
      */
@@ -51,7 +51,7 @@ public class Session {
      * @param createdAt 创建时间戳（null 默认当前时间）
      * @param updatedAt 更新时间戳（null 默认当前时间）
      */
-    public Session(SessionId id, long tenantId, String agentName,
+    public Session(SessionId id, String tenantId, String agentName,
                     SessionState state, List<ChatTurn> turns,
                     LocalDateTime createdAt, LocalDateTime updatedAt) {
         this.id = id;
@@ -104,7 +104,7 @@ public class Session {
     /**
      * @return 租户 ID
      */
-    public long getTenantId() { return tenantId; }
+    public String getTenantId() { return tenantId; }
     /**
      * @return Agent 名称
      */

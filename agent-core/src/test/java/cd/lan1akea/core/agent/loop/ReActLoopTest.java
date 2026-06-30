@@ -4,7 +4,6 @@ import java.util.Set;
 import cd.lan1akea.core.hook.*;
 import cd.lan1akea.core.message.*;
 import cd.lan1akea.core.model.*;
-import cd.lan1akea.core.state.InMemoryAgentStateStore;
 import cd.lan1akea.core.tool.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,7 +23,6 @@ import static org.junit.jupiter.api.Assertions.*;
 class ReActLoopTest {
 
     private ReActLoop loop;
-    private InMemoryAgentStateStore stateStore;
     private ToolRegistry toolRegistry;
     private StubChatModel model;
 
@@ -32,12 +30,11 @@ class ReActLoopTest {
     void setUp() {
         model = new StubChatModel();
         toolRegistry = new ToolRegistry();
-        stateStore = new InMemoryAgentStateStore();
         HookChain chain = new HookChain();
         HookDispatcher dispatcher = new HookDispatcher(chain);
 
         loop = new ReActLoop(model, new ToolExecutor(toolRegistry),
-            dispatcher, toolRegistry, stateStore);
+            dispatcher, toolRegistry);
     }
 
     // ========================================================================
@@ -85,7 +82,7 @@ class ReActLoopTest {
         });
 
         ReActLoop l = new ReActLoop(model, new ToolExecutor(toolRegistry),
-            new HookDispatcher(chain), toolRegistry, stateStore);
+            new HookDispatcher(chain), toolRegistry);
 
         LoopContext ctx = buildContext(List.of(UserMessage.of("Hi")));
         assertThrows(Exception.class, () -> l.reasoning(ctx).block());
@@ -105,7 +102,7 @@ class ReActLoopTest {
         });
 
         ReActLoop l = new ReActLoop(model, new ToolExecutor(toolRegistry),
-            new HookDispatcher(chain), toolRegistry, stateStore);
+            new HookDispatcher(chain), toolRegistry);
 
         LoopContext ctx = buildContext(List.of(UserMessage.of("Hi")));
         ChatResponse response = l.reasoning(ctx).block();

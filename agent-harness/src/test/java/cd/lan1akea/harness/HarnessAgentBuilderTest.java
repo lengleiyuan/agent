@@ -60,7 +60,7 @@ class HarnessAgentBuilderTest {
             .build();
 
         assertNotNull(agent);
-        assertEquals(6, agent.getDelegate().getHookChain().size()); // 3 user + 3 default
+        assertEquals(7, agent.getDelegate().getHookChain().size()); // 3 user + 4 default
     }
 
     @Test

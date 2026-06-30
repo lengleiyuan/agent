@@ -1,10 +1,11 @@
 package cd.lan1akea.core.tool;
 
 import cd.lan1akea.core.model.ToolSchema;
+import cd.lan1akea.core.util.TypeSchemaGenerator;
 import cd.lan1akea.core.util.ValidationUtils;
 
+import java.lang.reflect.Type;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -21,12 +22,50 @@ public abstract class ToolBase implements Tool {
     private final List<ToolParam> params = new ArrayList<>();
 
     /**
+     * 复杂参数的完整 JSON Schema（key = 参数名）。
+     */
+    private final Map<String, Map<String, Object>> complexSchemas = new LinkedHashMap<>();
+
+    /**
      * 声明工具参数。在子类构造方法中调用。
      *
      * @param param 要声明的参数
      */
     protected void declareParam(ToolParam param) {
         params.add(param);
+    }
+
+    /**
+     * 声明复杂类型参数（POJO / 嵌套对象），自动从 Type 生成 JSON Schema。
+     *
+     * @param name        参数名称
+     * @param description 参数描述
+     * @param required    是否必需
+     * @param type        参数的 Java 泛型类型（支持 Class、ParameterizedType）
+     */
+    protected void declareObjectParam(String name, String description, boolean required, Type type) {
+        Map<String, Object> schema = TypeSchemaGenerator.generate(type);
+        complexSchemas.put(name, schema);
+        declareParam(ToolParam.builder(name, "object")
+            .description(description).required(required).build());
+    }
+
+    /**
+     * 声明数组类型参数，自动从元素 Type 生成 items schema。
+     *
+     * @param name        参数名称
+     * @param description 参数描述
+     * @param required    是否必需
+     * @param elementType 数组元素的 Java 泛型类型
+     */
+    protected void declareArrayParam(String name, String description, boolean required, Type elementType) {
+        Map<String, Object> items = TypeSchemaGenerator.generate(elementType);
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put("type", "array");
+        schema.put("items", items);
+        complexSchemas.put(name, schema);
+        declareParam(ToolParam.builder(name, "array")
+            .description(description).required(required).build());
     }
 
     /**
@@ -71,8 +110,14 @@ public abstract class ToolBase implements Tool {
         List<String> requiredFields = new ArrayList<>();
 
         for (ToolParam param : params) {
-            Map<String, Object> propDef = new LinkedHashMap<>();
-            propDef.put("type", param.getType());
+            Map<String, Object> propDef;
+            Map<String, Object> complexSchema = complexSchemas.get(param.getName());
+            if (complexSchema != null) {
+                propDef = new LinkedHashMap<>(complexSchema);
+            } else {
+                propDef = new LinkedHashMap<>();
+                propDef.put("type", param.getType());
+            }
             propDef.put("description", param.getDescription());
             if (param.getDefaultValue() != null) {
                 propDef.put("default", param.getDefaultValue());

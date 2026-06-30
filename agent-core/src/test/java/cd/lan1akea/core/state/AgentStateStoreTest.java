@@ -36,7 +36,7 @@ class AgentStateStoreTest {
 
     @Test
     void testCreateAndFindSession() {
-        Session session = new Session(new SessionId("s1"), 1, "test-agent",
+        Session session = new Session(new SessionId("s1"), "1", "test-agent",
             SessionState.ACTIVE, null, null, null);
 
         store.create(session).block();
@@ -55,20 +55,20 @@ class AgentStateStoreTest {
 
     @Test
     void testListByTenant() {
-        store.create(new Session(new SessionId("s1"), 1, "a", SessionState.ACTIVE, null, null, null)).block();
-        store.create(new Session(new SessionId("s2"), 1, "b", SessionState.ACTIVE, null, null, null)).block();
-        store.create(new Session(new SessionId("s3"), 2, "c", SessionState.ACTIVE, null, null, null)).block();
+        store.create(new Session(new SessionId("s1"), "1", "a", SessionState.ACTIVE, null, null, null)).block();
+        store.create(new Session(new SessionId("s2"), "1", "b", SessionState.ACTIVE, null, null, null)).block();
+        store.create(new Session(new SessionId("s3"), "2", "c", SessionState.ACTIVE, null, null, null)).block();
 
-        List<Session> tenant1 = store.listByTenant(1).collectList().block();
+        List<Session> tenant1 = store.listByTenant("1").collectList().block();
         assertEquals(2, tenant1.size());
 
-        List<Session> tenant2 = store.listByTenant(2).collectList().block();
+        List<Session> tenant2 = store.listByTenant("2").collectList().block();
         assertEquals(1, tenant2.size());
     }
 
     @Test
     void testUpdateAndCloseSession() {
-        Session session = new Session(new SessionId("s1"), 1, "a", SessionState.ACTIVE, null, null, null);
+        Session session = new Session(new SessionId("s1"), "1", "a", SessionState.ACTIVE, null, null, null);
         store.create(session).block();
 
         store.close(new SessionId("s1")).block();
@@ -78,7 +78,7 @@ class AgentStateStoreTest {
 
     @Test
     void testDeleteSession() {
-        store.create(new Session(new SessionId("s1"), 1, "a", SessionState.ACTIVE, null, null, null)).block();
+        store.create(new Session(new SessionId("s1"), "1", "a", SessionState.ACTIVE, null, null, null)).block();
         store.delete(new SessionId("s1")).block();
         assertNull(store.findById(new SessionId("s1")).block());
     }
@@ -89,10 +89,10 @@ class AgentStateStoreTest {
 
     @Test
     void testAddTurnAndGetHistory() {
-        Session session = new Session(new SessionId("s1"), 1, "a", SessionState.ACTIVE, null, null, null);
+        Session session = new Session(new SessionId("s1"), "1", "a", SessionState.ACTIVE, null, null, null);
         store.create(session).block();
 
-        ChatTurn turn = new ChatTurn(1, 1, 0, "hello", "hi there", null, LocalDateTime.now());
+        ChatTurn turn = new ChatTurn(1, "s1", 0, "hello", "hi there", null, LocalDateTime.now());
         store.addTurn(new SessionId("s1"), turn).block();
 
         List<Msg> history = store.getHistory(new SessionId("s1")).collectList().block();
@@ -103,7 +103,7 @@ class AgentStateStoreTest {
 
     @Test
     void testGetHistoryEmptySession() {
-        store.create(new Session(new SessionId("s1"), 1, "a", SessionState.ACTIVE, null, null, null)).block();
+        store.create(new Session(new SessionId("s1"), "1", "a", SessionState.ACTIVE, null, null, null)).block();
         List<Msg> history = store.getHistory(new SessionId("s1")).collectList().block();
         assertTrue(history.isEmpty());
     }

@@ -130,7 +130,7 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
         this.contextWindow = new ModelContextWindow(config.getModel().getModelName(), maxInput, maxInput / 2);
 
         this.reActLoop = new ReActLoop(model, toolExecutor, hookDispatcher, toolRegistry,
-            stateStore, aroundHookChain);
+            aroundHookChain);
     }
 
 
@@ -164,11 +164,9 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
         ensureBuilt();
         return Mono.deferContextual(ctxView -> {
             final RuntimeContext ctx = resolveRuntimeContext(ctxView, rtCtx);
-            String sessId = ctx.getSessionId();
-
             HookContext callHc = HookContext.from(ctx, 0);
             return aroundHookChain.aroundCall(new HookEvent(null), callHc,
-                            e -> loadSessionAndHistory(sessId, messages)
+                            e -> loadSessionAndHistory(ctx, messages)
                                     .flatMap(this::injectSystemMessage)
                                     .flatMap(m -> {
                                         LoopContext loopCtx = LoopContext.builder()
@@ -219,12 +217,11 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
         ensureBuilt();
         return Flux.deferContextual(ctxView -> {
             final RuntimeContext ctx = resolveRuntimeContext(ctxView, rtCtx);
-            String sessId = ctx.getSessionId();
             GenerateOptions opts = resolveOptions();
 
             HookContext callHc = HookContext.from(ctx, 0);
             return aroundHookChain.aroundCallStream(new HookEvent(null), callHc,
-                e -> loadSessionAndHistory(sessId, messages)
+                e -> loadSessionAndHistory(ctx, messages)
                     .flatMapMany(msgs -> injectSystemMessage(msgs).flatMapMany(Flux::just))
                     .concatMap(m -> {
                         LoopContext loopCtx = LoopContext.builder()
@@ -586,10 +583,14 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
      * @param messages 当前消息
      * @return 合并后的消息列表
      */
-    private Mono<List<Msg>> loadSessionAndHistory(String sessionId, List<Msg> messages) {
+    private Mono<List<Msg>> loadSessionAndHistory(RuntimeContext ctx, List<Msg> messages) {
+        String sessionId = ctx.getSessionId();
         if (sessionId == null || stateStore == null) return Mono.just(messages);
 
-        return stateStore.findById(new SessionId(sessionId))
+        SessionId sid = new SessionId(sessionId);
+        String tenantId = ctx.getTenantId() != null ? ctx.getTenantId() : "default";
+
+        return stateStore.findById(sid)
             .flatMap(session -> {
                 return stateStore.loadLatestCheckpoint(sessionId)
                     .flatMap(checkpoint -> {
@@ -610,7 +611,11 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
                     })
                     .switchIfEmpty(loadHistory(sessionId, messages));
             })
-            .defaultIfEmpty(messages);
+            .switchIfEmpty(
+                stateStore.create(new Session(sid, tenantId, name,
+                    SessionState.ACTIVE, null, null, null))
+                .then(Mono.just(messages))
+            );
     }
 
     /**

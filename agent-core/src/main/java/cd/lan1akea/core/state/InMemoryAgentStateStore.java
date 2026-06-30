@@ -43,9 +43,9 @@ public class InMemoryAgentStateStore implements AgentStateStore {
     }
 
     @Override
-    public Flux<Session> listByTenant(long tenantId) {
+    public Flux<Session> listByTenant(String tenantId) {
         return Flux.fromStream(sessions.values().stream()
-            .filter(s -> s.getTenantId() == tenantId));
+            .filter(s -> tenantId.equals(s.getTenantId())));
     }
 
     @Override
@@ -76,8 +76,9 @@ public class InMemoryAgentStateStore implements AgentStateStore {
 
     @Override
     public Mono<Void> addTurn(SessionId sessionId, ChatTurn turn) {
-        Session session = sessions.get(sessionId.getValue());
-        if (session != null) session.addTurn(turn);
+        Session session = sessions.computeIfAbsent(sessionId.getValue(),
+            k -> new Session(sessionId, "default", "auto", SessionState.ACTIVE, null, null, null));
+        session.addTurn(turn);
         return Mono.empty();
     }
 
@@ -86,24 +87,35 @@ public class InMemoryAgentStateStore implements AgentStateStore {
         Session session = sessions.get(sessionId.getValue());
         if (session == null) return Flux.empty();
 
+        java.util.Set<String> seen = new java.util.HashSet<>();
         List<Msg> history = new ArrayList<>();
         for (ChatTurn turn : session.getTurns()) {
-            // 优先使用结构化消息，回退到 JSON 字符串
-            List<Msg> userMsgs = turn.getUserMessages();
-            List<Msg> asstMsgs = turn.getAssistantMessages();
-            List<Msg> toolMsgs = turn.getToolMessages();
+            List<Msg> all = turn.getAllMessages();
+            if (all != null) {
+                addAllDeduped(history, all, seen);
+            } else {
+                List<Msg> userMsgs = turn.getUserMessages();
+                List<Msg> asstMsgs = turn.getAssistantMessages();
+                List<Msg> toolMsgs = turn.getToolMessages();
 
-            if (!userMsgs.isEmpty()) history.addAll(userMsgs);
-            else if (turn.getUserMsgJson() != null && !turn.getUserMsgJson().isEmpty())
-                history.add(UserMessage.of(turn.getUserMsgJson()));
+                addAllDeduped(history, userMsgs, seen);
+                if (userMsgs.isEmpty() && turn.getUserMsgJson() != null && !turn.getUserMsgJson().isEmpty())
+                    history.add(UserMessage.of(turn.getUserMsgJson()));
 
-            if (!asstMsgs.isEmpty()) history.addAll(asstMsgs);
-            else if (turn.getAssistantMsgJson() != null && !turn.getAssistantMsgJson().isEmpty())
-                history.add(AssistantMessage.of(turn.getAssistantMsgJson()));
+                addAllDeduped(history, asstMsgs, seen);
+                if (asstMsgs.isEmpty() && turn.getAssistantMsgJson() != null && !turn.getAssistantMsgJson().isEmpty())
+                    history.add(AssistantMessage.of(turn.getAssistantMsgJson()));
 
-            if (!toolMsgs.isEmpty()) history.addAll(toolMsgs);
+                addAllDeduped(history, toolMsgs, seen);
+            }
         }
         return Flux.fromIterable(history);
+    }
+
+    private void addAllDeduped(List<Msg> dest, List<Msg> src, java.util.Set<String> seen) {
+        for (Msg m : src) {
+            if (seen.add(m.getId())) dest.add(m);
+        }
     }
 
 

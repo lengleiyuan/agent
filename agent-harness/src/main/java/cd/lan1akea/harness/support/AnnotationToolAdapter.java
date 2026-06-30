@@ -5,13 +5,17 @@ import cd.lan1akea.core.tool.Tool;
 import cd.lan1akea.core.tool.ToolCallContext;
 import cd.lan1akea.core.tool.ToolAdapter;
 import cd.lan1akea.core.tool.ToolResult;
+import cd.lan1akea.core.util.ArgumentConverter;
 import cd.lan1akea.core.util.JsonUtils;
+import cd.lan1akea.core.util.TypeSchemaGenerator;
 import cd.lan1akea.harness.annotation.ToolFunction;
 import cd.lan1akea.harness.annotation.ToolParam;
+import cd.lan1akea.harness.context.ToolContext;
 import reactor.core.publisher.Mono;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
+import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -169,7 +173,16 @@ public class AnnotationToolAdapter implements ToolAdapter {
 
             ParamMeta meta = new ParamMeta();
             meta.javaType = param.getType();
-            meta.type = inferType(meta.javaType);
+            meta.javaGenericType = param.getParameterizedType();
+
+            // TypeSchemaGenerator 统一生成 schema，简单类型提取 type 字符串，复杂类型存完整 schema
+            Type schemaType = meta.javaGenericType != null ? meta.javaGenericType : meta.javaType;
+            Map<String, Object> generated = TypeSchemaGenerator.generate(schemaType);
+            if (isSimpleSchema(generated)) {
+                meta.type = (String) generated.get("type");
+            } else {
+                meta.schema = generated;
+            }
 
             ToolParam tp = param.getAnnotation(ToolParam.class);
             if (tp != null) {
@@ -194,8 +207,14 @@ public class AnnotationToolAdapter implements ToolAdapter {
         List<String> required = new ArrayList<>();
 
         for (ParamMeta p : params) {
-            Map<String, Object> prop = new LinkedHashMap<>();
-            prop.put("type", p.type);
+            Map<String, Object> prop;
+            if (p.schema != null) {
+                // 复杂类型：直接使用完整 schema
+                prop = new LinkedHashMap<>(p.schema);
+            } else {
+                prop = new LinkedHashMap<>();
+                prop.put("type", p.type);
+            }
             prop.put("description", p.description);
             if (p.defaultValue != null && !p.defaultValue.isEmpty()) {
                 prop.put("default", p.defaultValue);
@@ -212,44 +231,19 @@ public class AnnotationToolAdapter implements ToolAdapter {
         return new ToolSchema(name, description, schema);
     }
 
-    /**
-     * 推断 Java 类型对应的 JSON Schema 类型名称。
-     */
-    private String inferType(Class<?> clazz) {
-        if (clazz == String.class) return "string";
-        if (clazz == int.class || clazz == long.class || clazz == Integer.class || clazz == Long.class)
-            return "integer";
-        if (clazz == double.class || clazz == float.class || clazz == Double.class || clazz == Float.class)
-            return "number";
-        if (clazz == boolean.class || clazz == Boolean.class) return "boolean";
-        return "string";
+    private static boolean isSimpleSchema(Map<String, Object> schema) {
+        String type = (String) schema.get("type");
+        return schema.size() == 1 && type != null
+            && !"object".equals(type) && !"array".equals(type);
     }
 
     /**
-     * 将原始参数值转换为目标类型。
+     * 将原始参数值转换为目标类型，统一委托 {@link ArgumentConverter}。
      */
-    private static Object convertArg(Object raw, Class<?> targetType) {
+    private static Object convertArg(Object raw, ParamMeta meta) {
         if (raw == null) return null;
-        if (targetType.isInstance(raw)) return raw;
-        String s = raw.toString();
-        if (targetType == int.class || targetType == Integer.class) {
-            if (raw instanceof Number n) return n.intValue();
-            return Integer.parseInt(s);
-        }
-        if (targetType == long.class || targetType == Long.class) {
-            if (raw instanceof Number n) return n.longValue();
-            return Long.parseLong(s);
-        }
-        if (targetType == double.class || targetType == Double.class) {
-            if (raw instanceof Number n) return n.doubleValue();
-            return Double.parseDouble(s);
-        }
-        if (targetType == float.class || targetType == Float.class) {
-            if (raw instanceof Number n) return n.floatValue();
-            return Float.parseFloat(s);
-        }
-        if (targetType == boolean.class || targetType == Boolean.class) return Boolean.valueOf(s);
-        return s;
+        Type targetType = meta.javaGenericType != null ? meta.javaGenericType : meta.javaType;
+        return ArgumentConverter.convert(raw, targetType);
     }
 
     /**
@@ -294,7 +288,7 @@ public class AnnotationToolAdapter implements ToolAdapter {
          */
         String name;
         /**
-         * JSON Schema 类型（string/number/integer/boolean）。
+         * JSON Schema 类型（string/number/integer/boolean）；复杂类型时为 null。
          */
         String type = "string";
         /**
@@ -313,6 +307,14 @@ public class AnnotationToolAdapter implements ToolAdapter {
          * 参数的 Java 类型。
          */
         Class<?> javaType = String.class;
+        /**
+         * 参数的泛型类型（用于 List&lt;Pojo&gt; 等）。
+         */
+        Type javaGenericType;
+        /**
+         * 复杂类型的完整 JSON Schema；为 null 表示使用 type 生成简单 schema。
+         */
+        Map<String, Object> schema;
     }
 
     /**
@@ -403,13 +405,13 @@ public class AnnotationToolAdapter implements ToolAdapter {
                     }
                     // 如果这个位置是 ToolCallContext 注入点，注入门面包
                     if (i == ctxParamIndex) {
-                        args[argIdx++] = new cd.lan1akea.harness.context.ToolContext(callParam);
+                        args[argIdx++] = new ToolContext(callParam);
                     }
-                    args[argIdx++] = convertArg(raw, p.javaType);
+                    args[argIdx++] = convertArg(raw, p);
                 }
                 // 2. ToolCallContext 注入在参数列表末尾
                 if (ctxParamIndex >= params.size()) {
-                    args[argIdx] = new cd.lan1akea.harness.context.ToolContext(callParam);
+                    args[argIdx] = new ToolContext(callParam);
                 }
                 Object result = method.invoke(target, args);
                 String output = result instanceof String ? (String) result : JsonUtils.toCompactJson(result);

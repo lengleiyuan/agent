@@ -21,7 +21,7 @@ public class ChatTurn {
     /**
      * 所属会话 ID
      */
-    private final long sessionId;
+    private final String sessionId;
     /**
      * 会话内轮次顺序
      */
@@ -55,6 +55,10 @@ public class ChatTurn {
      * 结构化工具调用消息
      */
     private final List<Msg> toolMessages;
+    /**
+     * 按对话顺序排列的所有消息（优先于分角色列表）。
+     */
+    private final List<Msg> allMessages;
 
     /**
      * 创建不含结构化消息列表的对话轮次。
@@ -67,7 +71,7 @@ public class ChatTurn {
      * @param toolCallsJson    工具调用 JSON
      * @param createdAt        创建时间戳
      */
-    public ChatTurn(long id, long sessionId, int turnOrder,
+    public ChatTurn(long id, String sessionId, int turnOrder,
                      String userMsgJson, String assistantMsgJson,
                      String toolCallsJson, LocalDateTime createdAt) {
         this(id, sessionId, turnOrder, userMsgJson, assistantMsgJson, toolCallsJson,
@@ -88,10 +92,22 @@ public class ChatTurn {
      * @param assistantMessages 结构化助手消息（可为 null）
      * @param toolMessages      结构化工具消息（可为 null）
      */
-    public ChatTurn(long id, long sessionId, int turnOrder,
+    public ChatTurn(long id, String sessionId, int turnOrder,
                      String userMsgJson, String assistantMsgJson,
                      String toolCallsJson, LocalDateTime createdAt,
                      List<Msg> userMessages, List<Msg> assistantMessages, List<Msg> toolMessages) {
+        this(id, sessionId, turnOrder, userMsgJson, assistantMsgJson, toolCallsJson,
+            createdAt, userMessages, assistantMessages, toolMessages, null);
+    }
+
+    /**
+     * 创建含全量有序消息列表的对话轮次。
+     */
+    public ChatTurn(long id, String sessionId, int turnOrder,
+                     String userMsgJson, String assistantMsgJson,
+                     String toolCallsJson, LocalDateTime createdAt,
+                     List<Msg> userMessages, List<Msg> assistantMessages,
+                     List<Msg> toolMessages, List<Msg> allMessages) {
         this.id = id;
         this.sessionId = sessionId;
         this.turnOrder = turnOrder;
@@ -102,6 +118,7 @@ public class ChatTurn {
         this.userMessages = userMessages != null ? Collections.unmodifiableList(userMessages) : null;
         this.assistantMessages = assistantMessages != null ? Collections.unmodifiableList(assistantMessages) : null;
         this.toolMessages = toolMessages != null ? Collections.unmodifiableList(toolMessages) : null;
+        this.allMessages = allMessages != null ? Collections.unmodifiableList(allMessages) : null;
     }
 
     /**
@@ -111,7 +128,7 @@ public class ChatTurn {
     /**
      * @return 会话 ID
      */
-    public long getSessionId() { return sessionId; }
+    public String getSessionId() { return sessionId; }
     /**
      * @return 轮次序号
      */
@@ -168,6 +185,11 @@ public class ChatTurn {
     /**
      * @return 结构化工具消息（优先），null 时回退到 getToolCallsJson()
      */
+    /**
+     * @return 按对话顺序排列的全量消息（优先），null 时回退到分角色列表
+     */
+    public List<Msg> getAllMessages() { return allMessages; }
+
     public List<Msg> getToolMessages() {
         if (toolMessages != null) return toolMessages;
         if (toolCallsJson != null && !toolCallsJson.isEmpty()) {

@@ -5,6 +5,7 @@ import cd.lan1akea.core.message.Msg;
 import cd.lan1akea.core.message.UserMessage;
 import cd.lan1akea.core.model.ChatResponse;
 import cd.lan1akea.core.model.ChatStreamChunk;
+import cd.lan1akea.core.session.SessionId;
 import cd.lan1akea.harness.HarnessAgent;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
@@ -37,6 +38,11 @@ public class AgentController {
         RuntimeContext ctx = RuntimeContext.builder()
             .tenantId(tenantId).userId(userId).sessionId(sessionId).build();
         return defaultAgent.chat(List.of(userMsg), ctx);
+    }
+
+    @GetMapping("/session/{sessionId}/history")
+    public Flux<Msg> history(@PathVariable("sessionId") String sessionId) {
+        return defaultAgent.getStateStore().getHistory(new SessionId(sessionId));
     }
 
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)

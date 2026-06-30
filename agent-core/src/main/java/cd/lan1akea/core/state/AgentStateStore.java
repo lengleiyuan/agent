@@ -34,7 +34,7 @@ public interface AgentStateStore {
     /**
      * 按租户列出所有会话
      */
-    Flux<Session> listByTenant(long tenantId);
+    Flux<Session> listByTenant(String tenantId);
 
     /**
      * 更新会话状态（ACTIVE -> PAUSED -> CLOSED）

@@ -4,17 +4,12 @@ import cd.lan1akea.core.exception.HookAbortException;
 import cd.lan1akea.core.hook.*;
 import cd.lan1akea.core.message.*;
 import cd.lan1akea.core.model.*;
-import cd.lan1akea.core.session.SessionId;
-import cd.lan1akea.core.state.AgentState;
-import cd.lan1akea.core.state.AgentStateStore;
-import cd.lan1akea.core.session.ChatTurn;
 import cd.lan1akea.core.tool.*;
-import cd.lan1akea.core.util.IdGenerator;
+import cd.lan1akea.core.util.JsonUtils;
 
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -45,10 +40,6 @@ public class ReActLoop {
      */
     private final ToolRegistry toolRegistry;
     /**
-     * 用于持久化和检查点的状态存储。
-     */
-    private final AgentStateStore stateStore;
-    /**
      * 封装推理和工具调用执行的 AroundHook 链。
      */
     private final AroundHookChain aroundHookChain;
@@ -60,23 +51,19 @@ public class ReActLoop {
      * @param toolExecutor   用于执行工具调用的执行器
      * @param hookDispatcher 用于 Hook 扩展点的分发器
      * @param toolRegistry   可用工具架构注册表
-     * @param stateStore     用于持久化和检查点的存储
      */
     public ReActLoop(ChatModel model, ToolExecutor toolExecutor,
-                      HookDispatcher hookDispatcher, ToolRegistry toolRegistry,
-                      AgentStateStore stateStore) {
-        this(model, toolExecutor, hookDispatcher, toolRegistry, stateStore,
-             new AroundHookChain());
+                      HookDispatcher hookDispatcher, ToolRegistry toolRegistry) {
+        this(model, toolExecutor, hookDispatcher, toolRegistry, new AroundHookChain());
     }
 
     public ReActLoop(ChatModel model, ToolExecutor toolExecutor,
                       HookDispatcher hookDispatcher, ToolRegistry toolRegistry,
-                      AgentStateStore stateStore, AroundHookChain aroundHookChain) {
+                      AroundHookChain aroundHookChain) {
         this.model = model;
         this.toolExecutor = toolExecutor;
         this.hookDispatcher = hookDispatcher;
         this.toolRegistry = toolRegistry;
-        this.stateStore = stateStore;
         this.aroundHookChain = aroundHookChain != null ? aroundHookChain : new AroundHookChain();
     }
 
@@ -106,7 +93,12 @@ public class ReActLoop {
                         return Mono.just(response);
                     }
                     return acting(ctx, toolCalls)
-                        .flatMap(results -> observationStep(ctx, results))
+                        .flatMap(results -> {
+                            appendToolResults(ctx, results);
+                            ctx.setIteration(ctx.getIteration() + 1);
+                            dispatchAfterIteration(ctx);
+                            return Mono.just(ctx);
+                        })
                         .flatMap(this::execute);
                 });
         });
@@ -144,17 +136,17 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
 
                     List<ToolUseBlock> toolCalls = extractToolCalls(response);
                     if (toolCalls.isEmpty()) {
+                        Msg lastMsg = response.getMessage();
+                        if (lastMsg != null) ctx.addMessage(lastMsg);
+                        dispatchAfterIteration(ctx);
                         return Flux.empty();
                     }
 
                     ctx.setIteration(ctx.getIteration() + 1);
                     List<ToolResult> toolResults = new ArrayList<>();
                     return actingStream(ctx, toolCalls, toolResults)
-                        .doOnComplete(() -> {
-                            appendToolResults(ctx, toolResults);
-                            persistTurn(ctx);
-                            saveCheckpoint(ctx);
-                        })
+                        .doOnComplete(() -> appendToolResults(ctx, toolResults))
+                        .doOnComplete(() -> dispatchAfterIteration(ctx))
                         .concatWith(executeStream(ctx));
                 }));
         });
@@ -357,30 +349,6 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
      * @param results 要观察的工具执行结果
      * @return 更新后的循环上下文
      */
-    Mono<LoopContext> observationStep(LoopContext ctx, List<ToolResult> results) {
-        appendToolResults(ctx, results);
-        ctx.setIteration(ctx.getIteration() + 1);
-        persistTurn(ctx);
-        saveCheckpoint(ctx);
-        return Mono.just(ctx);
-    }
-
-    /**
-     * 执行观察阶段（流式）：追加工具结果到消息、持久化对话轮次并保存检查点。
-     *
-     * @param ctx     循环上下文
-     * @param results 工具执行结果
-     * @param toolCalls 已执行的工具调用（用于持久化）
-     * @return 空 Flux
-     */
-    Flux<ChatStreamChunk> observationStream(LoopContext ctx, List<ToolResult> results,
-                                             List<ToolUseBlock> toolCalls) {
-        appendToolResults(ctx, results);
-        persistTurn(ctx);
-        saveCheckpoint(ctx);
-        return Flux.empty();
-    }
-
     /**
      * 将工具结果消息追加到循环上下文，将结果与其调用 ID 配对。
      *
@@ -408,43 +376,14 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
      *
      * @param ctx 循环上下文
      */
-    private void persistTurn(LoopContext ctx) {
-        if (stateStore == null || ctx.getSessionId() == null) return;
-        Msg userMsg = null, assistantMsg = null;
-        List<Msg> userMsgs = new ArrayList<>();
-        List<Msg> assistantMsgs = new ArrayList<>();
-        List<Msg> toolMsgs = new ArrayList<>();
-
-        for (Msg m : ctx.getMessages()) {
-            if (m.getRole() == MsgRole.USER) { userMsg = m; userMsgs.add(m); }
-            if (m.getRole() == MsgRole.ASSISTANT) { assistantMsg = m; assistantMsgs.add(m); }
-            if (m.getRole() == MsgRole.TOOL) toolMsgs.add(m);
-        }
-
-        ChatTurn turn = new ChatTurn(IdGenerator.nextId(),
-            Long.parseLong(ctx.getSessionId()), ctx.getIteration(),
-            userMsg != null ? userMsg.getTextContent() : "",
-            assistantMsg != null ? assistantMsg.getTextContent() : null,
-            null, LocalDateTime.now(),
-            userMsgs, assistantMsgs, toolMsgs);
-
-        stateStore.addTurn(new SessionId(ctx.getSessionId()), turn).subscribe();
-    }
-
     /**
-     * 将当前 agent 状态的检查点保存到状态存储，用于崩溃恢复。
-     *
-     * @param ctx 循环上下文
+     * 分发 AFTER_ITERATION 事件到 Hook 链（持久化/检查点等系统 Hook 在此处理）。
      */
-    private void saveCheckpoint(LoopContext ctx) {
-        if (stateStore == null || ctx.getSessionId() == null) return;
-
-        AgentState state = new AgentState(ctx.getAgentName(), ctx.getSessionId(),
-            ctx.getIteration(), new ArrayList<>(ctx.getMessages()),
-            Map.of(), ctx.getTotalTokens(), false, null,
-            System.currentTimeMillis());
-
-        stateStore.saveCheckpoint(state).subscribe();
+    private void dispatchAfterIteration(LoopContext ctx) {
+        HookContext hc = buildHookContext(ctx);
+        HookEvent event = new HookEvent(HookEventType.AFTER_ITERATION);
+        event.setPayload("loopContext", ctx);
+        hookDispatcher.dispatch(HookEventType.AFTER_ITERATION, event, hc).subscribe();
     }
 
 
@@ -660,10 +599,12 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
         if (!text.isEmpty()) blocks.add(new TextBlock(text.toString()));
         for (Map.Entry<String, String> e : toolArgs.entrySet()) {
             String id = e.getKey();
-            blocks.add(new ToolUseBlock(id, toolNames.getOrDefault(id, ""), e.getValue()));
+            blocks.add(new ToolUseBlock(id, toolNames.getOrDefault(id, ""),
+                JsonUtils.repairJson(e.getValue())));
         }
 
         Msg msg = new AssistantMessage(blocks, null);
         return new ChatResponse(msg, new ChatUsage(0, 0), finishReason, null);
     }
+
 }

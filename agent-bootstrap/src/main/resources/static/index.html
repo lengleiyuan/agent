@@ -7,6 +7,9 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.6/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
     <style>
         :root {
             --sidebar-w: 260px;
@@ -189,6 +192,13 @@
 // ===================== App State =====================
 let isLoading = false;
 let streamMode = true;
+let sessionId = localStorage.getItem('chatSessionId') || newSessionId();
+
+function newSessionId() {
+    const id = crypto.randomUUID();
+    localStorage.setItem('chatSessionId', id);
+    return id;
+}
 
 function toggleStreamMode() {
     streamMode = !streamMode;
@@ -229,6 +239,7 @@ function clearChat() {
     emptyState.className = 'empty-state';
     emptyState.innerHTML = '<i class="bi bi-robot"></i><p>开始一段新的对话</p>';
     chatMessages.appendChild(emptyState);
+    sessionId = newSessionId();
 }
 
 function handleChatKey(e) {
@@ -250,21 +261,19 @@ function addAssistantBubble(text, thinking, tools) {
     const bubble = document.createElement('div');
     bubble.className = 'chat-bubble assistant';
     bubble.innerHTML = '<div class="role-tag">assistant</div>';
-    if (thinking) {
+    if (thinking || (tools && tools.length > 0)) {
         const stepsEl = document.createElement('div');
         stepsEl.className = 'steps-container';
-        stepsEl.innerHTML = `<div class="step-thinking" onclick="var n=this.nextElementSibling;n.style.display=n.style.display==='none'?'block':'none'"><i class="bi bi-lightbulb" style="color:#f59e0b"></i><span style="margin-left:4px">思考过程</span></div><div class="step-thinking-content" style="display:none">${escapeHtml(thinking)}</div>`;
-        for (const tc of tools) {
+        if (thinking) {
+            stepsEl.innerHTML = `<div class="step-thinking" onclick="var n=this.nextElementSibling;n.style.display=n.style.display==='none'?'block':'none'"><i class="bi bi-lightbulb" style="color:#f59e0b"></i><span style="margin-left:4px">思考过程</span></div><div class="step-thinking-content" style="display:none">${escapeHtml(thinking)}</div>`;
+        }
+        for (const tc of (tools || [])) {
             stepsEl.innerHTML += `<div class="step-tool"><i class="bi bi-cpu" style="color:#6366f1"></i><span class="badge bg-secondary" style="margin:0 4px">${escapeHtml(tc.name)}</span><span style="color:var(--text-muted);font-size:0.75rem">${escapeHtml(tc.args)}</span></div>`;
         }
         bubble.appendChild(stepsEl);
     }
     const contentEl = document.createElement('div');
-    if (text && typeof marked !== 'undefined') {
-        try { contentEl.innerHTML = marked.parse(text); } catch(e) { contentEl.textContent = text; }
-    } else {
-        contentEl.textContent = text || '';
-    }
+    renderMarkdown(contentEl, text);
     bubble.appendChild(contentEl);
     chatMessages.appendChild(bubble);
 }
@@ -303,7 +312,7 @@ async function sendMessage() {
             // 非流式
             const resp = await fetch('/api/agent/chat', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionId },
                 body: JSON.stringify({ message: msg })
             });
             if (!resp.ok) throw new Error(`${resp.status}`);
@@ -320,7 +329,7 @@ async function sendMessage() {
             // 流式
             const resp = await fetch('/api/agent/stream', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionId },
                 body: JSON.stringify({ message: msg })
             });
         if (!resp.ok) throw new Error(`${resp.status}`);
@@ -386,9 +395,7 @@ async function sendMessage() {
             }
         }
         // 流结束 → 切换为 markdown 渲染（完整语法可正确解析）
-        if (accumulatedText && typeof marked !== 'undefined') {
-            try { contentEl.innerHTML = marked.parse(accumulatedText); } catch(e) {}
-        }
+        renderMarkdown(contentEl, accumulatedText);
         scrollChat();
         updateContextUsage();
         } // end stream mode
@@ -401,6 +408,43 @@ async function sendMessage() {
         isLoading = false;
         sendBtn.disabled = false;
         chatInput.focus();
+    }
+}
+
+function autoWrapMath(text) {
+    if (!text) return text;
+    // \\(...\\) → $...$
+    text = text.replace(/\\\(([\s\S]*?)\\\)/g, '$$$1$$');
+    // \\[...\\] → $$...$$
+    text = text.replace(/\\\[([\s\S]*?)\\\]/g, '$$$$$1$$$$');
+    // 含 LaTeX 命令的整行，无 $ 时自动包 $$...$$
+    text = text.replace(/^([^\n$]*\\[a-zA-Z]+[^\n$]*)$/gm, function(line) {
+        return line.indexOf('$') >= 0 ? line : '$$' + line + '$$';
+    });
+    return text;
+}
+
+async function renderMarkdown(el, text) {
+    if (text && typeof marked !== 'undefined') {
+        var processed = autoWrapMath(text);
+        try {
+            el.innerHTML = marked.parse(processed, { async: false });
+        } catch(e) {
+            try { el.innerHTML = await marked.parse(processed); } catch(e2) { el.textContent = text; }
+        }
+        if (typeof renderMathInElement !== 'undefined') {
+            try { renderMathInElement(el, {
+                delimiters: [
+                    {left: '$$', right: '$$', display: true},
+                    {left: '$', right: '$', display: false},
+                    {left: '\\(', right: '\\)', display: false},
+                    {left: '\\[', right: '\\]', display: true}
+                ],
+                throwOnError: false
+            }); } catch(e) {}
+        }
+    } else {
+        el.textContent = text || '';
     }
 }
 
@@ -548,6 +592,41 @@ async function loadHooks() {
 }
 
 // ===================== Init =====================
+async function loadHistory() {
+    const sid = localStorage.getItem('chatSessionId');
+    if (!sid) return;
+    try {
+        const resp = await fetch('/api/agent/session/' + sid + '/history');
+        if (!resp.ok) return;
+        const messages = await resp.json();
+        if (!messages || messages.length === 0) return;
+
+        if (emptyState) { emptyState.remove(); emptyState = null; }
+        messages.forEach(msg => {
+            const role = (msg.role || '').toLowerCase();
+            if (role === 'user') {
+                const text = (msg.contentBlocks || [])
+                    .filter(b => b.type === 'text').map(b => b.text).join('');
+                if (text) addUserBubble(text);
+            } else if (role === 'assistant') {
+                const text = (msg.contentBlocks || [])
+                    .filter(b => b.type === 'text').map(b => b.text).join('');
+                const thinking = (msg.contentBlocks || [])
+                    .filter(b => b.type === 'thinking').map(b => b.text).join('');
+                const tools = (msg.contentBlocks || [])
+                    .filter(b => b.type === 'tool_use').map(b => ({ name: b.name, args: b.arguments || '' }));
+                if (text || thinking || tools.length > 0) {
+                    addAssistantBubble(text, thinking, tools);
+                }
+            }
+        });
+        scrollChat();
+    } catch(e) {
+        // history unavailable — start fresh
+    }
+}
+
+loadHistory();
 loadTools();
 loadHooks();
 loadSettings();

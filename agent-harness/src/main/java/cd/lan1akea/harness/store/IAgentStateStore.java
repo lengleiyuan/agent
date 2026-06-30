@@ -28,7 +28,7 @@ public interface IAgentStateStore extends AgentStateStore {
 
     @Override Mono<Session> findById(SessionId id);
 
-    @Override Flux<Session> listByTenant(long tenantId);
+    @Override Flux<Session> listByTenant(String tenantId);
 
     /** 更新会话状态（ACTIVE → PAUSED → CLOSED） */
     @Override Mono<Void> updateState(SessionId sessionId, SessionState state);

@@ -44,5 +44,10 @@ public enum HookEventType {
     /**
      * 人工干预
      */
-    ON_INTERRUPT
+    ON_INTERRUPT,
+
+    /**
+     * 单次 ReAct 迭代后（持久化、检查点等系统级 Hook）
+     */
+    AFTER_ITERATION
 }

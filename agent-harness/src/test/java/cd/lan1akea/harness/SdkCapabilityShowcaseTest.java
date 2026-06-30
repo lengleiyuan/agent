@@ -635,7 +635,7 @@ class SdkCapabilityShowcaseTest {
         assertTrue(agent.getDelegate().isBuilt());
         assertNotNull(agent.getDelegate().getStateStore());
         assertEquals(1, agent.getDelegate().getToolRegistry().size());
-        assertEquals(4, agent.getDelegate().getHookChain().size()); // 1 user + 3 default
+        assertEquals(5, agent.getDelegate().getHookChain().size()); // 1 user + 4 default
     }
 
 
@@ -685,12 +685,14 @@ class SdkCapabilityShowcaseTest {
 
         // 全局查找 → 找不到
         ToolResult r1 = executor.execute(
-            ToolCallContext.builder().callId("c1").toolName("search_docs").argumentsJson("{\"keyword\": \"x\"}").build(), null).block();
+            ToolCallContext.builder().callId("c1").toolName("search_docs")
+                .argumentsJson("{\"keyword\": \"x\"}").build()).block();
         assertFalse(r1.isSuccess());
 
         // 租户A 查找 → 找到
         ToolResult r2 = executor.execute(
-            ToolCallContext.builder().callId("c2").toolName("search_docs").argumentsJson("{\"keyword\": \"x\"}").build(), "tenant_a").block();
+            ToolCallContext.builder().callId("c2").toolName("search_docs")
+                .argumentsJson("{\"keyword\": \"x\"}").tenantId("tenant_a").build()).block();
         assertTrue(r2.isSuccess());
     }
 

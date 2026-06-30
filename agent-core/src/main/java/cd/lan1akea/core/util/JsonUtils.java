@@ -135,4 +135,19 @@ public final class JsonUtils {
             return false;
         }
     }
+
+    /**
+     * 尝试修复常见的 JSON 损毁（如流式拼接导致的末尾缺引号）。
+     * 合法 JSON 原样返回，无法修复则返回原串。
+     */
+    public static String repairJson(String raw) {
+        if (raw == null || raw.isEmpty() || isValidJson(raw)) return raw;
+        // value} → value"}
+        if (raw.endsWith("}") && !raw.endsWith("\"}") && !raw.endsWith("\" }")) {
+            int lastBrace = raw.lastIndexOf('}');
+            String repaired = raw.substring(0, lastBrace) + "\"}";
+            if (isValidJson(repaired)) return repaired;
+        }
+        return raw;
+    }
 }

@@ -11,6 +11,7 @@ import cd.lan1akea.core.hook.impl.ContentFilterHook;
 import cd.lan1akea.core.hook.impl.LoggingHook;
 import cd.lan1akea.core.hook.impl.MemoryEnrichmentHook;
 import cd.lan1akea.core.hook.impl.RateLimitHook;
+import cd.lan1akea.core.hook.impl.SessionPersistenceHook;
 import cd.lan1akea.core.hook.impl.ContextCompressionHook;
 import cd.lan1akea.core.hook.impl.ToolAccessHook;
 import cd.lan1akea.core.memory.Memory;
@@ -177,6 +178,11 @@ public class HarnessAgent implements StreamableAgent, CallableAgent {
      * 返回 core 层 ReActAgent 委托对象。
      */
     public ReActAgent getDelegate() { return delegate; }
+
+    /**
+     * 返回 AgentStateStore，用于查询会话历史和检查点。
+     */
+    public AgentStateStore getStateStore() { return delegate.getStateStore(); }
 
     // ========================================================================
     // Builder
@@ -420,7 +426,9 @@ public class HarnessAgent implements StreamableAgent, CallableAgent {
             // === 用户 Hook ===
             for (Hook hook : hooks) agentBuilder.hook(hook);
             for (AroundHook ah : aroundHooks) agentBuilder.aroundHook(ah);
-            agentBuilder.stateStore(stateStore != null ? stateStore : new InMemoryAgentStateStore());
+            AgentStateStore effectiveStore = stateStore != null ? stateStore : new InMemoryAgentStateStore();
+            agentBuilder.stateStore(effectiveStore);
+            agentBuilder.hook(new SessionPersistenceHook(effectiveStore));
             if (maxIterations != null) agentBuilder.maxIterations(maxIterations);
             if (temperature != null) agentBuilder.temperature(temperature);
             if (maxTokens != null) agentBuilder.maxTokens(maxTokens);

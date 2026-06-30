@@ -1,7 +1,6 @@
 package cd.lan1akea.core.tool;
 
 import cd.lan1akea.core.exception.ToolExecutionException;
-import java.util.List;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
@@ -60,7 +59,7 @@ public class ToolExecutor {
      * @return Mono<ToolResult> 执行结果
      */
     public Mono<ToolResult> execute(ToolCallContext callParam) {
-        return execute(callParam, callParam.getTenantId());
+        return doExecute(callParam);
     }
 
     /**
@@ -69,9 +68,14 @@ public class ToolExecutor {
      */
     @Deprecated
     public Mono<ToolResult> execute(ToolCallContext callParam, String tenantId) {
+        return doExecute(callParam);
+    }
+
+    @SuppressWarnings("deprecation")
+    private Mono<ToolResult> doExecute(ToolCallContext callParam) {
         return Mono.defer(() -> {
-            // 1. 查找工具（优先用 callParam 中的上下文，fallback 到显式传参）
-            String tid = callParam.getTenantId() != null ? callParam.getTenantId() : tenantId;
+            // 1. 查找工具
+            String tid = callParam.getTenantId();
             Tool tool = registry.getForContext(
                 tid, callParam.getUserId(),
                 callParam.getSessionId(), callParam.getToolName());
@@ -82,25 +86,24 @@ public class ToolExecutor {
                     + "。上下文 [" + ctx + "] 中不可用"));
             }
 
-            // 2. 权限校验（通过 PermissionEngine 在 ReActLoop Hook 层完成）
 
-            // 3. 参数验证
+            // 2. 参数验证
             try {
                 toolValidator.validate(tool.getParameters(), callParam);
             } catch (IllegalArgumentException e) {
                 return Mono.just(ToolResult.failure("参数校验失败: " + e.getMessage()));
             }
 
-            // 4. 审批检查
+            // 3. 审批检查
             if (tool.requiresApproval()) {
                 return Mono.error(new ToolSuspendException(
                     tool.getName(), "工具 [" + tool.getName() + "] 需要人工审批后才能执行"));
             }
 
-            // 5. 执行前事件
+            // 4. 执行前事件
             emitter.beforeExecute(tool, callParam);
 
-            // 6. 执行工具，带超时控制和异常处理
+            // 5. 执行工具，带超时控制和异常处理
             Mono<ToolResult> execution = tool.execute(callParam)
                 .onErrorResume(e -> {
                     emitter.onError(tool, callParam, e);
