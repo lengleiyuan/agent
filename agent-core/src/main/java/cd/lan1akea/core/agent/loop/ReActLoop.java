@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.LinkedHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * ReAct 循环引擎。
@@ -143,7 +144,7 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
                     }
 
                     ctx.setIteration(ctx.getIteration() + 1);
-                    List<ToolResult> toolResults = new ArrayList<>();
+                    List<ToolResult> toolResults = new CopyOnWriteArrayList<>();
                     return actingStream(ctx, toolCalls, toolResults)
                         .doOnComplete(() -> appendToolResults(ctx, toolResults))
                         .doOnComplete(() -> dispatchAfterIteration(ctx))
@@ -257,7 +258,7 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
     Mono<List<ToolResult>> acting(LoopContext ctx, List<ToolUseBlock> toolCalls) {
         HookContext hc = buildHookContext(ctx);
         return Flux.fromIterable(toolCalls)
-            .concatMap(tc -> executeSingleTool(ctx, tc, hc))
+            .flatMap(tc -> executeSingleTool(ctx, tc, hc))
             .collectList();
     }
 
@@ -273,13 +274,13 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
                                         List<ToolResult> resultsCollector) {
         HookContext hc = buildHookContext(ctx);
         return Flux.fromIterable(toolCalls)
-            .concatMap(tc -> executeSingleTool(ctx, tc, hc))
-            .concatMap(result -> {
-                resultsCollector.add(result);
-                String content = result.isSuccess() ? result.getContent() : "[错误] " + result.getErrorMessage();
-                return Flux.just(ChatStreamChunk.builder()
-                    .delta(content).type(ChatStreamChunk.TYPE_TEXT).build());
-            });
+            .flatMap(tc -> executeSingleTool(ctx, tc, hc)
+                .map(result -> {
+                    resultsCollector.add(result);
+                    String content = result.isSuccess() ? result.getContent() : "[错误] " + result.getErrorMessage();
+                    return ChatStreamChunk.builder()
+                        .delta(content).type(ChatStreamChunk.TYPE_TEXT).build();
+                }));
     }
 
     /**
@@ -334,12 +335,26 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
                             .thenReturn(result != null ? result : ToolResult.failure("无结果"));
                     });
             })
-            .onErrorResume(ToolSuspendException.class, e ->
-                hookDispatcher.dispatch(HookEventType.ON_INTERRUPT,
-                    new InterruptEvent(e.getQuestion(), tc.getName()), hc)
-                    .flatMap(ir -> Mono.just(ir.isAbort()
-                        ? ToolResult.failure("操作被拒绝")
-                        : ToolResult.failure("等待审批: " + e.getQuestion()))));
+            .onErrorResume(ToolSuspendException.class, e -> {
+                InterruptEvent ie = new InterruptEvent(e.getQuestion(), tc.getName());
+                ie.setPayload("arguments", tc.getArgumentsMap());
+                ie.setPayload("recentMessages", ctx.getMessages());
+                if (event.getTool() != null) {
+                    ie.setPayload("toolDescription", event.getTool().getDescription());
+                    ie.setPayload("riskLevel", event.getTool().getRiskLevel());
+                }
+                return hookDispatcher.dispatch(HookEventType.ON_INTERRUPT, ie, hc)
+                    .flatMap(ir -> {
+                        if (ir.isAbort()) {
+                            return Mono.just(ToolResult.failure("操作被拒绝"));
+                        }
+                        // 暂停循环 — 仅设中断标志，不传反馈。
+                        // 外部通过 agent.interrupt(feedback) 注入审批结果后重新调用 execute() 恢复。
+                        ctx.interrupt();
+                        return Mono.just(ToolResult.failure("等待审批: " + e.getQuestion()));
+                    });
+            })
+            .map(r -> r.withCallId(param.getCallId()));
     }
 
     /**
@@ -358,12 +373,10 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
     private void appendToolResults(LoopContext ctx, List<ToolResult> results) {
         Msg lastMsg = ctx.getLastResponse() != null ? ctx.getLastResponse().getMessage() : null;
         if (lastMsg == null) return;
-        // 先追加 ASSISTANT 消息（含 tool_calls），API 要求 TOOL 前必须有 tool_calls
         ctx.addMessage(lastMsg);
-        List<ToolUseBlock> toolCalls = lastMsg.getToolUseBlocks();
-        for (int i = 0; i < results.size(); i++) {
-            ToolResult r = results.get(i);
-            String callId = i < toolCalls.size() ? toolCalls.get(i).getId() : "tool_" + i;
+        for (ToolResult r : results) {
+            String callId = r.getCallId();
+            if (callId == null) continue;
             ctx.addMessage(Msg.builder(MsgRole.TOOL)
                 .addToolResult(callId,
                     r.isSuccess() ? r.getContent() : "[错误] " + r.getErrorMessage(),

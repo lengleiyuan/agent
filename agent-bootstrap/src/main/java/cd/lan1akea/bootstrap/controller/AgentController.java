@@ -45,6 +45,15 @@ public class AgentController {
         return defaultAgent.getStateStore().getHistory(new SessionId(sessionId));
     }
 
+    @PostMapping("/interrupt")
+    public Mono<Map<String, Object>> interrupt(
+            @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
+        defaultAgent.interrupt();
+        Map<String, Object> result = Map.of("ok", true, "message", "已发送中断信号",
+            "sessionId", sessionId != null ? sessionId : "");
+        return Mono.just(result);
+    }
+
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ChatStreamChunk> stream(@RequestBody Map<String, Object> request,
                                          @RequestHeader(value = "X-Tenant-Id", required = false) String tenantId,

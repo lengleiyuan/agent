@@ -12,6 +12,8 @@ import cd.lan1akea.core.hook.impl.LoggingHook;
 import cd.lan1akea.core.hook.impl.MemoryEnrichmentHook;
 import cd.lan1akea.core.hook.impl.RateLimitHook;
 import cd.lan1akea.core.hook.impl.SessionPersistenceHook;
+import cd.lan1akea.core.approval.ApprovalHook;
+import cd.lan1akea.core.approval.ApprovalStore;
 import cd.lan1akea.core.hook.impl.ContextCompressionHook;
 import cd.lan1akea.core.hook.impl.ToolAccessHook;
 import cd.lan1akea.core.memory.Memory;
@@ -214,6 +216,10 @@ public class HarnessAgent implements StreamableAgent, CallableAgent {
          */
         private AgentStateStore stateStore;
         /**
+         * 审批存储（可选），注入后工具需审批时自动查询。
+         */
+        private ApprovalStore approvalStore;
+        /**
          * 最大推理轮次。
          */
         private Integer maxIterations;
@@ -295,6 +301,12 @@ public class HarnessAgent implements StreamableAgent, CallableAgent {
          * 设置 Agent 状态存储。
          */
         public Builder stateStore(AgentStateStore v) { this.stateStore = v; return this; }
+
+        /**
+         * 注入审批存储。启用后，工具 requiresApproval() 会先查询 ApprovalStore 是否有有效批准，
+         * 已批准的工具自动跳过审批。同时自动注册 {@link ApprovalHook}。
+         */
+        public Builder approvalStore(ApprovalStore v) { this.approvalStore = v; return this; }
         /**
          * 设置最大推理轮次。
          */
@@ -423,6 +435,11 @@ public class HarnessAgent implements StreamableAgent, CallableAgent {
             if (toolAccessPolicy != null) agentBuilder.hook(new ToolAccessHook(toolAccessPolicy));
             if (contentFilterWords != null) agentBuilder.hook(new ContentFilterHook("ContentFilter", contentFilterWords));
 
+            // === 审批 ===
+            if (approvalStore != null) {
+                agentBuilder.hook(new ApprovalHook(approvalStore));
+            }
+
             // === 用户 Hook ===
             for (Hook hook : hooks) agentBuilder.hook(hook);
             for (AroundHook ah : aroundHooks) agentBuilder.aroundHook(ah);
@@ -436,6 +453,9 @@ public class HarnessAgent implements StreamableAgent, CallableAgent {
             if (totalTimeoutMs != null) agentBuilder.totalTimeoutMs(totalTimeoutMs);
 
             ReActAgent agent = agentBuilder.build();
+            if (approvalStore != null) {
+                agent.getToolExecutor().setApprovalStore(approvalStore);
+            }
             if (systemMessage != null) agent.setSystemMessage(systemMessage);
             agent.build().block();
             HarnessAgent harness = new HarnessAgent(agent);

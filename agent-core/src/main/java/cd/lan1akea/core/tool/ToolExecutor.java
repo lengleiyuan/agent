@@ -1,5 +1,6 @@
 package cd.lan1akea.core.tool;
 
+import cd.lan1akea.core.approval.ApprovalStore;
 import cd.lan1akea.core.exception.ToolExecutionException;
 import reactor.core.publisher.Mono;
 
@@ -23,6 +24,10 @@ public class ToolExecutor {
      * 工具参数校验器
      */
     private final ToolValidator toolValidator;
+    /**
+     * 审批存储（可选），注入后自动在 requiresApproval 前查询
+     */
+    private ApprovalStore approvalStore;
 
     /**
      * 使用默认值创建工具执行器。
@@ -46,6 +51,8 @@ public class ToolExecutor {
         this.emitter = emitter;
         this.toolValidator = toolValidator != null ? toolValidator : new ToolValidator();
     }
+
+    public void setApprovalStore(ApprovalStore store) { this.approvalStore = store; }
 
     /**
      * 执行工具调用，完整的执行链：
@@ -96,8 +103,13 @@ public class ToolExecutor {
 
             // 3. 审批检查
             if (tool.requiresApproval()) {
-                return Mono.error(new ToolSuspendException(
-                    tool.getName(), "工具 [" + tool.getName() + "] 需要人工审批后才能执行"));
+                if (approvalStore != null && approvalStore.isApproved(
+                        callParam.getSessionId(), tool.getName())) {
+                    // 已批准，跳过审批直接执行
+                } else {
+                    return Mono.error(new ToolSuspendException(
+                        tool.getName(), "工具 [" + tool.getName() + "] 需要人工审批后才能执行"));
+                }
             }
 
             // 4. 执行前事件
@@ -123,7 +135,14 @@ public class ToolExecutor {
                             new ToolExecutionException(tool.getName(), "执行超时"))));
             }
 
-            return execution.doOnNext(result -> emitter.afterExecute(tool, callParam, result));
+            return execution
+                .doOnNext(result -> emitter.afterExecute(tool, callParam, result))
+                .doOnNext(result -> {
+                    if (result.isSuccess() && tool.requiresApproval() && approvalStore != null) {
+                        approvalStore.consume(callParam.getSessionId(), tool.getName());
+                    }
+                })
+                .map(r -> r.withCallId(callParam.getCallId()));
         });
     }
 

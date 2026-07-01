@@ -549,6 +549,10 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
      */
     public ToolRegistry getToolRegistry() { return toolRegistry; }
     /**
+     * 获取工具执行器。
+     */
+    public ToolExecutor getToolExecutor() { return toolExecutor; }
+    /**
      * 获取 Hook 链。
      */
     public HookChain getHookChain() { return hookChain; }
@@ -579,7 +583,7 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
     /**
      * 加载会话状态和历史消息，合并检查点恢复。
      *
-     * @param sessionId 会话 ID
+     * @param ctx 上下文信息
      * @param messages 当前消息
      * @return 合并后的消息列表
      */

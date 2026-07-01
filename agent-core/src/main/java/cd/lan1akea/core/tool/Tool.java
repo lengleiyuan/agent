@@ -64,4 +64,10 @@ public interface Tool {
     default long getTimeoutMs() {
         return 30000;
     }
+
+    /**
+     * 工具操作的风险等级，用于审批页面展示。
+     * 业务方可覆写返回 HIGH / CRITICAL。
+     */
+    default String getRiskLevel() { return "MEDIUM"; }
 }

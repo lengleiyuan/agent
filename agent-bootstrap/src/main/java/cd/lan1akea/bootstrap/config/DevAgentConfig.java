@@ -1,12 +1,21 @@
 package cd.lan1akea.bootstrap.config;
 
+import cd.lan1akea.bootstrap.tool.DeleteFileTool;
+import cd.lan1akea.bootstrap.tool.TransferTool;
+import cd.lan1akea.core.approval.ApprovalStore;
+import cd.lan1akea.core.approval.InMemoryApprovalStore;
 import cd.lan1akea.core.formatter.OpenAiMessageFormatter;
+import cd.lan1akea.core.tool.builtin.ApproveApprovalTool;
+import cd.lan1akea.core.tool.builtin.ListApprovalsTool;
 import cd.lan1akea.core.hook.impl.AuditHook;
 import cd.lan1akea.core.hook.impl.ContentFilterHook;
+import cd.lan1akea.core.hook.impl.SessionPersistenceHook;
 import cd.lan1akea.core.model.*;
 import cd.lan1akea.core.model.dashscope.DashScopeChatModel;
 import cd.lan1akea.core.model.deepseek.DeepSeekChatModel;
 import cd.lan1akea.core.model.openai.OpenAIChatModel;
+import cd.lan1akea.core.state.AgentStateStore;
+import cd.lan1akea.core.state.InMemoryAgentStateStore;
 import cd.lan1akea.core.tool.ToolGroup;
 import cd.lan1akea.core.tool.ToolGroupScope;
 import cd.lan1akea.core.tool.ToolRegistry;
@@ -212,15 +221,35 @@ public class DevAgentConfig {
     }
 
     @Bean
+    @ConditionalOnMissingBean(AgentStateStore.class)
+    public AgentStateStore agentStateStore() {
+        return new InMemoryAgentStateStore();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(ApprovalStore.class)
+    public ApprovalStore approvalStore() {
+        return new InMemoryApprovalStore();
+    }
+
+    @Bean
     @ConditionalOnMissingBean(HarnessAgent.class)
-    public HarnessAgent defaultAgent(DynamicChatModel model) {
+    public HarnessAgent defaultAgent(DynamicChatModel model, AgentStateStore stateStore,
+                                      ApprovalStore approvalStore) {
         log.info("启动 HarnessAgent: DevAgent, model={}:{}", model.getProvider(), model.getModelName());
         return HarnessAgent.builder()
             .name("DevAgent")
             .model(model)
             .tool(new CalculatorTool())
+            .tool(new TransferTool())
+            .tool(new DeleteFileTool())
+            .tool(new ListApprovalsTool(approvalStore))
+            .tool(new ApproveApprovalTool(approvalStore))
             .hook(new ContentFilterHook())
             .hook(new AuditHook("DevAudit"))
+            .hook(new SessionPersistenceHook(stateStore))
+            .stateStore(stateStore)
+            .approvalStore(approvalStore)
             .maxIterations(5)
             .build();
     }

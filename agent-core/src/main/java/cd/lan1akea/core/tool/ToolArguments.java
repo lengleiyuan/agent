@@ -34,10 +34,8 @@ public class ToolArguments {
      * @param json JSON 字符串
      * @return 参数实例
      */
-    @SuppressWarnings("unchecked")
     public static ToolArguments fromJson(String json) {
-        Map<String, Object> parsed = JsonUtils.fromJson(json, Map.class);
-        return new ToolArguments(parsed != null ? parsed : Collections.emptyMap());
+        return new ToolArguments(JsonUtils.safeParseMap(json));
     }
 
     /**

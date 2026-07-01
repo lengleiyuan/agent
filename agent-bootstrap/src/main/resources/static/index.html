@@ -154,6 +154,7 @@
             <div class="main-header">
                 <h2 style="font-size:1.05rem;font-weight:600;margin:0"><i class="bi bi-chat-dots me-2"></i>对话</h2>
                 <div class="ms-auto d-flex align-items-center gap-2">
+                    <a class="btn btn-outline-secondary btn-sm" href="/approvals.html" target="_blank" title="审批管理"><i class="bi bi-shield-check"></i> 审批</a>
                     <button class="btn btn-sm" id="streamToggle" style="background:var(--accent);color:#fff;border:none" onclick="toggleStreamMode()">流式</button>
                     <button class="btn btn-outline-secondary btn-sm" onclick="clearChat()"><i class="bi bi-arrow-counterclockwise"></i></button>
                 </div>
@@ -165,6 +166,9 @@
                 <textarea id="chatInput" rows="1" placeholder="输入消息，⌘+Enter / Ctrl+Enter 发送..." onkeydown="handleChatKey(event)"></textarea>
                 <button class="btn px-4" style="background:var(--accent);color:#fff;border:none;" onclick="sendMessage()" id="sendBtn">
                     <i class="bi bi-send-fill"></i>
+                </button>
+                <button class="btn px-3" style="background:#ef4444;color:#fff;border:none;display:none;border-radius:6px" onclick="interruptStream()" id="stopBtn" title="中断输出 (Esc)">
+                    <i class="bi bi-stop-fill"></i>
                 </button>
             </div>
         </div>
@@ -192,11 +196,12 @@
 // ===================== App State =====================
 let isLoading = false;
 let streamMode = true;
-let sessionId = localStorage.getItem('chatSessionId') || newSessionId();
+let sessionId = sessionStorage.getItem('chatSessionId') || newSessionId();
+let abortController = null;  // 用于中断流式请求
 
 function newSessionId() {
     const id = crypto.randomUUID();
-    localStorage.setItem('chatSessionId', id);
+    sessionStorage.setItem('chatSessionId', id);
     return id;
 }
 
@@ -244,6 +249,36 @@ function clearChat() {
 
 function handleChatKey(e) {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendMessage(); }
+}
+
+// ESC 中断流式输出
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && isLoading && streamMode) {
+        e.preventDefault();
+        interruptStream();
+    }
+});
+
+async function interruptStream() {
+    if (abortController) {
+        abortController.abort();
+        abortController = null;
+    }
+    // 通知后端中断
+    try {
+        await fetch('/api/agent/interrupt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionId }
+        });
+    } catch (_) { /* 忽略网络错误 */ }
+    isLoading = false;
+    sendBtn.disabled = false;
+    sendBtn.style.display = '';
+    document.getElementById('stopBtn').style.display = 'none';
+    chatInput.disabled = false;
+    chatInput.focus();
+    updateContextUsage();
+    pollApprovals();
 }
 
 function addUserBubble(text) {
@@ -304,6 +339,9 @@ async function sendMessage() {
     chatInput.value = '';
     isLoading = true;
     sendBtn.disabled = true;
+    sendBtn.style.display = 'none';
+    document.getElementById('stopBtn').style.display = '';
+    chatInput.disabled = true;
 
     addUserBubble(msg);
 
@@ -325,12 +363,15 @@ async function sendMessage() {
             addAssistantBubble(text, thinking, tools);
             scrollChat();
             updateContextUsage();
+            pollApprovals();
         } else {
             // 流式
+            abortController = new AbortController();
             const resp = await fetch('/api/agent/stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionId },
-                body: JSON.stringify({ message: msg })
+                body: JSON.stringify({ message: msg }),
+                signal: abortController.signal
             });
         if (!resp.ok) throw new Error(`${resp.status}`);
 
@@ -398,15 +439,25 @@ async function sendMessage() {
         renderMarkdown(contentEl, accumulatedText);
         scrollChat();
         updateContextUsage();
+        pollApprovals();
         } // end stream mode
     } catch (e) {
-        const errBubble = document.createElement('div');
-        errBubble.className = 'chat-bubble assistant';
-        errBubble.innerHTML = '<div class="role-tag">assistant</div><div style="color:#ef4444">错误: ' + escapeHtml(e.message) + '</div>';
-        chatMessages.appendChild(errBubble);
+        if (e.name === 'AbortError') {
+            // 用户主动中断 — 不显示错误，已接收的文本保留在气泡中
+            updateContextUsage();
+        } else {
+            const errBubble = document.createElement('div');
+            errBubble.className = 'chat-bubble assistant';
+            errBubble.innerHTML = '<div class="role-tag">assistant</div><div style="color:#ef4444">错误: ' + escapeHtml(e.message) + '</div>';
+            chatMessages.appendChild(errBubble);
+        }
     } finally {
         isLoading = false;
         sendBtn.disabled = false;
+        sendBtn.style.display = '';
+        document.getElementById('stopBtn').style.display = 'none';
+        abortController = null;
+        chatInput.disabled = false;
         chatInput.focus();
     }
 }
@@ -593,7 +644,7 @@ async function loadHooks() {
 
 // ===================== Init =====================
 async function loadHistory() {
-    const sid = localStorage.getItem('chatSessionId');
+    const sid = sessionStorage.getItem('chatSessionId');
     if (!sid) return;
     try {
         const resp = await fetch('/api/agent/session/' + sid + '/history');
@@ -630,6 +681,44 @@ loadHistory();
 loadTools();
 loadHooks();
 loadSettings();
+
+// ===================== 审批轮询 =====================
+async function pollApprovals() {
+    try {
+        const r = await fetch('/api/approvals?sessionId=' + sessionId);
+        const approvals = await r.json();
+        if (!approvals || approvals.length === 0) return;
+
+        // 移除旧的审批卡片
+        document.querySelectorAll('.approval-card').forEach(el => el.remove());
+
+        approvals.forEach(a => {
+            const pending = a.status === 'PENDING';
+            const approved = a.status === 'APPROVED';
+            const denied = a.status === 'DENIED';
+            const bg = pending ? 'rgba(245,158,11,0.06)' : approved ? 'rgba(34,197,94,0.06)' : 'rgba(239,68,68,0.06)';
+            const bd = pending ? 'rgba(245,158,11,0.2)' : approved ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)';
+            const ac = pending ? '#f59e0b' : approved ? '#22c55e' : '#ef4444';
+            const card = document.createElement('div');
+            card.className = 'approval-card';
+            card.style.cssText = `align-self:flex-start;max-width:80%;margin:4px 0;padding:12px 16px;background:${bg};border:1px solid ${bd};border-radius:var(--radius);font-size:0.85rem`;
+            card.innerHTML = `
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+                    <span style="background:${ac}22;color:${ac};font-size:0.65rem;padding:1px 6px;border-radius:3px;font-weight:600">${esc(a.riskLevel||'MEDIUM')}</span>
+                    <strong>${esc(a.toolName)}</strong>
+                    <span style="font-size:0.75rem;color:${ac}">${pending ? '⏳ 等待审批' : approved ? '✓ 已批准' : '✗ 已拒绝'}</span>
+                </div>
+                <div style="margin-bottom:4px">${esc(a.question||'')}</div>
+                ${a.arguments ? '<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:6px">' + Object.entries(a.arguments).map(([k,v]) => '<code>'+esc(k)+'</code>: '+esc(String(v))).join('&nbsp;|&nbsp;') + '</div>' : ''}
+                ${pending
+                    ? '<a href="/approvals.html" target="_blank" style="font-size:0.75rem;color:var(--accent);text-decoration:none">📋 打开审批页面（需审批人操作）</a>'
+                    : '<div style="font-size:0.7rem;color:var(--text-muted)">'+esc(a.approverId||'')+(a.approverComment?' | '+esc(a.approverComment):'')+'</div>'}
+            `;
+            chatMessages.appendChild(card);
+        });
+        scrollChat();
+    } catch(_) {}
+}
 
 // 每次发送消息后更新上下文用量（按字符数估算）
 function updateContextUsage() {
