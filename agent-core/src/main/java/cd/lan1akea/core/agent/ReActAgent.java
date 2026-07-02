@@ -626,26 +626,24 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
         String tenantId = ctx.getTenantId() != null ? ctx.getTenantId() : Defaults.TENANT;
 
         return stateStore.findById(sid)
-                .flatMap(session -> {
-                    return stateStore.loadLatestCheckpoint(sessionId)
-                            .flatMap(checkpoint -> {
-                                if (checkpoint.isShutdownInterrupted()) {
-                                    checkpoint.setShutdownInterrupted(false);
-                                    return stateStore.saveCheckpoint(checkpoint)
-                                            .thenReturn(checkpoint);
-                                }
-                                return Mono.just(checkpoint);
-                            })
-                            .flatMap(checkpoint -> {
-                                List<Msg> restored = checkpoint.getMessages();
-                                if (restored != null && !restored.isEmpty()) {
-                                    restored.addAll(messages);
-                                    return Mono.just(restored);
-                                }
-                                return loadHistory(sessionId, messages);
-                            })
-                            .switchIfEmpty(loadHistory(sessionId, messages));
-                })
+                .flatMap(session -> stateStore.loadLatestCheckpoint(sessionId)
+                        .flatMap(checkpoint -> {
+                            if (checkpoint.isShutdownInterrupted()) {
+                                checkpoint.setShutdownInterrupted(false);
+                                return stateStore.saveCheckpoint(checkpoint)
+                                        .thenReturn(checkpoint);
+                            }
+                            return Mono.just(checkpoint);
+                        })
+                        .flatMap(checkpoint -> {
+                            List<Msg> restored = checkpoint.getMessages();
+                            if (restored != null && !restored.isEmpty()) {
+                                restored.addAll(messages);
+                                return Mono.just(restored);
+                            }
+                            return loadHistory(sessionId, messages);
+                        })
+                        .switchIfEmpty(loadHistory(sessionId, messages)))
                 .switchIfEmpty(
                         stateStore.create(new Session(sid, tenantId, name,
                                         SessionState.ACTIVE, null, null, null))
