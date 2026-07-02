@@ -42,6 +42,10 @@ public class ToolCallContext {
      * 调用者身份信息
      */
     private final CallerIdentity identity;
+    /**
+     * 审批预检通过标记。框架在 ToolSuspendException 重试时设为 true，工具据此跳过审批检查。
+     */
+    private volatile boolean approved;
 
     private ToolCallContext(Builder builder) {
         this.callId = builder.callId;
@@ -139,6 +143,15 @@ public class ToolCallContext {
      * 代理 CallerIdentity.getAttribute(String)
      */
     public <T> T getAttribute(String key) { return identity.getAttribute(key); }
+
+    /**
+     * 审批预检是否已通过。
+     */
+    public boolean isApproved() { return approved; }
+    /**
+     * 设置审批预检通过标记（框架内部使用）。
+     */
+    public void setApproved(boolean v) { this.approved = v; }
     /**
      * 代理 ToolArguments.asMap()
      */

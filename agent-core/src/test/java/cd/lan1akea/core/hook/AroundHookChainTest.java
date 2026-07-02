@@ -249,7 +249,7 @@ class AroundHookChainTest {
         HookEvent event = new HookEvent(HookEventType.PRE_REASONING);
 
         // PRE chain
-        HookResult pre = dispatcher.dispatch(HookEventType.PRE_REASONING, event, hc).block();
+        HookResult pre = dispatcher.dispatch(event, hc).block();
         assertTrue(pre.isContinue());
 
         // AroundHook
@@ -258,12 +258,13 @@ class AroundHookChainTest {
         ).block();
         assertEquals(Boolean.TRUE, after.<Boolean>getPayload("core_executed"));
 
-        // POST chain（同一个 event）
-        HookResult post = dispatcher.dispatch(HookEventType.POST_REASONING, after, hc).block();
+        // POST chain（使用 POST_REASONING 类型才能匹配 post-filter hook）
+        HookEvent postEvent = new HookEvent(HookEventType.POST_REASONING, after.getPayload());
+        HookResult post = dispatcher.dispatch(postEvent, hc).block();
         assertTrue(post.isContinue());
 
         assertEquals("done", after.<String>getPayload("chain_pre"));
-        assertEquals("done", after.<String>getPayload("chain_post"));
+        assertEquals("done", postEvent.<String>getPayload("chain_post"));
     }
 
     // ========================================================================

@@ -12,8 +12,9 @@
 
     <modules>
         <module>agent-core</module>
-        <module>agent-bootstrap</module>
         <module>agent-harness</module>
+        <module>agent-metrics</module>
+        <module>agent-bootstrap</module>
     </modules>
 
     <properties>
@@ -27,6 +28,7 @@
         <reactor.version>2024.0.4</reactor.version>
         <fastjson2.version>2.0.58</fastjson2.version>
         <mysql-connector.version>9.3.0</mysql-connector.version>
+        <jtokkit.version>1.1.0</jtokkit.version>
         <junit.version>5.11.4</junit.version>
         <mockito.version>5.15.2</mockito.version>
     </properties>
@@ -87,6 +89,13 @@
                 <artifactId>reactor-test</artifactId>
                 <version>3.7.4</version>
                 <scope>test</scope>
+            </dependency>
+
+            <!-- jtokkit — OpenAI tiktoken 兼容的 Token 编码器 -->
+            <dependency>
+                <groupId>com.knuddels</groupId>
+                <artifactId>jtokkit</artifactId>
+                <version>${jtokkit.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

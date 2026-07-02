@@ -10,7 +10,6 @@ import cd.lan1akea.core.util.JsonUtils;
 import cd.lan1akea.core.util.TypeSchemaGenerator;
 import cd.lan1akea.harness.annotation.ToolFunction;
 import cd.lan1akea.harness.annotation.ToolParam;
-import cd.lan1akea.harness.context.ToolContext;
 import reactor.core.publisher.Mono;
 
 import java.lang.reflect.Method;
@@ -100,13 +99,13 @@ public class AnnotationToolAdapter implements ToolAdapter {
         // 5. 构建 ToolSchema
         ToolSchema schema = buildSchema(name, description, params);
 
-        // 6. 提取业务权限码 & ToolCallContext 注入位置
+        // 6. 提取注解配置
         Set<String> permissions = anno.permission().isEmpty()
             ? Collections.emptySet() : Set.of(anno.permission());
         int ctxParamIndex = findContextParam(method);
 
         return new AnnotationTool(name, description, schema, target, method, params,
-            permissions, ctxParamIndex);
+            permissions, ctxParamIndex, anno.group(), anno.timeoutMs(), anno.riskLevel());
     }
 
     /**
@@ -132,7 +131,8 @@ public class AnnotationToolAdapter implements ToolAdapter {
             int ctxParamIndex = findContextParam(method);
 
             tools.add(new AnnotationTool(name, desc, schema, target, method, params,
-                permissions, ctxParamIndex));
+                permissions, ctxParamIndex,
+                anno.group(), anno.timeoutMs(), anno.riskLevel()));
         }
         return tools;
     }
@@ -167,9 +167,8 @@ public class AnnotationToolAdapter implements ToolAdapter {
     private List<ParamMeta> extractParams(Method method) {
         List<ParamMeta> result = new ArrayList<>();
         for (Parameter param : method.getParameters()) {
-            // 跳过框架注入参数 — ToolCallContext（core/门面）不出现在 LLM Schema 中
-            if (param.getType() == cd.lan1akea.core.tool.ToolCallContext.class
-                || param.getType() == cd.lan1akea.harness.context.ToolContext.class) continue;
+            // 跳过框架注入参数 — ToolCallContext 不出现在 LLM Schema 中
+            if (param.getType() == cd.lan1akea.core.tool.ToolCallContext.class) continue;
 
             ParamMeta meta = new ParamMeta();
             meta.javaType = param.getType();
@@ -252,11 +251,13 @@ public class AnnotationToolAdapter implements ToolAdapter {
     private static int findContextParam(Method method) {
         Parameter[] params = method.getParameters();
         for (int i = 0; i < params.length; i++) {
-            Class<?> type = params[i].getType();
-            if (type == cd.lan1akea.core.tool.ToolCallContext.class
-                || type == cd.lan1akea.harness.context.ToolContext.class) return i;
+            if (params[i].getType() == cd.lan1akea.core.tool.ToolCallContext.class) return i;
         }
         return -1;
+    }
+
+    private static Object buildContextArg(ToolCallContext callParam) {
+        return callParam;
     }
 
     /**
@@ -353,13 +354,14 @@ public class AnnotationToolAdapter implements ToolAdapter {
          * ToolCallContext 在方法参数中的位置，-1 表示不需要。
          */
         private final int ctxParamIndex;
+        private final String group;
+        private final long timeoutMs;
+        private final String riskLevel;
 
-        /**
-         * 构造注解工具实例。
-         */
         AnnotationTool(String name, String description, ToolSchema schema,
                      Object target, Method method, List<ParamMeta> params,
-                     Set<String> permissions, int ctxParamIndex) {
+                     Set<String> permissions, int ctxParamIndex,
+                     String group, long timeoutMs, String riskLevel) {
             this.name = name;
             this.description = description;
             this.schema = schema;
@@ -368,6 +370,9 @@ public class AnnotationToolAdapter implements ToolAdapter {
             this.params = params;
             this.permissions = permissions;
             this.ctxParamIndex = ctxParamIndex;
+            this.group = group != null ? group : "default";
+            this.timeoutMs = timeoutMs;
+            this.riskLevel = riskLevel != null ? riskLevel : "MEDIUM";
         }
 
         /**
@@ -386,6 +391,9 @@ public class AnnotationToolAdapter implements ToolAdapter {
          * 返回业务权限码。
          */
         @Override public Set<String> getPermissions() { return permissions; }
+        @Override public String getGroup() { return group; }
+        @Override public long getTimeoutMs() { return timeoutMs; }
+        @Override public String getRiskLevel() { return riskLevel; }
 
         /**
          * 执行工具调用，通过反射调用目标方法。
@@ -405,18 +413,27 @@ public class AnnotationToolAdapter implements ToolAdapter {
                     }
                     // 如果这个位置是 ToolCallContext 注入点，注入门面包
                     if (i == ctxParamIndex) {
-                        args[argIdx++] = new ToolContext(callParam);
+                        args[argIdx++] = buildContextArg(callParam);
                     }
                     args[argIdx++] = convertArg(raw, p);
                 }
                 // 2. ToolCallContext 注入在参数列表末尾
                 if (ctxParamIndex >= params.size()) {
-                    args[argIdx] = new ToolContext(callParam);
+                    args[argIdx] = callParam;
                 }
                 Object result = method.invoke(target, args);
+                if (result instanceof ToolResult tr) return tr;
                 String output = result instanceof String ? (String) result : JsonUtils.toCompactJson(result);
                 return ToolResult.success(output);
-            }).onErrorResume(e -> Mono.just(ToolResult.failure(e.getMessage())));
+            }).onErrorResume(e -> {
+                Throwable cause = e instanceof java.lang.reflect.InvocationTargetException
+                    ? e.getCause() : e;
+                if (cause instanceof cd.lan1akea.core.tool.ToolSuspendException) {
+                    return Mono.error(cause);
+                }
+                String msg = cause != null ? cause.getMessage() : e.getMessage();
+                return Mono.just(ToolResult.failure(msg != null ? msg : "执行异常"));
+            });
         }
     }
 }

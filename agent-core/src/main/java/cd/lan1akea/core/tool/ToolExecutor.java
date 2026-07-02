@@ -1,5 +1,7 @@
 package cd.lan1akea.core.tool;
 
+import cd.lan1akea.core.CoreConstants.Defaults;
+import cd.lan1akea.core.CoreConstants.UI;
 import cd.lan1akea.core.approval.ApprovalStore;
 import cd.lan1akea.core.exception.ToolExecutionException;
 import reactor.core.publisher.Mono;
@@ -25,7 +27,7 @@ public class ToolExecutor {
      */
     private final ToolValidator toolValidator;
     /**
-     * 审批存储（可选），注入后自动在 requiresApproval 前查询
+     * 审批存储（可选），注入后自动在 approval 查询前重试
      */
     private ApprovalStore approvalStore;
 
@@ -53,14 +55,14 @@ public class ToolExecutor {
     }
 
     public void setApprovalStore(ApprovalStore store) { this.approvalStore = store; }
+    public ApprovalStore getApprovalStore() { return approvalStore; }
 
     /**
      * 执行工具调用，完整的执行链：
      * 1. 查找工具（ToolRegistry）
-     * 2. 权限校验（PermissionEngine）
-     * 3. 参数验证（ToolValidator）
-     * 4. 审批检查（requiresApproval -> ToolSuspendException）
-     * 5. 执行工具（带超时控制）
+     * 2. 参数验证（ToolValidator）
+     * 3. 执行前事件
+     * 4. 执行工具（带超时控制）
      *
      * @param callParam 调用参数
      * @return Mono<ToolResult> 执行结果
@@ -87,10 +89,10 @@ public class ToolExecutor {
                 tid, callParam.getUserId(),
                 callParam.getSessionId(), callParam.getToolName());
             if (tool == null) {
-                String ctx = tid != null ? tid : "global";
+                String ctx = tid != null ? tid : Defaults.CONTEXT_GLOBAL;
                 return Mono.just(ToolResult.failure(
-                    "工具不存在: " + callParam.getToolName()
-                    + "。上下文 [" + ctx + "] 中不可用"));
+                    UI.TOOL_NOT_FOUND + callParam.getToolName()
+                    + UI.TOOL_CTX_UNAVAILABLE + ctx + UI.TOOL_CTX_UNAVAILABLE_SUFFIX));
             }
 
 
@@ -98,39 +100,28 @@ public class ToolExecutor {
             try {
                 toolValidator.validate(tool.getParameters(), callParam);
             } catch (IllegalArgumentException e) {
-                return Mono.just(ToolResult.failure("参数校验失败: " + e.getMessage()));
+                return Mono.just(ToolResult.failure(UI.TOOL_PARAM_INVALID + e.getMessage()));
             }
 
-            // 3. 审批检查
-            if (tool.requiresApproval()) {
-                if (approvalStore != null && approvalStore.isApproved(
-                        callParam.getSessionId(), tool.getName())) {
-                    // 已批准，跳过审批直接执行
-                } else {
-                    return Mono.error(new ToolSuspendException(
-                        tool.getName(), "工具 [" + tool.getName() + "] 需要人工审批后才能执行"));
-                }
-            }
-
-            // 4. 执行前事件
+            // 3. 执行前事件
             emitter.beforeExecute(tool, callParam);
 
-            // 5. 执行工具，带超时控制和异常处理
+            // 4. 执行工具，带超时控制和异常处理
             Mono<ToolResult> execution = tool.execute(callParam)
                 .onErrorResume(e -> {
                     emitter.onError(tool, callParam, e);
                     if (e instanceof ToolSuspendException) {
-                        return Mono.error(e); // 不吞掉暂停异常，抛给 ReActLoop 的 InterruptHook
+                        return Mono.error(e); // 不吞掉，抛给 ReActLoop 处理
                     }
                     return Mono.just(ToolResult.failure(
-                        "工具执行异常: " + e.getMessage()));
+                        UI.TOOL_EXEC_ERROR + e.getMessage()));
                 });
 
             // 超时控制
             long timeoutMs = tool.getTimeoutMs();
             if (timeoutMs > 0) {
                 execution = execution.timeout(Duration.ofMillis(timeoutMs),
-                    Mono.just(ToolResult.failure("工具执行超时 (" + timeoutMs + "ms)"))
+                    Mono.just(ToolResult.failure(UI.TOOL_TIMEOUT + timeoutMs + UI.TOOL_TIMEOUT_SUFFIX))
                         .doOnNext(r -> emitter.onError(tool, callParam,
                             new ToolExecutionException(tool.getName(), "执行超时"))));
             }
@@ -138,8 +129,8 @@ public class ToolExecutor {
             return execution
                 .doOnNext(result -> emitter.afterExecute(tool, callParam, result))
                 .doOnNext(result -> {
-                    if (result.isSuccess() && tool.requiresApproval() && approvalStore != null) {
-                        approvalStore.consume(callParam.getSessionId(), tool.getName());
+                    if (result.isSuccess() && callParam.isApproved() && approvalStore != null) {
+                        approvalStore.consume(callParam.getSessionId(), callParam.getToolName());
                     }
                 })
                 .map(r -> r.withCallId(callParam.getCallId()));

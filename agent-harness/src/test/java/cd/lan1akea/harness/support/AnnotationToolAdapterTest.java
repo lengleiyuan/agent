@@ -4,9 +4,9 @@ import cd.lan1akea.core.tool.Tool;
 import cd.lan1akea.core.tool.ToolCallContext;
 import cd.lan1akea.core.tool.ToolRegistry;
 import cd.lan1akea.core.tool.ToolResult;
+import cd.lan1akea.core.tool.ToolSuspendException;
 import cd.lan1akea.harness.annotation.ToolFunction;
 import cd.lan1akea.harness.annotation.ToolParam;
-import cd.lan1akea.harness.context.ToolContext;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -138,8 +138,8 @@ class AnnotationToolAdapterTest {
     static class ContextInjectionTool {
         @ToolFunction(name = "audit_op")
         public ToolResult audit(@ToolParam(name = "action") String action,
-                                 ToolContext ctx) {
-            assertNotNull(ctx, "ToolContext should be injected");
+                                 ToolCallContext ctx) {
+            assertNotNull(ctx, "ToolCallContext should be injected");
             assertEquals("tx", ctx.getTenantId());
             assertEquals("ux", ctx.getUserId());
             return ToolResult.success("audited: " + action + " by " + ctx.getUserId());
@@ -147,7 +147,7 @@ class AnnotationToolAdapterTest {
     }
 
     @Test
-    void toolContextInjectedIntoMethod() {
+    void toolCallContextInjectedIntoMethod() {
         ToolRegistry registry = new ToolRegistry();
         registry.addAdapter(new AnnotationToolAdapter());
         List<Tool> tools = registry.registerTool(new ContextInjectionTool());
@@ -163,7 +163,7 @@ class AnnotationToolAdapterTest {
         assertTrue(result.isSuccess());
         assertTrue(result.getContent().contains("delete"));
         assertTrue(result.getContent().contains("ux"));
-        // ToolContext 不应出现在 schema 中
+        // ToolCallContext 不应出现在 schema 中
         assertFalse(tool.getParameters().getParametersSchema().toString().contains("ctx"));
     }
 
@@ -183,5 +183,308 @@ class AnnotationToolAdapterTest {
         List<Tool> tools = registry.registerTool(new NamedMethodTool());
 
         assertEquals("custom_name", tools.get(0).getName());
+    }
+
+    // ========================================================================
+    // 注解字段：timeoutMs, riskLevel, group
+    // ========================================================================
+
+    // ── 类级注解，全部指定 ──
+
+    @ToolFunction(name = "risky_op", riskLevel = "CRITICAL", timeoutMs = 60000, group = "danger")
+    static class FullConfigTool {
+        public ToolResult run() { return ToolResult.success("ok"); }
+    }
+
+    @Test
+    void classLevelAllFieldsPropagated() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.addAdapter(new AnnotationToolAdapter());
+        List<Tool> tools = registry.registerTool(new FullConfigTool());
+        Tool tool = tools.get(0);
+
+        assertEquals("CRITICAL", tool.getRiskLevel());
+        assertEquals(60000L, tool.getTimeoutMs());
+        assertEquals("danger", tool.getGroup());
+    }
+
+    // ── 类级注解，部分字段 + 默认值 ──
+
+    @ToolFunction(name = "partial", riskLevel = "LOW")
+    static class PartialConfigTool {
+        public ToolResult run() { return ToolResult.success("ok"); }
+    }
+
+    @Test
+    void classLevelPartialFieldsUseDefaults() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.addAdapter(new AnnotationToolAdapter());
+        List<Tool> tools = registry.registerTool(new PartialConfigTool());
+        Tool tool = tools.get(0);
+
+        assertEquals("LOW", tool.getRiskLevel(), "指定了 LOW");
+        assertEquals(30000L, tool.getTimeoutMs(), "timeoutMs 用默认");
+        assertEquals("default", tool.getGroup(), "group 用默认");
+    }
+
+    // ── 方法级注解，全部指定 ──
+
+    static class MethodLevelFullConfig {
+        @ToolFunction(name = "method_full", description = "全配置方法",
+            riskLevel = "HIGH", timeoutMs = 120000, group = "admin")
+        public ToolResult run() { return ToolResult.success("ok"); }
+    }
+
+    @Test
+    void methodLevelAllFieldsPropagated() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.addAdapter(new AnnotationToolAdapter());
+        List<Tool> tools = registry.registerTool(new MethodLevelFullConfig());
+        Tool tool = tools.get(0);
+
+        assertEquals("method_full", tool.getName());
+        assertEquals("HIGH", tool.getRiskLevel());
+        assertEquals(120000L, tool.getTimeoutMs());
+        assertEquals("admin", tool.getGroup());
+    }
+
+    // ── 方法级注解，部分字段 + 默认值 ──
+
+    static class MethodLevelPartialConfig {
+        @ToolFunction(name = "method_partial", timeoutMs = 5000)
+        public ToolResult run() { return ToolResult.success("ok"); }
+    }
+
+    @Test
+    void methodLevelPartialFieldsUseDefaults() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.addAdapter(new AnnotationToolAdapter());
+        List<Tool> tools = registry.registerTool(new MethodLevelPartialConfig());
+        Tool tool = tools.get(0);
+
+        assertEquals("method_partial", tool.getName());
+        assertEquals(5000L, tool.getTimeoutMs(), "指定了 5000");
+        assertEquals("MEDIUM", tool.getRiskLevel(), "riskLevel 用默认");
+        assertEquals("default", tool.getGroup(), "group 用默认");
+    }
+
+    // ── adaptToAll 多方法，不同配置互不干扰 ──
+
+    static class MultiConfigTool {
+        @ToolFunction(name = "fast_op", timeoutMs = 1000, riskLevel = "LOW", group = "fast")
+        public ToolResult fast() { return ToolResult.success("fast"); }
+
+        @ToolFunction(name = "slow_op", timeoutMs = 60000, riskLevel = "CRITICAL", group = "slow")
+        public ToolResult slow() { return ToolResult.success("slow"); }
+    }
+
+    @Test
+    void adaptToAllPropagatesConfigPerMethod() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.addAdapter(new AnnotationToolAdapter());
+        List<Tool> tools = registry.registerTool(new MultiConfigTool());
+
+        assertEquals(2, tools.size());
+        Tool fast = tools.stream().filter(t -> "fast_op".equals(t.getName())).findFirst().orElseThrow();
+        Tool slow = tools.stream().filter(t -> "slow_op".equals(t.getName())).findFirst().orElseThrow();
+
+        assertEquals(1000L, fast.getTimeoutMs());
+        assertEquals("LOW", fast.getRiskLevel());
+        assertEquals("fast", fast.getGroup());
+
+        assertEquals(60000L, slow.getTimeoutMs());
+        assertEquals("CRITICAL", slow.getRiskLevel());
+        assertEquals("slow", slow.getGroup());
+    }
+
+    // ========================================================================
+    // ToolCallContext 注入 @ToolFunction
+    // ========================================================================
+
+    static class MethodLevelCtxInjection {
+        @ToolFunction(name = "ctx_inject", timeoutMs = 5000, riskLevel = "HIGH")
+        public ToolResult run(@ToolParam(name = "input") String input,
+                              ToolCallContext ctx) {
+            assertNotNull(ctx, "应当注入 ToolCallContext");
+            assertNotNull(ctx.getCallId(), "callId 不应为空");
+            assertNotNull(ctx.getSessionId(), "sessionId 不应为空");
+            return ToolResult.success(input + "|" + ctx.getSessionId());
+        }
+    }
+
+    @Test
+    void toolCallContextInjectedWithMethodLevelAnnotation() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.addAdapter(new AnnotationToolAdapter());
+        List<Tool> tools = registry.registerTool(new MethodLevelCtxInjection());
+        Tool tool = tools.get(0);
+
+        // 注解字段
+        assertEquals(5000L, tool.getTimeoutMs());
+        assertEquals("HIGH", tool.getRiskLevel());
+
+        // Schema 不含 ctx
+        String schemaStr = tool.getParameters().getParametersSchema().toString();
+        assertFalse(schemaStr.contains("ctx"), "ToolCallContext 不应出现在 schema: " + schemaStr);
+        assertTrue(schemaStr.contains("input"), "业务参数应在 schema 中");
+
+        // 执行
+        ToolCallContext callCtx = ToolCallContext.builder()
+            .callId("c1").toolName("ctx_inject")
+            .arguments(Map.of("input", "hello"))
+            .sessionId("sess-abc")
+            .build();
+
+        ToolResult result = tool.execute(callCtx).block();
+        assertTrue(result.isSuccess());
+        assertEquals("hello|sess-abc", result.getContent());
+    }
+
+    // ToolCallContext 放第一个参数位置
+
+    static class CtxFirstParamTool {
+        @ToolFunction(name = "ctx_first")
+        public ToolResult run(ToolCallContext ctx,
+                              @ToolParam(name = "msg") String msg) {
+            return ToolResult.success(msg + "|" + ctx.getTenantId());
+        }
+    }
+
+    @Test
+    void toolCallContextAsFirstParameter() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.addAdapter(new AnnotationToolAdapter());
+        List<Tool> tools = registry.registerTool(new CtxFirstParamTool());
+        Tool tool = tools.get(0);
+
+        ToolCallContext callCtx = ToolCallContext.builder()
+            .callId("c1").toolName("ctx_first")
+            .arguments(Map.of("msg", "hi"))
+            .tenantId("t-1")
+            .build();
+
+        ToolResult result = tool.execute(callCtx).block();
+        assertTrue(result.isSuccess());
+        assertEquals("hi|t-1", result.getContent());
+    }
+
+    // 多方法混合：一个有 ToolCallContext，一个没有
+
+    static class MixedCtxTool {
+        @ToolFunction(name = "with_ctx")
+        public ToolResult withCtx(ToolCallContext ctx) {
+            return ToolResult.success("session=" + ctx.getSessionId());
+        }
+
+        @ToolFunction(name = "no_ctx")
+        public ToolResult noCtx() {
+            return ToolResult.success("no context");
+        }
+    }
+
+    @Test
+    void mixedMethodsWithAndWithoutContext() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.addAdapter(new AnnotationToolAdapter());
+        List<Tool> tools = registry.registerTool(new MixedCtxTool());
+        assertEquals(2, tools.size());
+
+        Tool withCtx = tools.stream().filter(t -> "with_ctx".equals(t.getName())).findFirst().orElseThrow();
+        Tool noCtx = tools.stream().filter(t -> "no_ctx".equals(t.getName())).findFirst().orElseThrow();
+
+        // with_ctx：Schema 不含 ctx
+        assertFalse(withCtx.getParameters().getParametersSchema().toString().contains("ctx"));
+
+        ToolCallContext ctx = ToolCallContext.builder()
+            .callId("c1").toolName("with_ctx").sessionId("s1")
+            .arguments(Map.of()).build();
+
+        assertEquals("session=s1", withCtx.execute(ctx).block().getContent());
+        assertEquals("no context", noCtx.execute(ctx).block().getContent());
+    }
+
+    // ========================================================================
+    // ToolSuspendException 传播
+    // ========================================================================
+
+    @ToolFunction(name = "needs_approval", riskLevel = "HIGH")
+    static class ApprovalTool {
+        public ToolResult run() {
+            throw new ToolSuspendException("needs_approval", "需要审批");
+        }
+    }
+
+    @Test
+    void toolSuspendExceptionPropagatesNotSwallowed() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.addAdapter(new AnnotationToolAdapter());
+        List<Tool> tools = registry.registerTool(new ApprovalTool());
+        Tool tool = tools.get(0);
+
+        ToolCallContext ctx = ToolCallContext.builder()
+            .callId("c1").toolName("needs_approval")
+            .arguments(Map.of()).build();
+
+        // ToolSuspendException 必须传播，不能被转为 ToolResult.failure
+        try {
+            tool.execute(ctx).block();
+            fail("应该抛出 ToolSuspendException");
+        } catch (ToolSuspendException e) {
+            assertEquals("需要审批", e.getQuestion());
+        }
+    }
+
+    @Test
+    void normalExceptionStillConvertedToFailure() {
+        @ToolFunction(name = "broken")
+        class BrokenTool {
+            public ToolResult run() { throw new RuntimeException("内部错误"); }
+        }
+        ToolRegistry registry = new ToolRegistry();
+        registry.addAdapter(new AnnotationToolAdapter());
+        List<Tool> tools = registry.registerTool(new BrokenTool());
+        Tool tool = tools.get(0);
+
+        ToolCallContext ctx = ToolCallContext.builder()
+            .callId("c1").toolName("broken")
+            .arguments(Map.of()).build();
+
+        ToolResult result = tool.execute(ctx).block();
+        assertNotNull(result);
+        assertFalse(result.isSuccess());
+        assertTrue(result.getErrorMessage().contains("内部错误"));
+    }
+
+    // ========================================================================
+    // ToolCallContext（core 类型）注入
+    // ========================================================================
+
+    static class CoreContextInjectionTool {
+        @ToolFunction(name = "core_ctx")
+        public ToolResult run(@ToolParam(name = "input") String input,
+                              cd.lan1akea.core.tool.ToolCallContext ctx) {
+            assertNotNull(ctx);
+            return ToolResult.success(input + "|" + ctx.getSessionId());
+        }
+    }
+
+    @Test
+    void coreToolCallContextInjectedIntoMethod() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.addAdapter(new AnnotationToolAdapter());
+        List<Tool> tools = registry.registerTool(new CoreContextInjectionTool());
+        Tool tool = tools.get(0);
+
+        ToolCallContext ctx = ToolCallContext.builder()
+            .callId("c1").toolName("core_ctx")
+            .arguments(Map.of("input", "hello"))
+            .sessionId("sess-123")
+            .build();
+
+        ToolResult result = tool.execute(ctx).block();
+        assertTrue(result.isSuccess());
+        assertEquals("hello|sess-123", result.getContent());
+        // core ToolCallContext 不应出现在 schema
+        assertFalse(tool.getParameters().getParametersSchema().toString().contains("ctx"));
     }
 }

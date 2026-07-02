@@ -91,6 +91,11 @@ public class InMemoryApprovalStore implements ApprovalStore {
         return store.get(approvalId);
     }
 
+    @Override
+    public void cleanupExpired() {
+        evictExpired();
+    }
+
     private void evictExpired() {
         for (Map.Entry<String, PendingApproval> e : store.entrySet()) {
             PendingApproval pa = e.getValue();

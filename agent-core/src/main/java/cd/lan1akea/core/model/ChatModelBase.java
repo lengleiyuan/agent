@@ -271,12 +271,20 @@ public abstract class ChatModelBase implements ChatModel {
      * 检查异常是否可重试。
      *
      * @param e 要检查的异常
-     * @return 可重试返回 true（429 或 5xx 状态码）
+     * @return 可重试返回 true（429 / 5xx 状态码 / IO 异常 / 超时）
      */
     protected boolean isRetryable(Throwable e) {
         if (e instanceof ModelException) {
             int status = ((ModelException) e).getHttpStatus();
             return status == 429 || status >= 500;
+        }
+        if (e instanceof java.io.IOException) return true;
+        if (e instanceof java.util.concurrent.TimeoutException) return true;
+        Throwable cause = e;
+        while (cause != null) {
+            if (cause instanceof java.io.IOException) return true;
+            if (cause instanceof java.util.concurrent.TimeoutException) return true;
+            cause = cause.getCause();
         }
         return false;
     }

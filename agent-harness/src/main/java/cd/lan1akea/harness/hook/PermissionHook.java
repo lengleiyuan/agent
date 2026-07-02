@@ -19,7 +19,7 @@ import java.util.function.BiFunction;
  *         .tool(new UserTool())
  *         .build();
  */
-public class PermissionHook implements IHook {
+public class PermissionHook implements Hook {
 
     /**
      * Hook 名称。

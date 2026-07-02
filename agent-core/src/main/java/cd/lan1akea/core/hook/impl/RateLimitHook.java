@@ -5,14 +5,17 @@ import reactor.core.publisher.Mono;
 
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 频率限制 Hook。
  *
  * 限制工具调用频率，防止过度调用。
+ * 使用 AtomicReference CAS 保证窗口切换原子性。
  */
 public class RateLimitHook implements Hook {
+
+    private record Window(long startMs, AtomicInteger count) {}
 
     /**
      * Hook 名称
@@ -27,13 +30,9 @@ public class RateLimitHook implements Hook {
      */
     private final long windowMs;
     /**
-     * 当前窗口调用次数
+     * 当前窗口（CAS 原子替换）
      */
-    private final AtomicInteger callCount = new AtomicInteger(0);
-    /**
-     * 当前窗口开始时间
-     */
-    private final AtomicLong windowStart = new AtomicLong(0);
+    private final AtomicReference<Window> windowRef;
 
     /**
      * 创建频率限制 Hook。
@@ -42,6 +41,8 @@ public class RateLimitHook implements Hook {
         this.name = "RateLimitHook";
         this.maxCallsPerWindow = maxCallsPerWindow;
         this.windowMs = windowMs;
+        this.windowRef = new AtomicReference<>(
+            new Window(System.currentTimeMillis(), new AtomicInteger(0)));
     }
 
     /**
@@ -77,16 +78,15 @@ public class RateLimitHook implements Hook {
     @Override
     public Mono<HookResult> onEvent(HookEvent event, HookContext context) {
         long now = System.currentTimeMillis();
+        Window w = windowRef.get();
 
-        // 检查时间窗口
-        long window = windowStart.get();
-        if (window == 0 || now - window > windowMs) {
-            // 新窗口
-            windowStart.set(now);
-            callCount.set(0);
+        if (now - w.startMs > windowMs) {
+            Window newWindow = new Window(now, new AtomicInteger(0));
+            windowRef.compareAndSet(w, newWindow);
+            w = windowRef.get();
         }
 
-        int count = callCount.incrementAndGet();
+        int count = w.count.incrementAndGet();
         if (count > maxCallsPerWindow) {
             return Mono.just(HookResult.abort(
                 "工具调用频率超限: " + count + "/" + maxCallsPerWindow

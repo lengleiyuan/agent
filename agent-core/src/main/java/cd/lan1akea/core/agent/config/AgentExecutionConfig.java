@@ -32,6 +32,10 @@ public class AgentExecutionConfig {
      * 总执行超时（毫秒），0 表示无超时。
      */
     private final long totalTimeoutMs;
+    /**
+     * 迭代间退避延迟（毫秒），0 表示无退避。
+     */
+    private final long iterationBackoffMs;
 
     private AgentExecutionConfig(Builder builder) {
         this.maxIterations = builder.maxIterations;
@@ -40,6 +44,7 @@ public class AgentExecutionConfig {
         this.toolChoice = builder.toolChoice;
         this.toolTimeoutMs = builder.toolTimeoutMs;
         this.totalTimeoutMs = builder.totalTimeoutMs;
+        this.iterationBackoffMs = builder.iterationBackoffMs;
     }
 
     /**
@@ -66,6 +71,10 @@ public class AgentExecutionConfig {
      * @return 总超时毫秒数
      */
     public long getTotalTimeoutMs() { return totalTimeoutMs; }
+    /**
+     * @return 迭代间退避毫秒数
+     */
+    public long getIterationBackoffMs() { return iterationBackoffMs; }
 
     /**
      * 返回默认执行配置。
@@ -93,6 +102,7 @@ public class AgentExecutionConfig {
         private ToolChoicePolicy toolChoice = ToolChoicePolicy.AUTO;
         private long toolTimeoutMs = 30000;
         private long totalTimeoutMs = 300000;
+        private long iterationBackoffMs = 0;
 
         /**
          * 设置最大迭代次数。
@@ -118,6 +128,10 @@ public class AgentExecutionConfig {
          * 设置总超时（毫秒）。
          */
         public Builder totalTimeoutMs(long totalTimeoutMs) { this.totalTimeoutMs = totalTimeoutMs; return this; }
+        /**
+         * 设置迭代间退避延迟（毫秒），0 表示无退避。
+         */
+        public Builder iterationBackoffMs(long iterationBackoffMs) { this.iterationBackoffMs = iterationBackoffMs; return this; }
 
         /**
          * 构建 AgentExecutionConfig。

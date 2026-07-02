@@ -5,12 +5,16 @@ import cd.lan1akea.core.agent.config.AgentExecutionConfig;
 import cd.lan1akea.core.model.ToolChoicePolicy;
 import cd.lan1akea.core.agent.loop.LoopContext;
 import cd.lan1akea.core.agent.loop.ReActLoop;
+import cd.lan1akea.core.CoreConstants.Defaults;
+import cd.lan1akea.core.CoreConstants.UI;
+import cd.lan1akea.core.CoreConstants.RuntimeCtx;
 import cd.lan1akea.core.context.RuntimeContext;
 import cd.lan1akea.core.exception.AgentConfigurationException;
 import cd.lan1akea.core.hook.*;
 import cd.lan1akea.core.hook.recorder.HookRecorder;
 import cd.lan1akea.core.message.Msg;
 import cd.lan1akea.core.message.SystemMessage;
+import cd.lan1akea.core.metrics.AgentMetrics;
 import cd.lan1akea.core.model.*;
 import cd.lan1akea.core.model.ChatResponse;
 import cd.lan1akea.core.model.ChatStreamChunk;
@@ -27,7 +31,7 @@ import reactor.core.publisher.Mono;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * ReActAgent — 多租户并发安全的 Agent 实现。
@@ -93,11 +97,15 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
      * 系统提示消息。
      */
     String systemMessage;
+    /**
+     * 指标收集器（可选，默认 NOOP）。
+     */
+    AgentMetrics metrics = AgentMetrics.NOOP;
 
     /**
-     * 当前活跃的循环上下文。
+     * 当前活跃的循环上下文（按 requestId 索引，支持并发请求）。
      */
-    final AtomicReference<LoopContext> activeLoopContext = new AtomicReference<>();
+    final ConcurrentHashMap<String, LoopContext> activeRequests = new ConcurrentHashMap<>();
     /**
      * 是否已构建。
      */
@@ -130,7 +138,7 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
         this.contextWindow = new ModelContextWindow(config.getModel().getModelName(), maxInput, maxInput / 2);
 
         this.reActLoop = new ReActLoop(model, toolExecutor, hookDispatcher, toolRegistry,
-            aroundHookChain);
+                aroundHookChain);
     }
 
 
@@ -175,10 +183,12 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
                                                 .messages(m)
                                                 .generateOptions(resolveOptions())
                                                 .maxIterations(config.getExecutionConfig().getMaxIterations())
-                                                .stream(false).build();
-                                        activeLoopContext.set(loopCtx);
+                                                .stream(false)
+                                                .backoffMs(config.getExecutionConfig().getIterationBackoffMs())
+                                                .build();
+                                        activeRequests.put(loopCtx.getRequestId(), loopCtx);
                                         Mono<ChatResponse> exec = reActLoop.execute(loopCtx)
-                                                .doFinally(s -> activeLoopContext.set(null));
+                                                .doFinally(s -> activeRequests.remove(loopCtx.getRequestId()));
                                         long totalTimeout = config.getExecutionConfig().getTotalTimeoutMs();
                                         if (totalTimeout > 0) exec = exec.timeout(Duration.ofMillis(totalTimeout));
                                         return exec;
@@ -221,21 +231,26 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
 
             HookContext callHc = HookContext.from(ctx, 0);
             return aroundHookChain.aroundCallStream(new HookEvent(null), callHc,
-                e -> loadSessionAndHistory(ctx, messages)
-                    .flatMapMany(msgs -> injectSystemMessage(msgs).flatMapMany(Flux::just))
-                    .concatMap(m -> {
-                        LoopContext loopCtx = LoopContext.builder()
-                                .agentName(name)
-                                .fromRuntimeContext(ctx)
-                                .messages(m).generateOptions(opts)
-                                .maxIterations(config.getExecutionConfig().getMaxIterations())
-                                .stream(true).build();
+                    e -> loadSessionAndHistory(ctx, messages)
+                            .flatMapMany(msgs -> injectSystemMessage(msgs).flatMapMany(Flux::just))
+                            .concatMap(m -> {
+                                LoopContext loopCtx = LoopContext.builder()
+                                        .agentName(name)
+                                        .fromRuntimeContext(ctx)
+                                        .messages(m).generateOptions(opts)
+                                        .maxIterations(config.getExecutionConfig().getMaxIterations())
+                                        .stream(true)
+                                        .backoffMs(config.getExecutionConfig().getIterationBackoffMs())
+                                        .build();
 
-                        activeLoopContext.set(loopCtx);
-                        return reActLoop.executeStream(loopCtx)
-                                .doFinally(s -> activeLoopContext.set(null));
-                    })
-                    .contextWrite(c -> writeContext(c, ctx)));
+                                activeRequests.put(loopCtx.getRequestId(), loopCtx);
+                                Flux<ChatStreamChunk> stream = reActLoop.executeStream(loopCtx)
+                                        .doFinally(s -> activeRequests.remove(loopCtx.getRequestId()));
+                                long totalTimeout = config.getExecutionConfig().getTotalTimeoutMs();
+                                if (totalTimeout > 0) stream = stream.timeout(Duration.ofMillis(totalTimeout));
+                                return stream;
+                            })
+                            .contextWrite(c -> writeContext(c, ctx)));
         });
     }
 
@@ -419,30 +434,30 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
          */
         public ReActAgent build() {
             if (name == null || name.isBlank())
-                throw new AgentConfigurationException("Agent name 不能为空");
+                throw new AgentConfigurationException(UI.AGENT_NAME_REQUIRED);
             if (model == null)
-                throw new AgentConfigurationException("ChatModel 不能为 null");
+                throw new AgentConfigurationException(UI.MODEL_REQUIRED);
 
             int iters = maxIterations != null ? maxIterations : 10;
             double temp = temperature != null ? temperature : model.getDefaultTemperature();
             int outTokens = maxTokens != null ? maxTokens : model.getDefaultMaxTokens();
 
             AgentExecutionConfig execConfig = AgentExecutionConfig.builder()
-                .maxIterations(iters)
-                .temperature(temp)
-                .maxTokens(outTokens)
-                .toolChoice(toolChoice)
-                .totalTimeoutMs(totalTimeoutMs)
-                .build();
+                    .maxIterations(iters)
+                    .temperature(temp)
+                    .maxTokens(outTokens)
+                    .toolChoice(toolChoice)
+                    .totalTimeoutMs(totalTimeoutMs)
+                    .build();
 
             AgentConfig config = AgentConfig.builder()
-                .name(name).model(model)
-                .toolRegistry(toolRegistry)
-                .hookChain(hookChain)
-                .aroundHookChain(aroundHookChain)
-                .stateStore(stateStore)
-                .executionConfig(execConfig)
-                .build();
+                    .name(name).model(model)
+                    .toolRegistry(toolRegistry)
+                    .hookChain(hookChain)
+                    .aroundHookChain(aroundHookChain)
+                    .stateStore(stateStore)
+                    .executionConfig(execConfig)
+                    .build();
 
             return new ReActAgent(config);
         }
@@ -454,7 +469,7 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
      * @return 构建完成的 Mono
      */
     public final Mono<Void> build() {
-        if (built) return Mono.error(new AgentConfigurationException("Agent [" + name + "] 已构建"));
+        if (built) return Mono.error(new AgentConfigurationException(UI.AGENT_PREFIX + name + UI.AGENT_ALREADY_BUILT));
         built = true;
         return doBuild();
     }
@@ -479,11 +494,12 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
             reactor.util.context.ContextView ctxView, RuntimeContext rtCtx) {
         if (rtCtx != null) return rtCtx;
         return new RuntimeContext(
-            ctxView.getOrDefault("tenantId", null),
-            ctxView.getOrDefault("userId", null),
-            ctxView.getOrDefault("sessionId", null),
-            name,
-            ctxView.getOrDefault("attributes", null));
+                ctxView.getOrDefault(RuntimeCtx.REQUEST_ID, null),
+                ctxView.getOrDefault(RuntimeCtx.TENANT_ID, null),
+                ctxView.getOrDefault(RuntimeCtx.USER_ID, null),
+                ctxView.getOrDefault(RuntimeCtx.SESSION_ID, null),
+                name,
+                ctxView.getOrDefault(RuntimeCtx.ATTRIBUTES, null));
     }
 
     /**
@@ -495,10 +511,10 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
      */
     private reactor.util.context.Context writeContext(
             reactor.util.context.Context c, RuntimeContext ctx) {
-        if (ctx.getTenantId() != null) c = c.put("tenantId", ctx.getTenantId());
-        if (ctx.getUserId() != null) c = c.put("userId", ctx.getUserId());
-        if (ctx.getSessionId() != null) c = c.put("sessionId", ctx.getSessionId());
-        if (!ctx.getAttributes().isEmpty()) c = c.put("attributes", ctx.getAttributes());
+        if (ctx.getTenantId() != null) c = c.put(RuntimeCtx.TENANT_ID, ctx.getTenantId());
+        if (ctx.getUserId() != null) c = c.put(RuntimeCtx.USER_ID, ctx.getUserId());
+        if (ctx.getSessionId() != null) c = c.put(RuntimeCtx.SESSION_ID, ctx.getSessionId());
+        if (!ctx.getAttributes().isEmpty()) c = c.put(RuntimeCtx.ATTRIBUTES, ctx.getAttributes());
         return c;
     }
 
@@ -509,8 +525,9 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
      */
     @Override
     public void interrupt() {
-        LoopContext ctx = activeLoopContext.get();
-        if (ctx != null) ctx.interrupt();
+        for (LoopContext ctx : activeRequests.values()) {
+            ctx.interrupt();
+        }
     }
 
     /**
@@ -518,8 +535,22 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
      */
     @Override
     public void interrupt(Msg feedbackMsg) {
-        LoopContext ctx = activeLoopContext.get();
-        if (ctx != null) ctx.interrupt(feedbackMsg);
+        for (LoopContext ctx : activeRequests.values()) {
+            ctx.interrupt(feedbackMsg);
+        }
+    }
+
+    /**
+     * 按会话 ID 中断指定会话的执行。
+     *
+     * @param sessionId 要中断的会话 ID
+     */
+    public void interruptBySession(String sessionId) {
+        for (LoopContext ctx : activeRequests.values()) {
+            if (sessionId != null && sessionId.equals(ctx.getSessionId())) {
+                ctx.interrupt();
+            }
+        }
     }
 
 
@@ -530,7 +561,7 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
      */
     public Mono<Void> shutdown() {
         built = false;
-        activeLoopContext.set(null);
+        activeRequests.clear();
         return Mono.empty();
     }
 
@@ -578,7 +609,7 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
     /**
      * 返回是否正在执行。
      */
-    public boolean isRunning() { return activeLoopContext.get() != null; }
+    public boolean isRunning() { return !activeRequests.isEmpty(); }
 
     /**
      * 加载会话状态和历史消息，合并检查点恢复。
@@ -592,34 +623,34 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
         if (sessionId == null || stateStore == null) return Mono.just(messages);
 
         SessionId sid = new SessionId(sessionId);
-        String tenantId = ctx.getTenantId() != null ? ctx.getTenantId() : "default";
+        String tenantId = ctx.getTenantId() != null ? ctx.getTenantId() : Defaults.TENANT;
 
         return stateStore.findById(sid)
-            .flatMap(session -> {
-                return stateStore.loadLatestCheckpoint(sessionId)
-                    .flatMap(checkpoint -> {
-                        if (checkpoint.isShutdownInterrupted()) {
-                            checkpoint.setShutdownInterrupted(false);
-                            return stateStore.saveCheckpoint(checkpoint)
-                                .thenReturn(checkpoint);
-                        }
-                        return Mono.just(checkpoint);
-                    })
-                    .flatMap(checkpoint -> {
-                        List<Msg> restored = checkpoint.getMessages();
-                        if (restored != null && !restored.isEmpty()) {
-                            restored.addAll(messages);
-                            return Mono.just(restored);
-                        }
-                        return loadHistory(sessionId, messages);
-                    })
-                    .switchIfEmpty(loadHistory(sessionId, messages));
-            })
-            .switchIfEmpty(
-                stateStore.create(new Session(sid, tenantId, name,
-                    SessionState.ACTIVE, null, null, null))
-                .then(Mono.just(messages))
-            );
+                .flatMap(session -> {
+                    return stateStore.loadLatestCheckpoint(sessionId)
+                            .flatMap(checkpoint -> {
+                                if (checkpoint.isShutdownInterrupted()) {
+                                    checkpoint.setShutdownInterrupted(false);
+                                    return stateStore.saveCheckpoint(checkpoint)
+                                            .thenReturn(checkpoint);
+                                }
+                                return Mono.just(checkpoint);
+                            })
+                            .flatMap(checkpoint -> {
+                                List<Msg> restored = checkpoint.getMessages();
+                                if (restored != null && !restored.isEmpty()) {
+                                    restored.addAll(messages);
+                                    return Mono.just(restored);
+                                }
+                                return loadHistory(sessionId, messages);
+                            })
+                            .switchIfEmpty(loadHistory(sessionId, messages));
+                })
+                .switchIfEmpty(
+                        stateStore.create(new Session(sid, tenantId, name,
+                                        SessionState.ACTIVE, null, null, null))
+                                .then(Mono.just(messages))
+                );
     }
 
     /**
@@ -631,13 +662,13 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
      */
     private Mono<List<Msg>> loadHistory(String sessionId, List<Msg> messages) {
         return stateStore.getHistory(new SessionId(sessionId))
-            .collectList()
-            .map(historyMsgs -> {
-                List<Msg> all = new ArrayList<>(historyMsgs);
-                all.addAll(messages);
-                return all;
-            })
-            .defaultIfEmpty(messages);
+                .collectList()
+                .map(historyMsgs -> {
+                    List<Msg> all = new ArrayList<>(historyMsgs);
+                    all.addAll(messages);
+                    return all;
+                })
+                .defaultIfEmpty(messages);
     }
 
     /**
@@ -667,6 +698,8 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
         this.hookRecorder = v;
         if (this.hookDispatcher != null) this.hookDispatcher.setRecorder(v);
     }
+    public void setMetrics(AgentMetrics v) { this.metrics = v != null ? v : AgentMetrics.NOOP; }
+    public AgentMetrics getMetrics() { return metrics; }
 
     /**
      * 从配置中解析生成选项。
@@ -676,7 +709,7 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
     private GenerateOptions resolveOptions() {
         AgentExecutionConfig ec = config.getExecutionConfig();
         return GenerateOptions.builder().temperature(ec.getTemperature())
-            .maxTokens(ec.getMaxTokens()).toolChoice(ec.getToolChoice()).build();
+                .maxTokens(ec.getMaxTokens()).toolChoice(ec.getToolChoice()).build();
     }
 
     /**
@@ -685,6 +718,6 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
      * @throws AgentConfigurationException 如果尚未构建
      */
     private void ensureBuilt() {
-        if (!built) throw new AgentConfigurationException("Agent [" + name + "] 尚未构建");
+        if (!built) throw new AgentConfigurationException(UI.AGENT_PREFIX + name + UI.AGENT_NOT_BUILT);
     }
 }

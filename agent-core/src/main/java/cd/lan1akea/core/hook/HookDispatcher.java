@@ -27,20 +27,18 @@ public class HookDispatcher {
     }
 
     /**
-     * 调度事件。
+     * 调度事件。事件类型从 event.getHookEventType() 自动提取。
      *
-     * @param eventType 事件类型
-     * @param event     事件数据
-     * @param context   执行上下文
+     * @param event   事件数据
+     * @param context 执行上下文
      * @return 处理结果
      */
-    public Mono<HookResult> dispatch(HookEventType eventType, HookEvent event, HookContext context) {
+    public Mono<HookResult> dispatch(HookEvent event, HookContext context) {
+        HookEventType eventType = event.getHookEventType();
         if (hookChain.size() == 0) {
             return Mono.just(HookResult.continue_());
         }
 
-        // HookContext 已通过 onEvent(HookEvent, HookContext) 参数传入每个 Hook，
-        // 无需额外的 setter 注入——那会在线程间引入竞态条件。
         return hookChain.fire(eventType, event, context)
             .doOnNext(result -> {
                 if (recorder != null) {

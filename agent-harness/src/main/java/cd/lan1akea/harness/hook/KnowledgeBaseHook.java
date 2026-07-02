@@ -21,7 +21,7 @@ import java.util.function.BiFunction;
  *     .build();
  * }</pre>
  */
-public class KnowledgeBaseHook implements IHook {
+public class KnowledgeBaseHook implements Hook {
 
     private final String name;
     private final BiFunction<String, HookContext, String> matcher;

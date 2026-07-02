@@ -7,6 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * 工具注册表（支持租户隔离、工具组、多级作用域）。
@@ -47,7 +48,7 @@ public class ToolRegistry {
     /**
      * Object→Tool 解析器链（由 agent-harness 注入）
      */
-    private final List<ToolAdapter> adapters = new ArrayList<>();
+    private final List<ToolAdapter> adapters = new CopyOnWriteArrayList<>();
 
 
     /**

@@ -17,6 +17,7 @@ import cd.lan1akea.core.approval.ApprovalStore;
 import cd.lan1akea.core.hook.impl.ContextCompressionHook;
 import cd.lan1akea.core.hook.impl.ToolAccessHook;
 import cd.lan1akea.core.memory.Memory;
+import cd.lan1akea.core.metrics.AgentMetrics;
 import cd.lan1akea.core.message.Msg;
 import cd.lan1akea.core.compaction.CompactionContext;
 import cd.lan1akea.core.compaction.CompactionStrategy;
@@ -28,6 +29,7 @@ import cd.lan1akea.core.model.ModelContextWindow;
 import cd.lan1akea.core.model.ChatModel;
 import cd.lan1akea.core.model.ChatResponse;
 import cd.lan1akea.core.model.ChatStreamChunk;
+import cd.lan1akea.core.model.ResilienceChatModel;
 import cd.lan1akea.core.model.ToolChoicePolicy;
 import cd.lan1akea.core.state.AgentStateStore;
 import cd.lan1akea.core.state.InMemoryAgentStateStore;
@@ -36,6 +38,8 @@ import cd.lan1akea.core.tool.builtin.TodoWriteTool;
 import cd.lan1akea.core.tool.mcp.HttpSseTransport;
 import cd.lan1akea.core.tool.mcp.McpClient;
 import cd.lan1akea.core.tool.mcp.McpToolAdapter;
+
+import java.util.stream.Collectors;
 import cd.lan1akea.harness.support.AnnotationToolAdapter;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -186,6 +190,18 @@ public class HarnessAgent implements StreamableAgent, CallableAgent {
      */
     public AgentStateStore getStateStore() { return delegate.getStateStore(); }
 
+    /**
+     * 返回所有已注册的 MCP 客户端列表（用于健康检查）。
+     *
+     * @return MCP 客户端列表
+     */
+    public List<McpClient> getMcpClients() {
+        return closeables.stream()
+            .filter(c -> c instanceof McpClient)
+            .map(c -> (McpClient) c)
+            .collect(Collectors.toList());
+    }
+
     // ========================================================================
     // Builder
     // ========================================================================
@@ -267,6 +283,22 @@ public class HarnessAgent implements StreamableAgent, CallableAgent {
          * MCP 服务器配置列表。
          */
         private final List<McpServerConfig> mcpServers = new ArrayList<>();
+        /**
+         * 指标收集器（可选，默认 NOOP）。
+         */
+        private AgentMetrics metrics;
+        /**
+         * 是否启用熔断。
+         */
+        private boolean circuitBreakerEnabled;
+        /**
+         * 熔断失败阈值。
+         */
+        private int circuitBreakerFailureThreshold = 5;
+        /**
+         * 熔断后半开等待时间（毫秒）。
+         */
+        private long circuitBreakerHalfOpenMs = 30_000;
 
         /**
          * 设置 Agent 名称。
@@ -303,8 +335,8 @@ public class HarnessAgent implements StreamableAgent, CallableAgent {
         public Builder stateStore(AgentStateStore v) { this.stateStore = v; return this; }
 
         /**
-         * 注入审批存储。启用后，工具 requiresApproval() 会先查询 ApprovalStore 是否有有效批准，
-         * 已批准的工具自动跳过审批。同时自动注册 {@link ApprovalHook}。
+         * 注入审批存储。启用后，工具抛出的 ToolSuspendException 会先查询 ApprovalStore，
+         * 已批准的 bypassKey 自动重试执行。同时自动注册 {@link ApprovalHook}。
          */
         public Builder approvalStore(ApprovalStore v) { this.approvalStore = v; return this; }
         /**
@@ -391,13 +423,41 @@ public class HarnessAgent implements StreamableAgent, CallableAgent {
         public Builder mcpServer(String endpoint) { return mcpServer(endpoint, null); }
 
         /**
+         * 注入指标收集器（Micrometer / Prometheus 等）。
+         */
+        public Builder metrics(AgentMetrics v) { this.metrics = v; return this; }
+
+        /**
+         * 启用 LLM 调用熔断（默认阈值 5 次，半开等待 30 秒）。
+         */
+        public Builder circuitBreaker(boolean enable) {
+            this.circuitBreakerEnabled = enable; return this;
+        }
+
+        /**
+         * 启用 LLM 调用熔断，自定义参数。
+         *
+         * @param failureThreshold 触发熔断的连续失败阈值
+         * @param halfOpenAfterMs  熔断后半开等待时间（毫秒）
+         */
+        public Builder circuitBreaker(int failureThreshold, long halfOpenAfterMs) {
+            this.circuitBreakerEnabled = true;
+            this.circuitBreakerFailureThreshold = failureThreshold;
+            this.circuitBreakerHalfOpenMs = halfOpenAfterMs;
+            return this;
+        }
+
+        /**
          * 构建 HarnessAgent，组装所有组件并初始化。
          */
         public HarnessAgent build() {
             if (name == null || name.isBlank()) throw new AgentConfigurationException("Agent name 不能为空");
             if (model == null) throw new AgentConfigurationException("ChatModel 不能为 null");
 
-            ReActAgent.Builder agentBuilder = ReActAgent.builder().name(name).model(model);
+            ChatModel effectiveModel = circuitBreakerEnabled
+                ? new ResilienceChatModel(model, circuitBreakerFailureThreshold, circuitBreakerHalfOpenMs)
+                : model;
+            ReActAgent.Builder agentBuilder = ReActAgent.builder().name(name).model(effectiveModel);
             agentBuilder.toolAdapter(new AnnotationToolAdapter());
             for (Object obj : toolObjects) agentBuilder.tool(obj);
 
@@ -457,6 +517,7 @@ public class HarnessAgent implements StreamableAgent, CallableAgent {
                 agent.getToolExecutor().setApprovalStore(approvalStore);
             }
             if (systemMessage != null) agent.setSystemMessage(systemMessage);
+            if (metrics != null) agent.setMetrics(metrics);
             agent.build().block();
             HarnessAgent harness = new HarnessAgent(agent);
             mcpClients.forEach(harness::addCloseable);

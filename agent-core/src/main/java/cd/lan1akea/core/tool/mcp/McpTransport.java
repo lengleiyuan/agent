@@ -32,4 +32,18 @@ public interface McpTransport extends AutoCloseable {
      */
     @Override
     void close();
+
+    /**
+     * 异步关闭连接并释放资源。
+     *
+     * @return 关闭完成的 Mono
+     */
+    default Mono<Void> closeAsync() {
+        try {
+            close();
+            return Mono.empty();
+        } catch (Exception e) {
+            return Mono.error(e);
+        }
+    }
 }

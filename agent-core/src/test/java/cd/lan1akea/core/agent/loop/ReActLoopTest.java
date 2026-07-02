@@ -768,10 +768,11 @@ class ReActLoopTest {
         }
 
         @Override
-        public boolean requiresApproval() { return requiresApproval; }
-
-        @Override
         public Mono<ToolResult> execute(ToolCallContext params) {
+            if (requiresApproval && !params.isApproved()) {
+                throw new ToolSuspendException("approvable",
+                    "工具 [approvable] 需要人工审批后才能执行");
+            }
             return Mono.just(ToolResult.success("APPROVED: " + params.getString("input")));
         }
     }

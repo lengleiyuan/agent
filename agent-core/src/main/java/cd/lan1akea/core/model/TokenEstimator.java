@@ -27,16 +27,23 @@ public interface TokenEstimator {
     int estimate(Msg message);
 
     /**
-     * 基于字符数/比率的估算器
+     * 基于字符数/比率的估算器。
      */
     static TokenEstimator charBased(double charsPerToken) {
         return new CharBasedTokenEstimator(charsPerToken);
     }
 
     /**
-     * 默认估算器：char/2.0
+     * 基于 cl100k_base 编码的精确估算器（对齐 OpenAI tiktoken）。
+     */
+    static TokenEstimator cl100k() {
+        return new Cl100kTokenEstimator();
+    }
+
+    /**
+     * 默认估算器：cl100k_base 精确编码。
      */
     static TokenEstimator defaults() {
-        return charBased(2.0);
+        return cl100k();
     }
 }

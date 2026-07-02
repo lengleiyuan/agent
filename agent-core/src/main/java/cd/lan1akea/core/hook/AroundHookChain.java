@@ -7,6 +7,7 @@ import reactor.core.publisher.Mono;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Function;
 
 /**
@@ -25,14 +26,14 @@ public class AroundHookChain {
      * 创建空 AroundHook 链。
      */
     public AroundHookChain() {
-        this.hooks = new ArrayList<>();
+        this.hooks = new CopyOnWriteArrayList<>();
     }
 
     /**
      * 创建包含指定 Hook 列表的 AroundHook 链。
      */
     public AroundHookChain(List<AroundHook> hooks) {
-        this.hooks = new ArrayList<>(hooks);
+        this.hooks = new CopyOnWriteArrayList<>(hooks);
     }
 
     /**

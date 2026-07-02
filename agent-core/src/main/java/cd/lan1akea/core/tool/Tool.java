@@ -44,13 +44,6 @@ public interface Tool {
     }
 
     /**
-     * 是否需要人工审批。
-     */
-    default boolean requiresApproval() {
-        return false;
-    }
-
-    /**
      * @return 业务权限码集合。框架不强制校验，Hook 实现（如 HarnessPermissionHook）
      *         可读取此值并结合业务权限框架做拦截。默认空集。
      */

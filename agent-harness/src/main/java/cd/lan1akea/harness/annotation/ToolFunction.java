@@ -24,9 +24,21 @@ public @interface ToolFunction {
 
     /**
      * 业务权限码。框架不强制校验，仅透传给 Hook（如 PermissionHook）。
-     *
-     * 示例：
-     *     @ToolFunction(name = "delete_user", permission = "user:delete")
      */
     String permission() default "";
+
+    /**
+     * 工具分组名（用于工具注册表分组展示）
+     */
+    String group() default "default";
+
+    /**
+     * 执行超时时间（毫秒），0 表示不超时
+     */
+    long timeoutMs() default 30000;
+
+    /**
+     * 风险等级，用于审批页面展示。LOW / MEDIUM / HIGH / CRITICAL
+     */
+    String riskLevel() default "MEDIUM";
 }

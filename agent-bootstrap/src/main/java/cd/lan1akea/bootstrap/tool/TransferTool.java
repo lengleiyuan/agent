@@ -5,9 +5,11 @@ import reactor.core.publisher.Mono;
 
 /**
  * 转账工具（演示审批流程）。
- * 金额超过 10000 时需要人工审批，风险等级 HIGH。
+ * 金额超过 10000 时抛出 ToolSuspendException 触发审批，风险等级 HIGH。
  */
 public class TransferTool extends ToolBase {
+
+    private static final long MAX_AUTO_AMOUNT = 10000;
 
     public TransferTool() {
         declareStringParam("target", "收款账户", true);
@@ -21,9 +23,6 @@ public class TransferTool extends ToolBase {
     public String getDescription() { return "转账工具。向指定账户转账指定金额，金额超过10000时需要审批"; }
 
     @Override
-    public boolean requiresApproval() { return true; }
-
-    @Override
     public String getRiskLevel() { return "HIGH"; }
 
     @Override
@@ -31,6 +30,12 @@ public class TransferTool extends ToolBase {
         validateParams(params);
         String target = params.getString("target");
         Number amount = params.getNumber("amount");
+
+        if (!params.isApproved() && amount != null && amount.longValue() > MAX_AUTO_AMOUNT) {
+            throw new ToolSuspendException("transfer",
+                "转账金额 " + amount + " 超过 " + MAX_AUTO_AMOUNT + " 上限，是否继续？");
+        }
+
         return Mono.just(ToolResult.success(
             "转账成功: 已向 " + target + " 转账 " + amount + " 元 [模拟]"));
     }

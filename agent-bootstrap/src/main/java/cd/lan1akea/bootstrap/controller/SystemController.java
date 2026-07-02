@@ -33,7 +33,7 @@ public class SystemController {
                 Map<String, Object> t = new LinkedHashMap<>();
                 t.put("name", tool.getName());
                 t.put("description", tool.getDescription());
-                t.put("requiresApproval", tool.requiresApproval());
+                t.put("riskLevel", tool.getRiskLevel());
                 t.put("group", tool.getGroup());
                 t.put("timeoutMs", tool.getTimeoutMs());
                 t.put("paramsSchema", tool.getParameters().getParametersSchema());

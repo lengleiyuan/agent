@@ -22,6 +22,11 @@ public class HookContext {
     private final String agentName;
 
     /**
+     * 请求追踪 ID
+     */
+    private final String requestId;
+
+    /**
      * 租户 ID
      */
     private final String tenantId;
@@ -55,7 +60,8 @@ public class HookContext {
      * 从 RuntimeContext 创建 HookContext（最常用）。
      */
     public static HookContext from(RuntimeContext ctx, int iteration) {
-        return new HookContext(ctx.getAgentName(), ctx.getTenantId(), ctx.getSessionId(),
+        return new HookContext(ctx.getAgentName(), ctx.getRequestId(),
+            ctx.getTenantId(), ctx.getSessionId(),
             ctx.getUserId(), iteration, List.of(), ctx.getAttributes());
     }
 
@@ -63,7 +69,8 @@ public class HookContext {
      * 从 RuntimeContext 创建 HookContext，指定迭代次数和已调用工具。
      */
     public static HookContext from(RuntimeContext ctx, int iteration, List<String> calledTools) {
-        return new HookContext(ctx.getAgentName(), ctx.getTenantId(), ctx.getSessionId(),
+        return new HookContext(ctx.getAgentName(), ctx.getRequestId(),
+            ctx.getTenantId(), ctx.getSessionId(),
             ctx.getUserId(), iteration, calledTools, ctx.getAttributes());
     }
 
@@ -74,7 +81,18 @@ public class HookContext {
                        String userId, int currentIteration,
                        List<String> calledTools,
                        Map<String, Object> attributes) {
+        this(agentName, null, tenantId, sessionId, userId, currentIteration, calledTools, attributes);
+    }
+
+    /**
+     * 构造 HookContext（含 requestId）。
+     */
+    public HookContext(String agentName, String requestId, String tenantId, String sessionId,
+                       String userId, int currentIteration,
+                       List<String> calledTools,
+                       Map<String, Object> attributes) {
         this.agentName = agentName;
+        this.requestId = requestId;
         this.tenantId = tenantId;
         this.sessionId = sessionId;
         this.userId = userId;
@@ -91,6 +109,11 @@ public class HookContext {
      * @return Agent名称
      */
     public String getAgentName() { return agentName; }
+
+    /**
+     * @return 请求追踪ID
+     */
+    public String getRequestId() { return requestId; }
 
     /**
      * @return 租户ID

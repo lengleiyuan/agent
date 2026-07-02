@@ -18,6 +18,10 @@ import java.util.Map;
 public class RuntimeContext {
 
     /**
+     * 请求追踪 ID。未传入时自动生成 UUID。
+     */
+    private final String requestId;
+    /**
      * 租户标识。
      */
     private final String tenantId;
@@ -49,6 +53,15 @@ public class RuntimeContext {
      */
     public RuntimeContext(String tenantId, String userId, String sessionId,
                            String agentName, Map<String, Object> attributes) {
+        this(null, tenantId, userId, sessionId, agentName, attributes);
+    }
+
+    /**
+     * 创建运行时上下文（含 requestId）。
+     */
+    public RuntimeContext(String requestId, String tenantId, String userId, String sessionId,
+                           String agentName, Map<String, Object> attributes) {
+        this.requestId = requestId != null ? requestId : java.util.UUID.randomUUID().toString();
         this.tenantId = tenantId;
         this.userId = userId;
         this.sessionId = sessionId;
@@ -58,6 +71,10 @@ public class RuntimeContext {
             : Collections.emptyMap();
     }
 
+    /**
+     * @return 请求追踪 ID
+     */
+    public String getRequestId() { return requestId; }
     /**
      * @return 租户标识
      */
@@ -110,12 +127,17 @@ public class RuntimeContext {
      * RuntimeContext 的建造者。
      */
     public static class Builder {
+        private String requestId;
         private String tenantId;
         private String userId;
         private String sessionId;
         private String agentName;
         private final Map<String, Object> attributes = new HashMap<>();
 
+        /**
+         * 设置请求追踪 ID（可选，默认自动生成 UUID）。
+         */
+        public Builder requestId(String v) { this.requestId = v; return this; }
         /**
          * 设置租户 ID。
          */
@@ -143,7 +165,7 @@ public class RuntimeContext {
          * @return 新的 RuntimeContext
          */
         public RuntimeContext build() {
-            return new RuntimeContext(tenantId, userId, sessionId, agentName, attributes);
+            return new RuntimeContext(requestId, tenantId, userId, sessionId, agentName, attributes);
         }
     }
 }

@@ -14,6 +14,7 @@ import cd.lan1akea.core.model.*;
 import cd.lan1akea.core.model.dashscope.DashScopeChatModel;
 import cd.lan1akea.core.model.deepseek.DeepSeekChatModel;
 import cd.lan1akea.core.model.openai.OpenAIChatModel;
+import cd.lan1akea.core.metrics.AgentMetrics;
 import cd.lan1akea.core.state.AgentStateStore;
 import cd.lan1akea.core.state.InMemoryAgentStateStore;
 import cd.lan1akea.core.tool.ToolGroup;
@@ -21,6 +22,8 @@ import cd.lan1akea.core.tool.ToolGroupScope;
 import cd.lan1akea.core.tool.ToolRegistry;
 import cd.lan1akea.core.tool.builtin.CalculatorTool;
 import cd.lan1akea.harness.HarnessAgent;
+import cd.lan1akea.metrics.MicrometerAgentMetrics;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -233,13 +236,21 @@ public class DevAgentConfig {
     }
 
     @Bean
+    @ConditionalOnMissingBean
+    public AgentMetrics agentMetrics(MeterRegistry meterRegistry) {
+        log.info("启用 MicrometerAgentMetrics");
+        return new MicrometerAgentMetrics(meterRegistry);
+    }
+
+    @Bean
     @ConditionalOnMissingBean(HarnessAgent.class)
     public HarnessAgent defaultAgent(DynamicChatModel model, AgentStateStore stateStore,
-                                      ApprovalStore approvalStore) {
+                                      ApprovalStore approvalStore, AgentMetrics agentMetrics) {
         log.info("启动 HarnessAgent: DevAgent, model={}:{}", model.getProvider(), model.getModelName());
         return HarnessAgent.builder()
             .name("DevAgent")
             .model(model)
+            .metrics(agentMetrics)
             .tool(new CalculatorTool())
             .tool(new TransferTool())
             .tool(new DeleteFileTool())

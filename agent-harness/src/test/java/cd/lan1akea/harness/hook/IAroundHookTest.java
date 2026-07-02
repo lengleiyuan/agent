@@ -1,14 +1,13 @@
 package cd.lan1akea.harness.hook;
 
-import cd.lan1akea.core.hook.HookContext;
-import cd.lan1akea.core.hook.HookEvent;
+import cd.lan1akea.core.hook.*;
 import cd.lan1akea.core.message.Msg;
 import cd.lan1akea.core.message.UserMessage;
 import cd.lan1akea.core.model.*;
+import cd.lan1akea.core.tool.ToolBase;
+import cd.lan1akea.core.tool.ToolCallContext;
 import cd.lan1akea.core.tool.ToolResult;
 import cd.lan1akea.harness.HarnessAgent;
-import cd.lan1akea.harness.tool.IBaseTool;
-import cd.lan1akea.harness.context.ToolContext;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 
@@ -20,21 +19,9 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class IAroundHookTest {
 
-    // ========================================================================
-    // 1. HarnessAroundHook 接口实现
-    // ========================================================================
-
     @Test
-    void harnessAroundHookIsAroundHook() {
-        IAroundHook hook = new TimingHook();
-        assertTrue(hook instanceof cd.lan1akea.core.hook.AroundHook,
-            "HarnessAroundHook 应是 core AroundHook 子类型");
-    }
-
-    @Test
-    void harnessAroundHookRegisteredViaBuilder() {
+    void aroundHookRegisteredViaBuilder() {
         TimingHook hook = new TimingHook();
-
         HarnessAgent agent = HarnessAgent.builder()
             .name("around-test")
             .model(new EchoModel())
@@ -45,10 +32,6 @@ class IAroundHookTest {
         assertNotNull(agent);
     }
 
-    // ========================================================================
-    // 2. 完整链路：Builder → AroundHook → ReActLoop
-    // ========================================================================
-
     @Test
     void fullChainAroundHookWrapsReasoning() {
         TimingHook timingHook = new TimingHook();
@@ -58,11 +41,10 @@ class IAroundHookTest {
             .name("around-chain-test")
             .model(model)
             .aroundHook(timingHook)
-            .tool(new CalculatorITool())
+            .tool(new CalculatorTool())
             .maxIterations(5)
             .build();
 
-        // 发送消息 —— 走完整推理链路
         ChatResponse resp = agent.chat(List.of(UserMessage.of("1+1=?"))).block();
 
         assertNotNull(resp);
@@ -89,15 +71,12 @@ class IAroundHookTest {
 
         agent.chat(List.of(UserMessage.of("hello"))).block();
 
-        // 验证洋葱顺序：outer-before → inner-before → core → inner-after → outer-after
         List<String> order = OrderRecorderHook.getOrder();
         assertTrue(order.size() >= 4, "至少应有 4 次记录: " + order);
-        // 检查 before 顺序
         int outerBefore = order.indexOf("outer-before");
         int innerBefore = order.indexOf("inner-before");
         assertTrue(outerBefore < innerBefore,
             "outer 先注册应在最外层(before 先执行): " + order);
-        // 检查 after 顺序（反向）
         int innerAfter = order.indexOf("inner-after");
         int outerAfter = order.indexOf("outer-after");
         assertTrue(innerAfter < outerAfter,
@@ -112,7 +91,7 @@ class IAroundHookTest {
         HarnessAgent agent = HarnessAgent.builder()
             .name("ctx-test")
             .model(model)
-            .aroundHook(new IAroundHook() {
+            .aroundHook(new AroundHook() {
                 @Override public String getName() { return "ctx-checker"; }
                 @Override
                 public Mono<HookEvent> aroundReasoning(HookEvent event, HookContext ctx,
@@ -125,13 +104,8 @@ class IAroundHookTest {
             .build();
 
         agent.chat(List.of(UserMessage.of("test"))).block();
-
         assertTrue(seenIteration.get() >= 0, "AroundHook 应收到 HookContext");
     }
-
-    // ========================================================================
-    // 3. AroundHook + 链式 Hook 共存
-    // ========================================================================
 
     @Test
     void aroundHookAndChainHookCoexist() {
@@ -143,16 +117,14 @@ class IAroundHookTest {
             .name("coexist-test")
             .model(model)
             .aroundHook(around)
-            .hook(new cd.lan1akea.core.hook.Hook() {
+            .hook(new Hook() {
                 @Override public String getName() { return "chain-counter"; }
-                @Override public Set<cd.lan1akea.core.hook.HookEventType> getSubscribedEventTypes() {
-                    return Set.of(cd.lan1akea.core.hook.HookEventType.PRE_REASONING);
+                @Override public Set<HookEventType> getSubscribedEventTypes() {
+                    return Set.of(HookEventType.PRE_REASONING);
                 }
-                @Override public Mono<cd.lan1akea.core.hook.HookResult> onEvent(
-                        cd.lan1akea.core.hook.HookEvent event,
-                        cd.lan1akea.core.hook.HookContext context) {
+                @Override public Mono<HookResult> onEvent(HookEvent event, HookContext context) {
                     chainCalled.incrementAndGet();
-                    return Mono.just(cd.lan1akea.core.hook.HookResult.continue_());
+                    return Mono.just(HookResult.continue_());
                 }
             })
             .maxIterations(3)
@@ -168,7 +140,7 @@ class IAroundHookTest {
     // Helpers
     // ========================================================================
 
-    static class TimingHook implements IAroundHook {
+    static class TimingHook implements AroundHook {
         private final AtomicLong totalCalls = new AtomicLong();
         private final AtomicLong totalNs = new AtomicLong();
 
@@ -192,7 +164,7 @@ class IAroundHookTest {
         }
     }
 
-    static class OrderRecorderHook implements IAroundHook {
+    static class OrderRecorderHook implements AroundHook {
         private static final List<String> ORDER = Collections.synchronizedList(new ArrayList<>());
         private final String id;
 
@@ -210,7 +182,6 @@ class IAroundHookTest {
         static List<String> getOrder() { return new ArrayList<>(ORDER); }
     }
 
-    /** 回显模型：永远返回纯文本（不调用工具），避免外部 API 依赖 */
     static class EchoModel extends ChatModelBase {
         EchoModel() { super("dev", "echo", new cd.lan1akea.core.formatter.OpenAiMessageFormatter()); }
 
@@ -234,16 +205,13 @@ class IAroundHookTest {
         }
     }
 
-    static class CalculatorITool extends IBaseTool {
+    static class CalculatorTool extends ToolBase {
+        CalculatorTool() { declareStringParam("expression", "数学表达式", true); }
         @Override public String getName() { return "calculator"; }
         @Override public String getDescription() { return "计算器"; }
-        @Override public ToolSchema getParameters() {
-            Map<String, Object> props = Map.of("expression", Map.of("type", "string", "description", "表达式"));
-            return new ToolSchema("calculator", "计算器", Map.of("type", "object", "properties", props));
-        }
         @Override
-        protected ToolResult doExecute(ToolContext ctx) {
-            return ToolResult.success("42");
+        public Mono<ToolResult> execute(ToolCallContext ctx) {
+            return Mono.just(ToolResult.success("42"));
         }
     }
 }

@@ -64,6 +64,19 @@ public interface AgentStateStore {
      */
     Flux<Msg> getHistory(SessionId sessionId);
 
+    /**
+     * 获取会话历史消息（分页）。
+     * 默认实现基于 {@link #getHistory(SessionId)} + skip + take。
+     *
+     * @param sessionId 会话 ID
+     * @param offset    起始偏移
+     * @param limit     最大返回条数
+     * @return 分页后的消息
+     */
+    default Flux<Msg> getHistory(SessionId sessionId, int offset, int limit) {
+        return getHistory(sessionId).skip(offset).take(limit);
+    }
+
 
     /**
      * 保存执行检查点。

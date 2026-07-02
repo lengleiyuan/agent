@@ -119,6 +119,28 @@ public class McpClient implements AutoCloseable {
     }
 
     /**
+     * 健康检查：发送 ping 验证连接是否存活。
+     *
+     * @return true 表示连接正常
+     */
+    public Mono<Boolean> healthCheck() {
+        Map<String, Object> params = new java.util.LinkedHashMap<>();
+        return rpcCall("ping", params)
+            .map(r -> true)
+            .onErrorReturn(false);
+    }
+
+    /**
+     * 重新连接：关闭旧连接后重新初始化。
+     *
+     * @return 重连完成的 Mono
+     */
+    public Mono<Void> reconnect() {
+        return transport.closeAsync()
+            .then(transport.initialize());
+    }
+
+    /**
      * 关闭传输层连接并释放资源。
      */
     @Override

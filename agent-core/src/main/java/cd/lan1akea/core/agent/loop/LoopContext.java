@@ -24,6 +24,10 @@ public class LoopContext {
      */
     private final String agentName;
     /**
+     * 请求追踪 ID。
+     */
+    private final String requestId;
+    /**
      * 租户标识。
      */
     private final String tenantId;
@@ -75,6 +79,10 @@ public class LoopContext {
      * 中断时注入的反馈消息。
      */
     private Msg feedbackMsg;
+    /**
+     * 迭代间退避延迟（毫秒），0 表示无退避。
+     */
+    private final long backoffMs;
 
     /**
      * 从 builder 创建 LoopContext。
@@ -83,6 +91,8 @@ public class LoopContext {
      */
     private LoopContext(Builder builder) {
         this.agentName = builder.agentName;
+        this.requestId = builder.requestId != null
+            ? builder.requestId : java.util.UUID.randomUUID().toString();
         this.tenantId = builder.tenantId;
         this.userId = builder.userId;
         this.sessionId = builder.sessionId;
@@ -93,6 +103,7 @@ public class LoopContext {
         this.generateOptions = builder.generateOptions;
         this.maxIterations = builder.maxIterations;
         this.stream = builder.stream;
+        this.backoffMs = builder.backoffMs;
         this.iteration = 0;
         this.totalTokens = 0;
     }
@@ -120,6 +131,10 @@ public class LoopContext {
      * @return Agent 名称
      */
     public String getAgentName() { return agentName; }
+    /**
+     * @return 请求追踪 ID
+     */
+    public String getRequestId() { return requestId; }
     /**
      * @return 租户标识
      */
@@ -207,6 +222,10 @@ public class LoopContext {
      * @return 中断时的反馈消息
      */
     public Msg getFeedbackMsg() { return feedbackMsg; }
+    /**
+     * @return 迭代间退避延迟（毫秒）
+     */
+    public long getBackoffMs() { return backoffMs; }
 
     /**
      * 创建 Builder。
@@ -220,6 +239,7 @@ public class LoopContext {
      */
     public static class Builder {
         private String agentName;
+        private String requestId;
         private String tenantId;
         private String userId;
         private String sessionId;
@@ -228,6 +248,7 @@ public class LoopContext {
         private GenerateOptions generateOptions;
         private int maxIterations = 10;
         private boolean stream;
+        private long backoffMs;
 
         /**
          * 从 RuntimeContext 复制身份字段，消除手动字段赋值。
@@ -238,6 +259,7 @@ public class LoopContext {
          */
         public Builder fromRuntimeContext(RuntimeContext ctx) {
             if (ctx != null) {
+                this.requestId = ctx.getRequestId();
                 this.tenantId = ctx.getTenantId();
                 this.userId = ctx.getUserId();
                 this.sessionId = ctx.getSessionId();
@@ -250,6 +272,10 @@ public class LoopContext {
          * 设置 Agent 名称。
          */
         public Builder agentName(String v) { this.agentName = v; return this; }
+        /**
+         * 设置请求追踪 ID（可选，默认自动生成）。
+         */
+        public Builder requestId(String v) { this.requestId = v; return this; }
         /**
          * 设置租户 ID。
          */
@@ -282,6 +308,10 @@ public class LoopContext {
          * 设置流式模式。
          */
         public Builder stream(boolean v) { this.stream = v; return this; }
+        /**
+         * 设置迭代间退避延迟（毫秒）。
+         */
+        public Builder backoffMs(long v) { this.backoffMs = v; return this; }
 
         /**
          * 构建 LoopContext。

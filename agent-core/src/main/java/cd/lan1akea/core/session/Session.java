@@ -58,7 +58,9 @@ public class Session {
         this.tenantId = tenantId;
         this.agentName = agentName;
         this.state = state != null ? state : SessionState.ACTIVE;
-        this.turns = turns != null ? new ArrayList<>(turns) : new ArrayList<>();
+        this.turns = turns != null
+            ? Collections.synchronizedList(new ArrayList<>(turns))
+            : Collections.synchronizedList(new ArrayList<>());
         this.createdAt = createdAt != null ? createdAt : LocalDateTime.now();
         this.updatedAt = updatedAt != null ? updatedAt : LocalDateTime.now();
     }

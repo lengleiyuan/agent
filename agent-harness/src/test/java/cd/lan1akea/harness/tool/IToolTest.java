@@ -1,8 +1,10 @@
 package cd.lan1akea.harness.tool;
 
 import cd.lan1akea.core.model.ToolSchema;
+import cd.lan1akea.core.tool.Tool;
+import cd.lan1akea.core.tool.ToolBase;
+import cd.lan1akea.core.tool.ToolCallContext;
 import cd.lan1akea.core.tool.ToolResult;
-import cd.lan1akea.harness.context.ToolContext;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 
@@ -12,15 +14,15 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+/**
+ * 业务方直接使用 core 的 Tool / ToolBase 接口创建工具的测试。
+ */
 class IToolTest {
 
-    // ========================================================================
-    // 实现 harness Tool 接口
-    // ========================================================================
+    // ── 实现 Tool 接口 ──
 
-    static class SearchTool implements ITool {
+    static class SearchTool implements Tool {
         @Override public String getName() { return "search"; }
-
         @Override public String getDescription() { return "搜索文档"; }
 
         @Override
@@ -35,70 +37,74 @@ class IToolTest {
         }
 
         @Override
-        public Mono<ToolResult> execute(ToolContext ctx) {
+        public Mono<ToolResult> execute(ToolCallContext ctx) {
             String q = ctx.getString("q");
             return Mono.just(ToolResult.success("result: " + q));
         }
     }
 
     @Test
-    void harnessToolImplementsCoreTool() {
-        ITool tool = new SearchTool();
-        assertTrue(tool instanceof cd.lan1akea.core.tool.Tool,
-            "harness Tool 应是 core Tool 子类型");
-    }
+    void toolInterfaceExecution() {
+        Tool tool = new SearchTool();
 
-    @Test
-    void executeWithHarnessToolContext() {
-        ITool tool = new SearchTool();
+        ToolCallContext ctx = ToolCallContext.builder()
+            .callId("c1").toolName("search")
+            .arguments(Map.of("q", "hello"))
+            .tenantId("t").userId("u")
+            .build();
 
-        // 模拟框架调用：core ToolCallContext → ToolContext
-        cd.lan1akea.core.tool.ToolCallContext coreCtx =
-            cd.lan1akea.core.tool.ToolCallContext.builder()
-                .callId("c1").toolName("search")
-                .arguments(Map.of("q", "hello"))
-                .tenantId("t").userId("u")
-                .build();
-
-        // core 接口调用（框架内部走此路径）
-        ToolResult result = ((cd.lan1akea.core.tool.Tool) tool).execute(coreCtx).block();
+        ToolResult result = tool.execute(ctx).block();
         assertTrue(result.isSuccess());
         assertTrue(result.getContent().contains("hello"));
     }
 
-    // ========================================================================
-    // AbstractTool 同步基类
-    // ========================================================================
+    // ── 继承 ToolBase ──
 
-    static class EchoTool extends IBaseTool {
+    static class EchoTool extends ToolBase {
+        EchoTool() { declareStringParam("msg", "消息内容", true); }
         @Override public String getName() { return "echo"; }
-        @Override public String getDescription() { return "回显"; }
+        @Override public String getDescription() { return "回显输入的消息"; }
 
         @Override
-        public ToolSchema getParameters() {
-            Map<String, Object> props = Map.of("msg", Map.of("type", "string"));
-            Map<String, Object> schema = Map.of("type", "object", "properties", props);
-            return new ToolSchema("echo", "回显", schema);
-        }
-
-        @Override
-        protected ToolResult doExecute(ToolContext ctx) {
-            return ToolResult.success("echo: " + ctx.getString("msg"));
+        public Mono<ToolResult> execute(ToolCallContext ctx) {
+            validateParams(ctx);
+            return Mono.just(ToolResult.success("echo: " + ctx.getString("msg")));
         }
     }
 
     @Test
-    void abstractToolSyncExecution() {
+    void toolBaseExecution() {
         EchoTool tool = new EchoTool();
 
-        cd.lan1akea.core.tool.ToolCallContext coreCtx =
-            cd.lan1akea.core.tool.ToolCallContext.builder()
-                .callId("c2").toolName("echo")
-                .arguments(Map.of("msg", "hi"))
-                .build();
+        ToolCallContext ctx = ToolCallContext.builder()
+            .callId("c2").toolName("echo")
+            .arguments(Map.of("msg", "hi"))
+            .build();
 
-        ToolResult result = tool.execute(coreCtx).block();
+        ToolResult result = tool.execute(ctx).block();
         assertTrue(result.isSuccess());
         assertEquals("echo: hi", result.getContent());
+    }
+
+    @Test
+    void toolBaseAutoGeneratesSchema() {
+        EchoTool tool = new EchoTool();
+        ToolSchema schema = tool.getParameters();
+        assertNotNull(schema);
+        String schemaStr = schema.getParametersSchema().toString();
+        assertTrue(schemaStr.contains("msg"), "Schema 应包含 msg 参数");
+        assertTrue(schemaStr.contains("required"), "Schema 应包含 required 字段");
+    }
+
+    @Test
+    void toolBaseValidatesRequiredParams() {
+        EchoTool tool = new EchoTool();
+        ToolCallContext ctx = ToolCallContext.builder()
+            .callId("c3").toolName("echo")
+            .arguments(Map.of()) // 缺少必填 msg
+            .build();
+
+        // ToolBase.validateParams 直接抛 IllegalArgumentException，调用方应捕获
+        assertThrows(IllegalArgumentException.class, () -> tool.execute(ctx).block());
     }
 }

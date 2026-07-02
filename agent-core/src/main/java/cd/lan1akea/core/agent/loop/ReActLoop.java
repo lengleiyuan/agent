@@ -1,15 +1,25 @@
 package cd.lan1akea.core.agent.loop;
 
+import cd.lan1akea.core.CoreConstants.EventPayload;
+import cd.lan1akea.core.CoreConstants.FinishReason;
+import cd.lan1akea.core.CoreConstants.HookSource;
+import cd.lan1akea.core.CoreConstants.Logs;
+import cd.lan1akea.core.CoreConstants.UI;
+import cd.lan1akea.core.CoreConstants.Prompt;
 import cd.lan1akea.core.exception.HookAbortException;
 import cd.lan1akea.core.hook.*;
 import cd.lan1akea.core.message.*;
+import cd.lan1akea.core.metrics.AgentMetrics;
 import cd.lan1akea.core.model.*;
+import cd.lan1akea.core.approval.ApprovalStore;
 import cd.lan1akea.core.tool.*;
 import cd.lan1akea.core.util.JsonUtils;
 
+import java.util.logging.Logger;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +33,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * 上下文压缩和记忆检索通过 PreReasoningHook 实现，不硬编码在此。
  */
 public class ReActLoop {
+
+    private static final Logger log = Logger.getLogger(ReActLoop.class.getName());
 
     /**
      * 用于 LLM 推理的聊天模型。
@@ -44,6 +56,10 @@ public class ReActLoop {
      * 封装推理和工具调用执行的 AroundHook 链。
      */
     private final AroundHookChain aroundHookChain;
+    /**
+     * 指标收集器（可选，默认 NOOP）。
+     */
+    private AgentMetrics metrics = AgentMetrics.NOOP;
 
     /**
      * 使用默认 AroundHookChain 创建 ReActLoop。
@@ -54,13 +70,13 @@ public class ReActLoop {
      * @param toolRegistry   可用工具架构注册表
      */
     public ReActLoop(ChatModel model, ToolExecutor toolExecutor,
-                      HookDispatcher hookDispatcher, ToolRegistry toolRegistry) {
+                     HookDispatcher hookDispatcher, ToolRegistry toolRegistry) {
         this(model, toolExecutor, hookDispatcher, toolRegistry, new AroundHookChain());
     }
 
     public ReActLoop(ChatModel model, ToolExecutor toolExecutor,
-                      HookDispatcher hookDispatcher, ToolRegistry toolRegistry,
-                      AroundHookChain aroundHookChain) {
+                     HookDispatcher hookDispatcher, ToolRegistry toolRegistry,
+                     AroundHookChain aroundHookChain) {
         this.model = model;
         this.toolExecutor = toolExecutor;
         this.hookDispatcher = hookDispatcher;
@@ -68,6 +84,7 @@ public class ReActLoop {
         this.aroundHookChain = aroundHookChain != null ? aroundHookChain : new AroundHookChain();
     }
 
+    public void setMetrics(AgentMetrics v) { this.metrics = v != null ? v : AgentMetrics.NOOP; }
 
     /**
      * 执行 ReAct 循环至完成（非流式）。
@@ -85,23 +102,25 @@ public class ReActLoop {
                 return summarize(ctx);
             }
             return reasoning(ctx)
-                .onErrorResume(e -> handleError(ctx, e).then(Mono.error(e)))
-                .flatMap(response -> {
-                    ctx.setLastResponse(response);
-                    if (response.getUsage() != null) ctx.addTokens(response.getUsage().getTotalTokens());
-                    List<ToolUseBlock> toolCalls = extractToolCalls(response);
-                    if (toolCalls.isEmpty()) {
-                        return Mono.just(response);
-                    }
-                    return acting(ctx, toolCalls)
-                        .flatMap(results -> {
-                            appendToolResults(ctx, results);
-                            ctx.setIteration(ctx.getIteration() + 1);
-                            dispatchAfterIteration(ctx);
-                            return Mono.just(ctx);
-                        })
-                        .flatMap(this::execute);
-                });
+                    .onErrorResume(e -> handleError(ctx, e).then(Mono.error(e)))
+                    .flatMap(response -> {
+                        ctx.setLastResponse(response);
+                        if (response.getUsage() != null) ctx.addTokens(response.getUsage().getTotalTokens());
+                        List<ToolUseBlock> toolCalls = extractToolCalls(response);
+                        if (toolCalls.isEmpty()) {
+                            return Mono.just(response);
+                        }
+                        return acting(ctx, toolCalls)
+                                .flatMap(results -> {
+                                    appendToolResults(ctx, results);
+                                    ctx.setIteration(ctx.getIteration() + 1);
+                                    metrics.recordIteration(ctx.getAgentName(), ctx.getSessionId(),
+                                            ctx.getIteration(), toolCalls.size());
+                                    return dispatchAfterIteration(ctx).thenReturn(ctx);
+                                })
+                                .delayElement(Duration.ofMillis(ctx.getBackoffMs()))
+                                .flatMap(this::execute);
+                    });
         });
     }
 
@@ -113,7 +132,7 @@ public class ReActLoop {
      * @param ctx 携带消息和状态的循环上下文
      * @return 聊天流式分块的 Flux
      */
-public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
+    public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
         return Flux.defer(() -> {
             if (ctx.isInterrupted()) {
                 if (ctx.getFeedbackMsg() != null) {
@@ -127,29 +146,27 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
             List<ChatStreamChunk> chunkBuffer = new ArrayList<>();
 
             return reasoningStream(ctx)
-                .doOnNext(chunkBuffer::add)
-                .concatWith(Flux.defer(() -> {
-                    ChatResponse response = buildResponseFromChunks(chunkBuffer);
-                    if (response == null) return Flux.empty();
+                    .doOnNext(chunkBuffer::add)
+                    .concatWith(Flux.defer(() -> {
+                        ChatResponse response = buildResponseFromChunks(chunkBuffer);
+                        if (response == null) return Flux.empty();
 
-                    ctx.setLastResponse(response);
-                    if (response.getUsage() != null) ctx.addTokens(response.getUsage().getTotalTokens());
+                        ctx.setLastResponse(response);
+                        if (response.getUsage() != null) ctx.addTokens(response.getUsage().getTotalTokens());
 
-                    List<ToolUseBlock> toolCalls = extractToolCalls(response);
-                    if (toolCalls.isEmpty()) {
-                        Msg lastMsg = response.getMessage();
-                        if (lastMsg != null) ctx.addMessage(lastMsg);
-                        dispatchAfterIteration(ctx);
-                        return Flux.empty();
-                    }
+                        List<ToolUseBlock> toolCalls = extractToolCalls(response);
+                        if (toolCalls.isEmpty()) {
+                            Msg lastMsg = response.getMessage();
+                            if (lastMsg != null) ctx.addMessage(lastMsg);
+                            return dispatchAfterIteration(ctx).thenMany(Flux.empty());
+                        }
 
-                    ctx.setIteration(ctx.getIteration() + 1);
-                    List<ToolResult> toolResults = new CopyOnWriteArrayList<>();
-                    return actingStream(ctx, toolCalls, toolResults)
-                        .doOnComplete(() -> appendToolResults(ctx, toolResults))
-                        .doOnComplete(() -> dispatchAfterIteration(ctx))
-                        .concatWith(executeStream(ctx));
-                }));
+                        ctx.setIteration(ctx.getIteration() + 1);
+                        List<ToolResult> toolResults = new CopyOnWriteArrayList<>();
+                        return actingStream(ctx, toolCalls, toolResults)
+                                .doOnComplete(() -> appendToolResults(ctx, toolResults))
+                                .concatWith(dispatchAfterIteration(ctx).thenMany(Flux.defer(() -> executeStream(ctx))));
+                    }));
         });
     }
 
@@ -165,41 +182,47 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
 
         ReasoningEvent pre = new ReasoningEvent(HookEventType.PRE_REASONING);
 
-        return hookDispatcher.dispatch(HookEventType.PRE_REASONING, pre, hc)
-            .flatMap(r -> {
-                if (r.isAbort()) return Mono.error(
-                    new HookAbortException("hook", r.getAbortReason()));
-                if (r.isInterrupt()) return Mono.just(buildInterrupted(r.getInterruptReason()));
-                // KB 命中：绕过模型直接返回
-                if (pre.getBypassMessage() != null)
-                    return Mono.just(new ChatResponse(pre.getBypassMessage(), new ChatUsage(0, 0), "stop", ""));
+        return hookDispatcher.dispatch(pre, hc)
+                .flatMap(r -> {
+                    if (r.isAbort()) return Mono.error(
+                            new HookAbortException(HookSource.HOOK, r.getAbortReason()));
+                    if (r.isInterrupt()) return Mono.just(buildInterrupted(r.getInterruptReason()));
+                    // KB 命中：绕过模型直接返回
+                    if (pre.getBypassMessage() != null)
+                        return Mono.just(new ChatResponse(pre.getBypassMessage(), new ChatUsage(0, 0), FinishReason.STOP, ""));
 
-                List<ToolSchema> schemas = toolRegistry.getSchemas(
-                    ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId());
+                    List<ToolSchema> schemas = toolRegistry.getSchemas(
+                            ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId());
 
-                return aroundHookChain.aroundReasoning(pre, hc,
-                    (HookEvent e) -> {
-                        HookEvent modelEvent = new HookEvent(HookEventType.PRE_MODEL_CALL);
-                        return hookDispatcher.dispatch(HookEventType.PRE_MODEL_CALL, modelEvent, hc)
-                            .flatMap(mr -> mr.isAbort()
-                                ? Mono.error(new cd.lan1akea.core.exception.HookAbortException("model", mr.getAbortReason()))
-                                : model.chatWithTools(ctx.getMessages(), schemas, ctx.getGenerateOptions()))
-                            .map(resp -> {
-                                e.setPayload("chat_response", resp);
-                                return e;
-                            })
-                            .flatMap(ev ->
-                                hookDispatcher.dispatch(HookEventType.POST_MODEL_CALL,
-                                    new HookEvent(HookEventType.POST_MODEL_CALL), hc)
-                                    .thenReturn(ev));
-                    })
-                    .flatMap(e -> {
-                        ChatResponse resp = e.getPayload("chat_response");
-                        ReasoningEvent post = new ReasoningEvent(HookEventType.POST_REASONING);
-                        return hookDispatcher.dispatch(HookEventType.POST_REASONING, post, hc)
-                            .thenReturn(resp);
-                    });
-            });
+                    return aroundHookChain.aroundReasoning(pre, hc,
+                                    (HookEvent e) -> {
+                                        HookEvent modelEvent = new HookEvent(HookEventType.PRE_MODEL_CALL);
+                                        final long llmStart = System.currentTimeMillis();
+                                        return hookDispatcher.dispatch(modelEvent, hc)
+                                                .flatMap(mr -> mr.isAbort()
+                                                        ? Mono.error(new HookAbortException(HookSource.MODEL, mr.getAbortReason()))
+                                                        : model.chatWithTools(ctx.getMessages(), schemas, ctx.getGenerateOptions()))
+                                                .map(resp -> {
+                                                    long llmLatency = System.currentTimeMillis() - llmStart;
+                                                    int pt = resp.getUsage() != null ? resp.getUsage().getPromptTokens() : 0;
+                                                    int ct = resp.getUsage() != null ? resp.getUsage().getCompletionTokens() : 0;
+                                                    metrics.recordLlmCall(model.getModelName(), model.getProvider(),
+                                                            llmLatency, pt, ct, true, null);
+                                                    e.setPayload(EventPayload.CHAT_RESPONSE, resp);
+                                                    return e;
+                                                })
+                                                .flatMap(ev ->
+                                                        hookDispatcher.dispatch(
+                                                                        new HookEvent(HookEventType.POST_MODEL_CALL), hc)
+                                                                .thenReturn(ev));
+                                    })
+                            .flatMap(e -> {
+                                ChatResponse resp = e.getPayload(EventPayload.CHAT_RESPONSE);
+                                ReasoningEvent post = new ReasoningEvent(HookEventType.POST_REASONING);
+                                return hookDispatcher.dispatch(post, hc)
+                                        .thenReturn(resp);
+                            });
+                });
     }
 
 
@@ -214,37 +237,38 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
 
         ReasoningEvent pre = new ReasoningEvent(HookEventType.PRE_REASONING);
 
-        return hookDispatcher.dispatch(HookEventType.PRE_REASONING, pre, hc)
-            .flatMapMany(r -> {
-                if (r.isAbort())
-                    return Flux.error(new cd.lan1akea.core.exception.HookAbortException("hook", r.getAbortReason()));
-                if (r.isInterrupt()) {
-                    ChatResponse ir = buildInterrupted(r.getInterruptReason());
-                    return Flux.just(ChatStreamChunk.builder()
-                        .delta(ir.getMessage().getTextContent())
-                        .finishReason("interrupted").build());
-                }
-                // KB 命中：绕过模型直接返回
-                if (pre.getBypassMessage() != null) {
-                    String text = pre.getBypassMessage().getTextContent();
-                    return Flux.just(ChatStreamChunk.builder()
-                        .delta(text != null ? text : "").finishReason("stop").build());
-                }
-                List<ToolSchema> schemas = toolRegistry.getSchemas(ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId());
-                return hookDispatcher.dispatch(HookEventType.PRE_MODEL_CALL,
-                        new HookEvent(HookEventType.PRE_MODEL_CALL), hc)
-                    .flatMapMany(mr -> mr.isAbort()
-                        ? Flux.error(new cd.lan1akea.core.exception.HookAbortException("model", mr.getAbortReason()))
-                        : aroundHookChain.aroundReasoningStream(pre, hc,
-                            e -> model.streamWithTools(ctx.getMessages(), schemas, ctx.getGenerateOptions())))
-                    .doOnComplete(() ->
-                        hookDispatcher.dispatch(HookEventType.POST_MODEL_CALL,
-                            new HookEvent(HookEventType.POST_MODEL_CALL), hc).subscribe());
-            })
-            .doOnComplete(() -> {
-                hookDispatcher.dispatch(HookEventType.POST_REASONING,
-                    new ReasoningEvent(HookEventType.POST_REASONING), hc).subscribe();
-            });
+        return hookDispatcher.dispatch(pre, hc)
+                .flatMapMany(r -> {
+                    if (r.isAbort())
+                        return Flux.error(new HookAbortException(HookSource.HOOK, r.getAbortReason()));
+                    if (r.isInterrupt()) {
+                        ChatResponse ir = buildInterrupted(r.getInterruptReason());
+                        return Flux.just(ChatStreamChunk.builder()
+                                .delta(ir.getMessage().getTextContent())
+                                .finishReason(FinishReason.INTERRUPTED).build());
+                    }
+                    // KB 命中：绕过模型直接返回，不触发 POST hooks
+                    if (pre.getBypassMessage() != null) {
+                        String text = pre.getBypassMessage().getTextContent();
+                        return Flux.just(ChatStreamChunk.builder()
+                                .delta(text != null ? text : "").finishReason(FinishReason.STOP).build());
+                    }
+                    List<ToolSchema> schemas = toolRegistry.getSchemas(ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId());
+                    return hookDispatcher.dispatch(
+                                    new HookEvent(HookEventType.PRE_MODEL_CALL), hc)
+                            .flatMapMany(mr -> mr.isAbort()
+                                    ? Flux.error(new HookAbortException(HookSource.MODEL, mr.getAbortReason()))
+                                    : aroundHookChain.aroundReasoningStream(pre, hc,
+                                    e -> model.streamWithTools(ctx.getMessages(), schemas, ctx.getGenerateOptions())))
+                            .concatWith(Mono.defer(() ->
+                                    hookDispatcher.dispatch(
+                                                    new HookEvent(HookEventType.POST_MODEL_CALL), hc)
+                                            .then(Mono.<ChatStreamChunk>empty())))
+                            .concatWith(Mono.defer(() ->
+                                    hookDispatcher.dispatch(
+                                                    new ReasoningEvent(HookEventType.POST_REASONING), hc)
+                                            .then(Mono.<ChatStreamChunk>empty())));
+                });
     }
 
 
@@ -258,8 +282,8 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
     Mono<List<ToolResult>> acting(LoopContext ctx, List<ToolUseBlock> toolCalls) {
         HookContext hc = buildHookContext(ctx);
         return Flux.fromIterable(toolCalls)
-            .flatMap(tc -> executeSingleTool(ctx, tc, hc))
-            .collectList();
+                .flatMap(tc -> executeSingleTool(ctx, tc, hc))
+                .collectList();
     }
 
 
@@ -271,16 +295,16 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
      * @return 每次工具执行的结果分块 Flux
      */
     Flux<ChatStreamChunk> actingStream(LoopContext ctx, List<ToolUseBlock> toolCalls,
-                                        List<ToolResult> resultsCollector) {
+                                       List<ToolResult> resultsCollector) {
         HookContext hc = buildHookContext(ctx);
         return Flux.fromIterable(toolCalls)
-            .flatMap(tc -> executeSingleTool(ctx, tc, hc)
-                .map(result -> {
-                    resultsCollector.add(result);
-                    String content = result.isSuccess() ? result.getContent() : "[错误] " + result.getErrorMessage();
-                    return ChatStreamChunk.builder()
-                        .delta(content).type(ChatStreamChunk.TYPE_TEXT).build();
-                }));
+                .flatMap(tc -> executeSingleTool(ctx, tc, hc)
+                        .map(result -> {
+                            resultsCollector.add(result);
+                            String content = result.isSuccess() ? result.getContent() : UI.TOOL_ERROR_PREFIX + result.getErrorMessage();
+                            return ChatStreamChunk.builder()
+                                    .delta(content).type(ChatStreamChunk.TYPE_TEXT).build();
+                        }));
     }
 
     /**
@@ -294,67 +318,75 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
      */
     Mono<ToolResult> executeSingleTool(LoopContext ctx, ToolUseBlock tc, HookContext hc) {
         ToolCallContext param = ToolCallContext.builder()
-            .callId(tc.getId()).toolName(tc.getName())
-            .arguments(tc.getArgumentsMap())
-            .tenantId(ctx.getTenantId()).userId(ctx.getUserId())
-            .sessionId(ctx.getSessionId()).attributes(ctx.getAttributes())
-            .build();
+                .callId(tc.getId()).toolName(tc.getName())
+                .arguments(tc.getArgumentsMap())
+                .tenantId(ctx.getTenantId()).userId(ctx.getUserId())
+                .sessionId(ctx.getSessionId()).attributes(ctx.getAttributes())
+                .build();
 
         // 同一个 event 贯穿 PRE → AroundHook → POST
         ToolCallEvent event = new ToolCallEvent(HookEventType.PRE_TOOL_CALL, param);
         // 注入 Tool 实例到 event，Hook 无需自行注入 ToolRegistry
         event.setTool(toolRegistry.getForContext(
-            ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId(), tc.getName()));
+                ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId(), tc.getName()));
 
-        return hookDispatcher.dispatch(HookEventType.PRE_TOOL_CALL, event, hc)
-            .flatMap(r -> {
-                if (r.isAbort()) {
-                    return Mono.just(ToolResult.failure("工具调用被阻止: " + r.getAbortReason()));
-                }
-                if (r.isSkip()) {
-                    ToolResult skipped = ToolResult.success(
-                        "[已跳过] " + (r.getSkipReason() != null ? r.getSkipReason() : "无权限"));
-                    ToolCallEvent postSkip = new ToolCallEvent(HookEventType.POST_TOOL_CALL, param, skipped);
-                    return hookDispatcher.dispatch(HookEventType.POST_TOOL_CALL, postSkip, hc)
-                        .thenReturn(skipped);
-                }
+        return hookDispatcher.dispatch(event, hc)
+                .flatMap(r -> {
+                    if (r.isAbort()) {
+                        return Mono.just(ToolResult.failure(UI.TOOL_BLOCKED + r.getAbortReason()));
+                    }
+                    if (r.isSkip()) {
+                        ToolResult skipped = ToolResult.success(
+                                UI.TOOL_SKIPPED_PREFIX + (r.getSkipReason() != null ? r.getSkipReason() : UI.TOOL_SKIPPED_DEFAULT));
+                        ToolCallEvent postSkip = new ToolCallEvent(HookEventType.POST_TOOL_CALL, param, skipped);
+                        return hookDispatcher.dispatch(postSkip, hc)
+                                .thenReturn(skipped);
+                    }
 
-                return aroundHookChain.aroundToolCall(event, hc,
-                        (HookEvent e) -> toolExecutor.execute(param)
-                            .map(result -> {
-                                e.setPayload("tool_result", result);
-                                ((ToolCallEvent) e).setResult(result);
-                                return e;
-                            }))
-                    .flatMap(e -> {
-                        ToolResult result = e.getPayload("tool_result");
-                        if (result == null && e instanceof ToolCallEvent tce) result = tce.getResult();
-                        ToolCallEvent post = new ToolCallEvent(HookEventType.POST_TOOL_CALL, param,
-                            result != null ? result : ToolResult.failure("无结果"));
-                        return hookDispatcher.dispatch(HookEventType.POST_TOOL_CALL, post, hc)
-                            .thenReturn(result != null ? result : ToolResult.failure("无结果"));
-                    });
-            })
-            .onErrorResume(ToolSuspendException.class, e -> {
-                InterruptEvent ie = new InterruptEvent(e.getQuestion(), tc.getName());
-                ie.setPayload("arguments", tc.getArgumentsMap());
-                ie.setPayload("recentMessages", ctx.getMessages());
-                if (event.getTool() != null) {
-                    ie.setPayload("toolDescription", event.getTool().getDescription());
-                    ie.setPayload("riskLevel", event.getTool().getRiskLevel());
-                }
-                return hookDispatcher.dispatch(HookEventType.ON_INTERRUPT, ie, hc)
-                    .flatMap(ir -> {
-                        if (ir.isAbort()) {
-                            return Mono.just(ToolResult.failure("操作被拒绝"));
+                    return aroundHookChain.aroundToolCall(event, hc,
+                                    (HookEvent e) -> toolExecutor.execute(param)
+                                            .map(result -> {
+                                                e.setPayload("tool_result", result);
+                                                ((ToolCallEvent) e).setResult(result);
+                                                return e;
+                                            }))
+                            .flatMap(e -> {
+                                ToolResult result = e.getPayload("tool_result");
+                                if (result == null && e instanceof ToolCallEvent tce) result = tce.getResult();
+                                ToolCallEvent post = new ToolCallEvent(HookEventType.POST_TOOL_CALL, param,
+                                        result != null ? result : ToolResult.failure(UI.TOOL_NO_RESULT));
+                                return hookDispatcher.dispatch(post, hc)
+                                        .thenReturn(result != null ? result : ToolResult.failure("无结果"));
+                            });
+                })
+                .onErrorResume(ToolSuspendException.class, e -> {
+                    // ApprovalStore 预检：若 bypassKey 已批准 → 标记 approved 并重试
+                    ApprovalStore approvalStore = toolExecutor.getApprovalStore();
+                    if (!param.isApproved() && approvalStore != null && event.getTool() != null) {
+                        String sessionId = ctx.getSessionId();
+                        if (sessionId != null && approvalStore.isApproved(sessionId, e.getBypassKey())) {
+                            param.setApproved(true);
+                            return toolExecutor.execute(param);
                         }
-                        // 暂停循环 — 仅设中断标志，不传反馈。
-                        // 外部通过 agent.interrupt(feedback) 注入审批结果后重新调用 execute() 恢复。
-                        ctx.interrupt();
-                        return Mono.just(ToolResult.failure("等待审批: " + e.getQuestion()));
-                    });
-            })
-            .map(r -> r.withCallId(param.getCallId()));
+                    }
+                    // 未批准 → 中断流程
+                    InterruptEvent ie = new InterruptEvent(e.getQuestion(), tc.getName());
+                    ie.setPayload(EventPayload.ARGUMENTS, tc.getArgumentsMap());
+                    ie.setPayload(EventPayload.RECENT_MESSAGES, ctx.getMessages());
+                    if (event.getTool() != null) {
+                        ie.setPayload(EventPayload.TOOL_DESCRIPTION, event.getTool().getDescription());
+                        ie.setPayload(EventPayload.RISK_LEVEL, event.getTool().getRiskLevel());
+                    }
+                    return hookDispatcher.dispatch(ie, hc)
+                            .flatMap(ir -> {
+                                if (ir.isAbort()) {
+                                    return Mono.just(ToolResult.failure(UI.APPROVAL_DENIED));
+                                }
+                                ctx.interrupt();
+                                return Mono.just(ToolResult.failure(UI.APPROVAL_WAITING + e.getQuestion()));
+                            });
+                })
+                .map(r -> r.withCallId(param.getCallId()));
     }
 
     /**
@@ -378,9 +410,9 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
             String callId = r.getCallId();
             if (callId == null) continue;
             ctx.addMessage(Msg.builder(MsgRole.TOOL)
-                .addToolResult(callId,
-                    r.isSuccess() ? r.getContent() : "[错误] " + r.getErrorMessage(),
-                    !r.isSuccess()).build());
+                    .addToolResult(callId,
+                            r.isSuccess() ? r.getContent() : UI.TOOL_ERROR_PREFIX + r.getErrorMessage(),
+                            !r.isSuccess()).build());
         }
     }
 
@@ -390,13 +422,23 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
      * @param ctx 循环上下文
      */
     /**
-     * 分发 AFTER_ITERATION 事件到 Hook 链（持久化/检查点等系统 Hook 在此处理）。
+     * 分发 AFTER_ITERATION 事件到 Hook 链。
+     * Hook 失败不中断主流程，降级为日志告警。
+     *
+     * @param ctx 循环上下文
+     * @return 分发完成的 Mono
      */
-    private void dispatchAfterIteration(LoopContext ctx) {
+    Mono<Void> dispatchAfterIteration(LoopContext ctx) {
         HookContext hc = buildHookContext(ctx);
         HookEvent event = new HookEvent(HookEventType.AFTER_ITERATION);
-        event.setPayload("loopContext", ctx);
-        hookDispatcher.dispatch(HookEventType.AFTER_ITERATION, event, hc).subscribe();
+        event.setPayload(EventPayload.LOOP_CONTEXT, ctx);
+        return hookDispatcher.dispatch(event, hc)
+                .onErrorResume(e -> {
+                    log.warning(Logs.AFTER_ITERATION_FAILED
+                            + ctx.getRequestId() + Logs.ERR_DETAIL + e.getMessage());
+                    return Mono.empty();
+                })
+                .then();
     }
 
 
@@ -411,15 +453,17 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
         if (messages.isEmpty()) return Mono.justOrEmpty(ctx.getLastResponse());
 
         Msg summaryPrompt = SystemMessage.of(
-            "你已达到最大迭代次数。请用一段话总结你已经完成的工作和当前状态。" +
-            "不要调用任何工具，只做文字总结。");
+                Prompt.MAX_ITERATIONS_SUMMARY + Prompt.MAX_ITERATIONS_NO_TOOLS);
         messages.add(summaryPrompt);
 
         List<ToolSchema> schemas = toolRegistry.getSchemas(ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId());
+        Integer genMaxTokens = ctx.getGenerateOptions().getMaxTokens();
+        int maxOut = genMaxTokens != null ? Math.min(genMaxTokens, 1024) : 1024;
         GenerateOptions noTools = GenerateOptions.builder()
-            .temperature(ctx.getGenerateOptions().getTemperature())
-            .maxTokens(Math.min(ctx.getGenerateOptions().getMaxTokens(), 1024))
-            .build();
+                .temperature(ctx.getGenerateOptions().getTemperature())
+                .maxTokens(maxOut)
+                .toolChoice(ToolChoicePolicy.NONE)
+                .build();
 
         return model.chatWithTools(messages, schemas, noTools);
     }
@@ -435,15 +479,17 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
         if (messages.isEmpty()) return Flux.empty();
 
         Msg summaryPrompt = SystemMessage.of(
-            "你已达到最大迭代次数。请用一段话总结你已经完成的工作和当前状态。" +
-            "不要调用任何工具，只做文字总结。");
+                Prompt.MAX_ITERATIONS_SUMMARY + Prompt.MAX_ITERATIONS_NO_TOOLS);
         messages.add(summaryPrompt);
 
         List<ToolSchema> schemas = toolRegistry.getSchemas(ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId());
+        Integer genMaxTokens = ctx.getGenerateOptions().getMaxTokens();
+        int maxOut = genMaxTokens != null ? Math.min(genMaxTokens, 1024) : 1024;
         GenerateOptions noTools = GenerateOptions.builder()
-            .temperature(ctx.getGenerateOptions().getTemperature())
-            .maxTokens(Math.min(ctx.getGenerateOptions().getMaxTokens(), 1024))
-            .build();
+                .temperature(ctx.getGenerateOptions().getTemperature())
+                .maxTokens(maxOut)
+                .toolChoice(ToolChoicePolicy.NONE)
+                .build();
 
         return model.streamWithTools(messages, schemas, noTools);
     }
@@ -457,26 +503,26 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
     private Mono<ChatResponse> handleExternalInterrupt(LoopContext ctx) {
         Msg feedback = ctx.getFeedbackMsg();
         HookContext hc = buildHookContext(ctx);
-        InterruptEvent ie = new InterruptEvent(feedback != null ? feedback.getTextContent() : "外部中断", null);
+        InterruptEvent ie = new InterruptEvent(feedback != null ? feedback.getTextContent() : UI.INTERRUPT_EXTERNAL, null);
 
-        return hookDispatcher.dispatch(HookEventType.ON_INTERRUPT, ie, hc)
-            .flatMap(r -> {
-                if (r.isAbort()) {
+        return hookDispatcher.dispatch(ie, hc)
+                .flatMap(r -> {
+                    if (r.isAbort()) {
+                        return Mono.fromCallable(() ->
+                                ctx.getLastResponse() != null ? ctx.getLastResponse()
+                                        : buildInterrupted(r.getAbortReason()));
+                    }
+                    if (feedback != null) {
+                        // 有反馈消息 → 注入消息并继续 ReAct 循环
+                        ctx.addMessage(feedback);
+                        ctx.clearInterrupt();
+                        return execute(ctx);
+                    }
+                    // 无反馈 → 真正中断，返回最后响应
                     return Mono.fromCallable(() ->
-                        ctx.getLastResponse() != null ? ctx.getLastResponse()
-                            : buildInterrupted(r.getAbortReason()));
-                }
-                if (feedback != null) {
-                    // 有反馈消息 → 注入消息并继续 ReAct 循环
-                    ctx.addMessage(feedback);
-                    ctx.clearInterrupt();
-                    return execute(ctx);
-                }
-                // 无反馈 → 真正中断，返回最后响应
-                return Mono.fromCallable(() ->
-                    ctx.getLastResponse() != null ? ctx.getLastResponse()
-                        : buildInterrupted("执行已被中断"));
-            });
+                            ctx.getLastResponse() != null ? ctx.getLastResponse()
+                                    : buildInterrupted(UI.INTERRUPT_EXEC));
+                });
     }
 
     /**
@@ -488,26 +534,26 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
     private Flux<ChatStreamChunk> handleInterruptStream(LoopContext ctx) {
         Msg feedback = ctx.getFeedbackMsg();
         HookContext hc = buildHookContext(ctx);
-        InterruptEvent ie = new InterruptEvent(feedback != null ? feedback.getTextContent() : "外部中断", null);
+        InterruptEvent ie = new InterruptEvent(feedback != null ? feedback.getTextContent() : UI.INTERRUPT_EXTERNAL, null);
 
-        return hookDispatcher.dispatch(HookEventType.ON_INTERRUPT, ie, hc)
-            .flatMapMany(r -> {
-                if (r.isAbort()) {
+        return hookDispatcher.dispatch(ie, hc)
+                .flatMapMany(r -> {
+                    if (r.isAbort()) {
+                        return Flux.just(ChatStreamChunk.builder()
+                                .delta(UI.INTERRUPT_STREAM_PREFIX + r.getAbortReason() + UI.INTERRUPT_SUFFIX)
+                                .finishReason(FinishReason.INTERRUPTED).build());
+                    }
+                    if (feedback != null) {
+                        ctx.addMessage(feedback);
+                        ctx.clearInterrupt();
+                        return executeStream(ctx);
+                    }
+                    String reason = ctx.getLastResponse() != null
+                            ? ctx.getLastResponse().getMessage().getTextContent()
+                            : UI.INTERRUPT_EXEC;
                     return Flux.just(ChatStreamChunk.builder()
-                        .delta("[中断: " + r.getAbortReason() + "]")
-                        .finishReason("interrupted").build());
-                }
-                if (feedback != null) {
-                    ctx.addMessage(feedback);
-                    ctx.clearInterrupt();
-                    return executeStream(ctx);
-                }
-                String reason = ctx.getLastResponse() != null
-                    ? ctx.getLastResponse().getMessage().getTextContent()
-                    : "执行已被中断";
-                return Flux.just(ChatStreamChunk.builder()
-                    .delta(reason).finishReason("interrupted").build());
-            });
+                            .delta(reason).finishReason("interrupted").build());
+                });
     }
 
 
@@ -519,11 +565,11 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
      * @return 空 Mono 或如果 Hook 中止则返回错误
      */
     Mono<Void> handleError(LoopContext ctx, Throwable error) {
-        return hookDispatcher.dispatch(HookEventType.ON_ERROR,
-                new ErrorEvent(error), buildHookContext(ctx))
-            .flatMap(r -> r.isAbort()
-                ? Mono.error(new cd.lan1akea.core.exception.HookAbortException("ErrorHook", r.getAbortReason()))
-                : Mono.empty());
+        return hookDispatcher.dispatch(
+                        new ErrorEvent(error), buildHookContext(ctx))
+                .flatMap(r -> r.isAbort()
+                        ? Mono.error(new HookAbortException(HookSource.ERROR_HOOK, r.getAbortReason()))
+                        : Mono.empty());
     }
 
 
@@ -534,8 +580,9 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
      * @return 新的 Hook 上下文
      */
     HookContext buildHookContext(LoopContext ctx) {
-        return new HookContext(ctx.getAgentName(), ctx.getTenantId(), ctx.getSessionId(),
-            ctx.getUserId(), ctx.getIteration(), List.of(), ctx.getAttributes());
+        return new HookContext(ctx.getAgentName(), ctx.getRequestId(),
+                ctx.getTenantId(), ctx.getSessionId(),
+                ctx.getUserId(), ctx.getIteration(), List.of(), ctx.getAttributes());
     }
 
     /**
@@ -546,9 +593,9 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
      */
     ChatResponse buildInterrupted(String reason) {
         Msg msg = Msg.builder(MsgRole.ASSISTANT)
-            .addText("[执行已中断: " + reason + "]")
-            .putMetadata(MessageMetadataKeys.INTERRUPT_ID, reason).build();
-        return new ChatResponse(msg, new ChatUsage(0, 0), "interrupted", "");
+                .addText(UI.INTERRUPT_PREFIX + reason + UI.INTERRUPT_SUFFIX)
+                .putMetadata(MessageMetadataKeys.INTERRUPT_ID, reason).build();
+        return new ChatResponse(msg, new ChatUsage(0, 0), FinishReason.INTERRUPTED, "");
     }
 
     /**
@@ -595,12 +642,12 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
             }
 
             if (ChatStreamChunk.TYPE_TOOL_USE_DELTA.equals(chunk.getType())
-                && chunk.getToolUseId() != null && chunk.getDelta() != null) {
+                    && chunk.getToolUseId() != null && chunk.getDelta() != null) {
                 toolArgs.merge(chunk.getToolUseId(), chunk.getDelta(), String::concat);
             }
         }
 
-        String finishReason = "completed";
+        String finishReason = FinishReason.COMPLETED;
         for (int i = chunks.size() - 1; i >= 0; i--) {
             if (chunks.get(i).getFinishReason() != null) {
                 finishReason = chunks.get(i).getFinishReason();
@@ -613,7 +660,7 @@ public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
         for (Map.Entry<String, String> e : toolArgs.entrySet()) {
             String id = e.getKey();
             blocks.add(new ToolUseBlock(id, toolNames.getOrDefault(id, ""),
-                JsonUtils.repairJson(e.getValue())));
+                    JsonUtils.repairJson(e.getValue())));
         }
 
         Msg msg = new AssistantMessage(blocks, null);

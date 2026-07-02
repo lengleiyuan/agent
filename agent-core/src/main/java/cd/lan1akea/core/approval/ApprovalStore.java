@@ -57,4 +57,10 @@ public interface ApprovalStore {
      * 按 ID 查询审批详情。
      */
     PendingApproval getById(String approvalId);
+
+    /**
+     * 清理过期的审批记录（默认空实现，子类按需覆盖）。
+     * 建议定期调用以控制内存/存储占用。
+     */
+    default void cleanupExpired() {}
 }

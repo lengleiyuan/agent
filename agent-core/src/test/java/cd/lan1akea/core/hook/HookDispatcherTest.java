@@ -33,7 +33,7 @@ class HookDispatcherTest {
         TrackingHook hook = new TrackingHook("h1", HookEventType.PRE_REASONING);
         chain.register(hook);
 
-        HookResult result = dispatcher.dispatch(HookEventType.PRE_REASONING,
+        HookResult result = dispatcher.dispatch(
             new HookEvent(HookEventType.PRE_REASONING),
             new HookContext("test", null, null, null, 0, null, null)).block();
 
@@ -46,7 +46,7 @@ class HookDispatcherTest {
         TrackingHook hook = new TrackingHook("h1", HookEventType.PRE_REASONING);
         chain.register(hook);
 
-        dispatcher.dispatch(HookEventType.POST_REASONING,
+        dispatcher.dispatch(
             new HookEvent(HookEventType.POST_REASONING),
             new HookContext("test", null, null, null, 0, null, null)).block();
 
@@ -55,7 +55,7 @@ class HookDispatcherTest {
 
     @Test
     void testEmptyChainReturnsContinue() {
-        HookResult result = dispatcher.dispatch(HookEventType.PRE_REASONING,
+        HookResult result = dispatcher.dispatch(
             new HookEvent(HookEventType.PRE_REASONING),
             new HookContext("test", null, null, null, 0, null, null)).block();
 
@@ -66,7 +66,7 @@ class HookDispatcherTest {
     void testAbortPropagates() {
         chain.register(new AbortHook("abort", HookEventType.PRE_REASONING, "stop"));
 
-        HookResult result = dispatcher.dispatch(HookEventType.PRE_REASONING,
+        HookResult result = dispatcher.dispatch(
             new HookEvent(HookEventType.PRE_REASONING),
             new HookContext("test", null, null, null, 0, null, null)).block();
 
@@ -80,7 +80,7 @@ class HookDispatcherTest {
         dispatcher.setRecorder(recorder);
 
         chain.register(new TrackingHook("h1", HookEventType.PRE_REASONING));
-        dispatcher.dispatch(HookEventType.PRE_REASONING,
+        dispatcher.dispatch(
             new HookEvent(HookEventType.PRE_REASONING),
             new HookContext("test", null, null, null, 0, null, null)).block();
 
@@ -95,7 +95,7 @@ class HookDispatcherTest {
         dispatcher.setRecorder(recorder);
 
         chain.register(new TrackingHook("h1", HookEventType.PRE_REASONING));
-        dispatcher.dispatch(HookEventType.PRE_REASONING,
+        dispatcher.dispatch(
             new HookEvent(HookEventType.PRE_REASONING),
             new HookContext("test", null, null, null, 0, null, null)).block();
 
@@ -108,7 +108,7 @@ class HookDispatcherTest {
         dispatcher.setRecorder(recorder);
         chain.register(new TrackingHook("h1", HookEventType.PRE_REASONING));
 
-        dispatcher.dispatch(HookEventType.PRE_REASONING,
+        dispatcher.dispatch(
             new HookEvent(HookEventType.PRE_REASONING),
             new HookContext("test", null, null, null, 0, null, null)).block();
 
@@ -137,7 +137,7 @@ class HookDispatcherTest {
 
         HookContext ctx = new HookContext("agent1", "t1", "s1", "u1", 3,
             List.of("tool-a"), null);
-        dispatcher.dispatch(HookEventType.PRE_REASONING,
+        dispatcher.dispatch(
             new HookEvent(HookEventType.PRE_REASONING), ctx).block();
 
         assertNotNull(hook.getContextFromOnEvent());
@@ -159,11 +159,11 @@ class HookDispatcherTest {
         HookContext ctx1 = new HookContext("agent-A", "tenant-1", "s1", "u1", 1, null, null);
         HookContext ctx2 = new HookContext("agent-B", "tenant-2", "s2", "u2", 5, null, null);
 
-        dispatcher.dispatch(HookEventType.PRE_REASONING,
+        dispatcher.dispatch(
             new HookEvent(HookEventType.PRE_REASONING), ctx1).block();
         assertEquals("tenant-1", hook.getContextFromOnEvent().getTenantId());
 
-        dispatcher.dispatch(HookEventType.PRE_REASONING,
+        dispatcher.dispatch(
             new HookEvent(HookEventType.PRE_REASONING), ctx2).block();
         assertEquals("tenant-2", hook.getContextFromOnEvent().getTenantId());
     }
@@ -206,7 +206,6 @@ class HookDispatcherTest {
                             i, List.of("tool-" + i), null);
 
                         HookResult result = dispatcher.dispatch(
-                            HookEventType.PRE_REASONING,
                             new HookEvent(HookEventType.PRE_REASONING), ctx)
                             .block(Duration.ofSeconds(10));
 
@@ -261,7 +260,7 @@ class HookDispatcherTest {
                             "session-" + threadId, "user-" + threadId,
                             i, null, null);
 
-                        dispatcher.dispatch(HookEventType.PRE_REASONING,
+                        dispatcher.dispatch(
                             new HookEvent(HookEventType.PRE_REASONING), ctx)
                             .block(Duration.ofSeconds(5));
 
