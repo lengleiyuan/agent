@@ -4,18 +4,24 @@ import cd.lan1akea.core.CoreConstants.EventPayload;
 import cd.lan1akea.core.CoreConstants.FinishReason;
 import cd.lan1akea.core.CoreConstants.Logs;
 import cd.lan1akea.core.CoreConstants.UI;
+import cd.lan1akea.core.exception.HumanInterventionException;
 import cd.lan1akea.core.hook.*;
+import cd.lan1akea.core.intervention.InterventionRequest;
+import cd.lan1akea.core.intervention.InterventionStore;
 import cd.lan1akea.core.message.*;
 import cd.lan1akea.core.metrics.AgentMetrics;
 import cd.lan1akea.core.model.*;
 import cd.lan1akea.core.tool.*;
+import cd.lan1akea.core.util.JsonUtils;
 
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.logging.Logger;
 
 /**
@@ -35,15 +41,17 @@ public class LoopExecutor {
     private final ToolCallOrchestrator toolOrchestrator;
     private final HookDispatcher hookDispatcher;
     private final AgentMetrics metrics;
+    private final InterventionStore interventionStore;
 
     public LoopExecutor(LoopDecisionEngine engine, ModelCallPipeline modelPipeline,
                          ToolCallOrchestrator toolOrchestrator, HookDispatcher hookDispatcher,
-                         AgentMetrics metrics) {
+                         AgentMetrics metrics, InterventionStore interventionStore) {
         this.engine = engine;
         this.modelPipeline = modelPipeline;
         this.toolOrchestrator = toolOrchestrator;
         this.hookDispatcher = hookDispatcher;
         this.metrics = metrics;
+        this.interventionStore = interventionStore;
     }
 
     // ============================================================
@@ -114,13 +122,8 @@ public class LoopExecutor {
         return Flux.fromIterable(toolCalls)
                 .flatMap(tc -> toolOrchestrator.execute(tc, ctx)
                         .doOnNext(results::add)
-                        .map(result -> {
-                            String content = result.isSuccess()
-                                    ? result.getContent()
-                                    : UI.TOOL_ERROR_PREFIX + result.getErrorMessage();
-                            return ChatStreamChunk.builder()
-                                    .delta(content).type(ChatStreamChunk.TYPE_TEXT).build();
-                        }))
+                        .map(result -> chunkFromToolResult(result)))
+                .onErrorResume(e -> handleToolError(e, ctx, results))
                 .concatWith(Flux.defer(() -> {
                     appendToolResults(ctx, results);
                     return dispatchAfterIteration(ctx)
@@ -128,6 +131,90 @@ public class LoopExecutor {
                             .thenMany(Flux.<ChatStreamChunk>empty());
                 }))
                 .concatWith(Flux.defer(() -> runStream(ctx)));
+    }
+
+    private Flux<ChatStreamChunk> handleToolError(Throwable e, LoopContext ctx,
+                                                   List<ToolResult> results) {
+        if (e instanceof HumanInterventionException hie) {
+            if (!hie.isResumable()) return Flux.error(e);
+            return handleIntervention(hie, ctx);
+        }
+        if (e instanceof ToolSuspendException tse) {
+            return handleLegacySuspension(tse, ctx);
+        }
+        // Other errors: add failure result and continue
+        ToolResult failure = ToolResult.failure(UI.TOOL_EXEC_ERROR + e.getMessage());
+        results.add(failure);
+        return Flux.just(chunkFromToolResult(failure));
+    }
+
+    // ---- Intervention handling ----
+
+    private Flux<ChatStreamChunk> handleIntervention(HumanInterventionException e, LoopContext ctx) {
+        InterventionRequest req = InterventionRequest.builder()
+                .type(toInterventionType(e.getType()))
+                .sessionId(ctx.getSessionId())
+                .requestId(ctx.getRequestId())
+                .tenantId(ctx.getTenantId())
+                .agentName(ctx.getAgentName())
+                .toolName(e.getToolName())
+                .question(e.getReason())
+                .toolArgs(e.getCallParam() != null ? e.getCallParam().getArgumentsMap() : null)
+                .recentMessages(truncateMessages(ctx.getMessages()))
+                .build();
+
+        String id = interventionStore.create(req);
+        ctx.setInterventionId(id);
+        ctx.setInterventionType(e.getType().name());
+        if (e.getCallParam() != null) {
+            ctx.setPausedToolArgs(JsonUtils.toCompactJson(e.getCallParam().getArgumentsMap()));
+        }
+        ctx.interrupt();
+
+        return Flux.just(interventionChunk(id, e.getReason(), e.getType().name(), e.getToolName()));
+    }
+
+    private Flux<ChatStreamChunk> handleLegacySuspension(ToolSuspendException e, LoopContext ctx) {
+        HumanInterventionException hie = HumanInterventionException.approval(
+                e.getBypassKey(), e.getQuestion(), null);
+        return handleIntervention(hie, ctx);
+    }
+
+    private static InterventionRequest.Type toInterventionType(HumanInterventionException.Type t) {
+        switch (t) {
+            case TOOL_APPROVAL: return InterventionRequest.Type.TOOL_APPROVAL;
+            case TOOL_CLARIFY: return InterventionRequest.Type.TOOL_CLARIFY;
+            default: return InterventionRequest.Type.BUSINESS_PAUSE;
+        }
+    }
+
+    private List<Msg> truncateMessages(List<Msg> messages) {
+        int size = messages.size();
+        int from = Math.max(0, size - 20);
+        return new ArrayList<>(messages.subList(from, size));
+    }
+
+    private ChatStreamChunk chunkFromToolResult(ToolResult result) {
+        String content = result.isSuccess()
+                ? result.getContent()
+                : UI.TOOL_ERROR_PREFIX + result.getErrorMessage();
+        return ChatStreamChunk.builder()
+                .delta(content).type(ChatStreamChunk.TYPE_TEXT).build();
+    }
+
+    private ChatStreamChunk interventionChunk(String id, String question,
+                                               String interventionType, String toolName) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("type", "intervention_required");
+        payload.put("interventionId", id);
+        payload.put("question", question);
+        payload.put("interventionType", interventionType);
+        payload.put("toolName", toolName);
+        return ChatStreamChunk.builder()
+                .delta(JsonUtils.toCompactJson(payload))
+                .type("intervention")
+                .finishReason("interrupted")
+                .build();
     }
 
     // ============================================================

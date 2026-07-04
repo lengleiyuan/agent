@@ -71,8 +71,12 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
                 toolExecutor, toolRegistry, hookDispatcher, aroundHookChain);
         ModelCallPipeline modelPipeline = new ModelCallPipeline(
                 model, hookDispatcher, toolRegistry, aroundHookChain, metrics);
+        cd.lan1akea.core.intervention.InterventionStore interventionStore =
+                config.getInterventionStore() != null
+                        ? config.getInterventionStore()
+                        : new cd.lan1akea.core.intervention.InMemoryInterventionStore();
         this.loopExecutor = new LoopExecutor(
-                engine, modelPipeline, toolOrch, hookDispatcher, metrics);
+                engine, modelPipeline, toolOrch, hookDispatcher, metrics, interventionStore);
         this.pipeline = new RequestPipeline(
                 loopExecutor, stateStore, aroundHookChain,
                 config.getExecutionConfig(), name, systemMessage);

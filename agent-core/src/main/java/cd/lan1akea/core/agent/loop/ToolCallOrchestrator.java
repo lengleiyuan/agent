@@ -80,7 +80,7 @@ public class ToolCallOrchestrator {
                 });
     }
 
-    // ---- Step 3: 执行 + 审批处理 ----
+    // ---- Step 3: 执行（审批/介入异常穿透到 LoopExecutor 统一处理） ----
 
     private Mono<ToolResult> executeWithApproval(ToolCallContext param, ToolCallEvent event,
                                                    HookContext hc, LoopContext ctx) {
@@ -91,39 +91,7 @@ public class ToolCallOrchestrator {
                                     ((ToolCallEvent) e).setResult(result);
                                     return e;
                                 }))
-                .flatMap(e -> Mono.justOrEmpty((ToolResult) e.getPayload("tool_result")))
-                .onErrorResume(ToolSuspendException.class, e ->
-                        handleSuspension(param, event, hc, ctx, e));
-    }
-
-    // ---- 审批/挂起处理 ----
-
-    private Mono<ToolResult> handleSuspension(ToolCallContext param, ToolCallEvent event,
-                                                HookContext hc, LoopContext ctx,
-                                                ToolSuspendException e) {
-        ApprovalStore approvalStore = toolExecutor.getApprovalStore();
-        if (!param.isApproved() && approvalStore != null && event.getTool() != null) {
-            String sessionId = ctx.getSessionId();
-            if (sessionId != null && approvalStore.isApproved(sessionId, e.getBypassKey())) {
-                param.setApproved(true);
-                return toolExecutor.execute(param);
-            }
-        }
-        InterruptEvent ie = new InterruptEvent(e.getQuestion(), param.getToolName());
-        ie.setPayload(EventPayload.ARGUMENTS, param.getArgumentsMap());
-        ie.setPayload(EventPayload.RECENT_MESSAGES, ctx.getMessages());
-        if (event.getTool() != null) {
-            ie.setPayload(EventPayload.TOOL_DESCRIPTION, event.getTool().getDescription());
-            ie.setPayload(EventPayload.RISK_LEVEL, event.getTool().getRiskLevel());
-        }
-        return hookDispatcher.dispatch(ie, hc)
-                .flatMap(ir -> {
-                    if (ir.isAbort()) {
-                        return Mono.just(ToolResult.failure(UI.APPROVAL_DENIED));
-                    }
-                    ctx.interrupt();
-                    return Mono.just(ToolResult.failure(UI.APPROVAL_WAITING + e.getQuestion()));
-                });
+                .flatMap(e -> Mono.justOrEmpty((ToolResult) e.getPayload("tool_result")));
     }
 
     // ---- Step 4: POST Hook 分发 ----

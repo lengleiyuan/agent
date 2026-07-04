@@ -2,6 +2,7 @@ package cd.lan1akea.core.agent.config;
 
 import cd.lan1akea.core.hook.AroundHookChain;
 import cd.lan1akea.core.hook.HookChain;
+import cd.lan1akea.core.intervention.InterventionStore;
 import cd.lan1akea.core.model.ChatModel;
 import cd.lan1akea.core.state.AgentStateStore;
 import cd.lan1akea.core.tool.ToolRegistry;
@@ -40,6 +41,7 @@ public class AgentConfig {
      * 执行配置。
      */
     private final AgentExecutionConfig executionConfig;
+    private final InterventionStore interventionStore;
 
     private AgentConfig(Builder builder) {
         this.name = builder.name;
@@ -50,6 +52,7 @@ public class AgentConfig {
         this.stateStore = builder.stateStore;
         this.executionConfig = builder.executionConfig != null
             ? builder.executionConfig : AgentExecutionConfig.defaults();
+        this.interventionStore = builder.interventionStore;
     }
 
     /**
@@ -80,6 +83,7 @@ public class AgentConfig {
      * @return 执行配置
      */
     public AgentExecutionConfig getExecutionConfig() { return executionConfig; }
+    public InterventionStore getInterventionStore() { return interventionStore; }
 
     /**
      * 创建 Builder。
@@ -99,6 +103,7 @@ public class AgentConfig {
         private AroundHookChain aroundHookChain;
         private AgentStateStore stateStore;
         private AgentExecutionConfig executionConfig;
+        private InterventionStore interventionStore;
 
         /**
          * 设置 Agent 名称。
@@ -128,6 +133,7 @@ public class AgentConfig {
          * 设置执行配置。
          */
         public Builder executionConfig(AgentExecutionConfig executionConfig) { this.executionConfig = executionConfig; return this; }
+        public Builder interventionStore(InterventionStore v) { this.interventionStore = v; return this; }
 
         /**
          * 构建 AgentConfig。
