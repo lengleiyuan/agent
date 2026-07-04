@@ -101,7 +101,7 @@ public class ModelCallPipeline {
                                         .doOnNext(chunk -> {
                                             if (chunk.getFinishReason() != null) {
                                                 long latency = System.currentTimeMillis() - start;
-                                                metrics.recordLlmCall(
+                                            metrics.recordLlmCall(
                                                         model.getModelName(), model.getProvider(),
                                                         latency, 0, 0, true, null);
                                             }

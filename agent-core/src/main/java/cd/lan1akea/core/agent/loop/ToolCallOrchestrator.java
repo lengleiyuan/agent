@@ -40,11 +40,9 @@ public class ToolCallOrchestrator {
                 ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId(), tc.getName()));
 
         return dispatchPreHook(event, hc)
-                .flatMap(preResult -> {
-                    if (preResult != null) return Mono.just(preResult);
-                    return executeWithApproval(param, event, hc, ctx)
-                            .flatMap(result -> dispatchPostHook(param, result, hc));
-                })
+                .switchIfEmpty(
+                        executeWithApproval(param, event, hc, ctx)
+                                .flatMap(result -> dispatchPostHook(param, result, hc)))
                 .map(r -> r.withCallId(param.getCallId()));
     }
 
