@@ -137,7 +137,13 @@ public class LoopExecutor {
     public Mono<ChatResponse> run(LoopContext ctx) {
         return runStream(ctx)
                 .collectList()
-                .map(ModelCallPipeline::assembleResponseFromChunks);
+                .flatMap(chunks -> {
+                    ChatResponse resp = ModelCallPipeline.assembleResponseFromChunks(chunks);
+                    if (resp == null) {
+                        resp = new ChatResponse(null, new ChatUsage(0, 0), "empty", "");
+                    }
+                    return Mono.just(resp);
+                });
     }
 
     // ============================================================

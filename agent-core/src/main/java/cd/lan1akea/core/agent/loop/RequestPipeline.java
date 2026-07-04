@@ -52,7 +52,7 @@ public class RequestPipeline {
             HookContext callHc = HookContext.from(ctx, 0);
             GenerateOptions opts = resolveOptions();
 
-            return aroundHookChain.aroundCallStream(new HookEvent(null), callHc,
+            return aroundHookChain.aroundReasoningStream(new HookEvent(null), callHc,
                     e -> loadSessionAndHistory(ctx, messages)
                             .flatMapMany(msgs -> injectSystemMessage(msgs).flatMapMany(Flux::just))
                             .concatMap(m -> {
@@ -70,11 +70,26 @@ public class RequestPipeline {
     }
 
     public Mono<ChatResponse> execute(List<Msg> messages, RuntimeContext rtCtx) {
-        return executeStream(messages, rtCtx)
-                .collectList()
-                .map(ModelCallPipeline::assembleResponseFromChunks)
-                .switchIfEmpty(Mono.just(new ChatResponse(
-                        null, new ChatUsage(0, 0), "empty", "")));
+        return Mono.deferContextual(ctxView -> {
+            final RuntimeContext ctx = resolveContext(ctxView, rtCtx);
+            HookContext callHc = HookContext.from(ctx, 0);
+            return aroundHookChain.aroundReasoning(new HookEvent(null), callHc,
+                    e -> loadSessionAndHistory(ctx, messages)
+                            .flatMap(this::injectSystemMessage)
+                            .flatMap(m -> {
+                                LoopContext loopCtx = LoopContextFactory.create(
+                                        agentName, ctx, m, resolveOptions(), execConfig, false);
+                                activeRequests.put(loopCtx.getRequestId(), loopCtx);
+                                Mono<ChatResponse> exec = loopExecutor.run(loopCtx)
+                                        .doFinally(s -> activeRequests.remove(loopCtx.getRequestId()));
+                                long timeout = execConfig.getTotalTimeoutMs();
+                                if (timeout > 0) exec = exec.timeout(Duration.ofMillis(timeout));
+                                return exec;
+                            })
+                            .map(resp -> { e.setPayload("response", resp); return e; }))
+                    .map(e -> (ChatResponse) e.getPayload("response"))
+                    .contextWrite(c -> writeContext(c, ctx));
+        });
     }
 
     public void interrupt() {

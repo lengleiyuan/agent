@@ -1,6 +1,8 @@
 package cd.lan1akea.core.tool.builtin;
 
 import cd.lan1akea.core.agent.ReActAgent;
+import cd.lan1akea.core.agent.config.AgentConfig;
+import cd.lan1akea.core.agent.config.AgentExecutionConfig;
 import cd.lan1akea.core.message.Msg;
 import cd.lan1akea.core.message.MsgRole;
 import cd.lan1akea.core.message.UserMessage;
@@ -130,12 +132,16 @@ public class AgentTool implements Tool {
             return Mono.just(ToolResult.failure("task 参数不能为空"));
         }
 
-        ReActAgent subAgent = ReActAgent.builder()
-            .name(name)
-            .model(model)
-            .toolRegistry(toolRegistry)
-            .maxIterations(maxIterations)
-            .build();
+        AgentExecutionConfig execConfig = AgentExecutionConfig.builder()
+                .maxIterations(maxIterations)
+                .build();
+        AgentConfig agentConfig = AgentConfig.builder()
+                .name(name)
+                .model(model)
+                .toolRegistry(toolRegistry)
+                .executionConfig(execConfig)
+                .build();
+        ReActAgent subAgent = new ReActAgent(agentConfig);
 
         return subAgent.build()
             .then(Mono.defer(() -> {

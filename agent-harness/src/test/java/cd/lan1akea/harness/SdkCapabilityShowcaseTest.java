@@ -991,6 +991,27 @@ class SdkCapabilityShowcaseTest {
         protected Flux<ChatStreamChunk> doStream(List<Map<String, Object>> messages,
                                                   List<ToolSchema> toolSchemas,
                                                   GenerateOptions options) {
+            if (response != null) {
+                Msg msg = response.getMessage();
+                String text = msg != null ? msg.getTextContent() : "";
+                List<ToolUseBlock> toolUses = msg != null ? msg.getToolUseBlocks() : null;
+                java.util.List<ChatStreamChunk> chunks = new java.util.ArrayList<>();
+                if (toolUses != null && !toolUses.isEmpty()) {
+                    for (ToolUseBlock tb : toolUses) {
+                        chunks.add(ChatStreamChunk.builder()
+                            .type(ChatStreamChunk.TYPE_TOOL_USE_START)
+                            .toolUseId(tb.getId()).toolName(tb.getName()).delta("").build());
+                        chunks.add(ChatStreamChunk.builder()
+                            .type(ChatStreamChunk.TYPE_TOOL_USE_DELTA)
+                            .toolUseId(tb.getId()).delta(tb.getArguments()).build());
+                    }
+                } else {
+                    chunks.add(ChatStreamChunk.builder()
+                        .delta(text).type(ChatStreamChunk.TYPE_TEXT)
+                        .finishReason(response.getFinishReason()).build());
+                }
+                return Flux.fromIterable(chunks);
+            }
             return Flux.empty();
         }
     }

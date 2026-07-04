@@ -3,10 +3,14 @@ package cd.lan1akea.harness;
 import cd.lan1akea.core.agent.ReActAgent;
 import cd.lan1akea.core.agent.CallableAgent;
 import cd.lan1akea.core.agent.StreamableAgent;
+import cd.lan1akea.core.agent.config.AgentConfig;
+import cd.lan1akea.core.agent.config.AgentExecutionConfig;
 import cd.lan1akea.core.context.RuntimeContext;
 import cd.lan1akea.core.exception.AgentConfigurationException;
 import cd.lan1akea.core.hook.AroundHook;
+import cd.lan1akea.core.hook.AroundHookChain;
 import cd.lan1akea.core.hook.Hook;
+import cd.lan1akea.core.hook.HookChain;
 import cd.lan1akea.core.hook.impl.ContentFilterHook;
 import cd.lan1akea.core.hook.impl.LoggingHook;
 import cd.lan1akea.core.hook.impl.MemoryEnrichmentHook;
@@ -34,6 +38,7 @@ import cd.lan1akea.core.model.ToolChoicePolicy;
 import cd.lan1akea.core.state.AgentStateStore;
 import cd.lan1akea.core.state.InMemoryAgentStateStore;
 import cd.lan1akea.core.tool.ToolAccessPolicy;
+import cd.lan1akea.core.tool.ToolRegistry;
 import cd.lan1akea.core.tool.builtin.TodoWriteTool;
 import cd.lan1akea.core.tool.mcp.HttpSseTransport;
 import cd.lan1akea.core.tool.mcp.McpClient;
@@ -457,9 +462,9 @@ public class HarnessAgent implements StreamableAgent, CallableAgent {
             ChatModel effectiveModel = circuitBreakerEnabled
                 ? new ResilienceChatModel(model, circuitBreakerFailureThreshold, circuitBreakerHalfOpenMs)
                 : model;
-            ReActAgent.Builder agentBuilder = ReActAgent.builder().name(name).model(effectiveModel);
-            agentBuilder.toolAdapter(new AnnotationToolAdapter());
-            for (Object obj : toolObjects) agentBuilder.tool(obj);
+            ToolRegistry registry = new ToolRegistry();
+            registry.addAdapter(new AnnotationToolAdapter());
+            for (Object obj : toolObjects) registry.registerTool(obj);
 
             List<AutoCloseable> mcpClients = new ArrayList<>();
             for (McpServerConfig mcpCfg : mcpServers) {
@@ -467,18 +472,20 @@ public class HarnessAgent implements StreamableAgent, CallableAgent {
                 mcpClient.connect().block();
                 mcpClients.add(mcpClient);
                 mcpClient.listTools().block().forEach(info ->
-                    agentBuilder.tool(new McpToolAdapter(mcpClient, info)));
+                    registry.register(new McpToolAdapter(mcpClient, info)));
             }
 
+            HookChain hooksChain = new HookChain();
+
             // === 系统 Hook（默认开启） ===
-            agentBuilder.hook(new RateLimitHook());
-            agentBuilder.hook(new LoggingHook("HarnessAgent"));
+            hooksChain.register(new RateLimitHook());
+            hooksChain.register(new LoggingHook("HarnessAgent"));
 
             // === Plan 模式 ===
-            if (enablePlanMode) agentBuilder.tool(new TodoWriteTool());
+            if (enablePlanMode) registry.registerTool(new TodoWriteTool());
 
             // === 记忆 ===
-            if (memory != null) agentBuilder.hook(new MemoryEnrichmentHook(memory));
+            if (memory != null) hooksChain.register(new MemoryEnrichmentHook(memory));
 
             // === 上下文压缩（默认渐进式，从模型获取上下文长度） ===
             int maxInput = model.getMaxInputTokens();
@@ -487,35 +494,47 @@ public class HarnessAgent implements StreamableAgent, CallableAgent {
                 : new ProgressiveCompactionStrategy(new ModelContextWindow(name, maxInput, maxInput / 2),
                     new SnipCompactionStrategy(), new TrimCompactionStrategy(),
                     new SummaryCompactionStrategy());
-            agentBuilder.hook(new ContextCompressionHook(compaction,
+            hooksChain.register(new ContextCompressionHook(compaction,
                 new ModelContextWindow(name, maxInput, maxInput / 2),
                 CompactionContext.builder().maxInputTokens(maxInput).keepRecent(4).build()));
 
             // === 业务 Hook（按需配置） ===
-            if (toolAccessPolicy != null) agentBuilder.hook(new ToolAccessHook(toolAccessPolicy));
-            if (contentFilterWords != null) agentBuilder.hook(new ContentFilterHook("ContentFilter", contentFilterWords));
+            if (toolAccessPolicy != null) hooksChain.register(new ToolAccessHook(toolAccessPolicy));
+            if (contentFilterWords != null) hooksChain.register(new ContentFilterHook("ContentFilter", contentFilterWords));
 
             // === 审批 ===
             if (approvalStore != null) {
-                agentBuilder.hook(new ApprovalHook(approvalStore));
+                hooksChain.register(new ApprovalHook(approvalStore));
             }
 
             // === 用户 Hook ===
-            for (Hook hook : hooks) agentBuilder.hook(hook);
-            for (AroundHook ah : aroundHooks) agentBuilder.aroundHook(ah);
-            AgentStateStore effectiveStore = stateStore != null ? stateStore : new InMemoryAgentStateStore();
-            agentBuilder.stateStore(effectiveStore);
-            agentBuilder.hook(new SessionPersistenceHook(effectiveStore));
-            if (maxIterations != null) agentBuilder.maxIterations(maxIterations);
-            if (temperature != null) agentBuilder.temperature(temperature);
-            if (maxTokens != null) agentBuilder.maxTokens(maxTokens);
-            if (toolChoice != null) agentBuilder.toolChoice(toolChoice);
-            if (totalTimeoutMs != null) agentBuilder.totalTimeoutMs(totalTimeoutMs);
+            for (Hook hook : hooks) hooksChain.register(hook);
 
-            ReActAgent agent = agentBuilder.build();
-            if (approvalStore != null) {
-                agent.getToolExecutor().setApprovalStore(approvalStore);
-            }
+            AroundHookChain aroundHooksChain = new AroundHookChain();
+            for (AroundHook ah : aroundHooks) aroundHooksChain.register(ah);
+
+            AgentStateStore effectiveStore = stateStore != null ? stateStore : new InMemoryAgentStateStore();
+            hooksChain.register(new SessionPersistenceHook(effectiveStore));
+
+            AgentExecutionConfig execConfig = AgentExecutionConfig.builder()
+                .maxIterations(maxIterations != null ? maxIterations : 10)
+                .temperature(temperature != null ? temperature : effectiveModel.getDefaultTemperature())
+                .maxTokens(maxTokens != null ? maxTokens : effectiveModel.getDefaultMaxTokens())
+                .toolChoice(toolChoice != null ? toolChoice : ToolChoicePolicy.AUTO)
+                .totalTimeoutMs(totalTimeoutMs != null ? totalTimeoutMs : 300_000)
+                .build();
+
+            AgentConfig agentConfig = AgentConfig.builder()
+                .name(name)
+                .model(effectiveModel)
+                .toolRegistry(registry)
+                .hookChain(hooksChain)
+                .aroundHookChain(aroundHooksChain)
+                .stateStore(effectiveStore)
+                .executionConfig(execConfig)
+                .build();
+
+            ReActAgent agent = new ReActAgent(agentConfig);
             if (systemMessage != null) agent.setSystemMessage(systemMessage);
             if (metrics != null) agent.setMetrics(metrics);
             agent.build().block();

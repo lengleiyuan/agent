@@ -307,6 +307,15 @@ class ReActAgentConcurrentTest {
                                                   List<ToolSchema> toolSchemas,
                                                   GenerateOptions options) {
             if (throwError) return Flux.error(new RuntimeException("模拟错误"));
+            if (blockLatch != null) {
+                return Mono.fromCallable(() -> {
+                    try { blockLatch.await(); } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    return ChatStreamChunk.builder().delta("stub").type(ChatStreamChunk.TYPE_TEXT)
+                        .finishReason("stop").build();
+                }).flux();
+            }
             return Flux.just(ChatStreamChunk.builder().delta("stub").type(ChatStreamChunk.TYPE_TEXT)
                 .finishReason("stop").build());
         }

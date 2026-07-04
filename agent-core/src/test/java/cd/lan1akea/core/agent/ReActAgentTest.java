@@ -400,6 +400,40 @@ class ReActAgentTest {
                                                   GenerateOptions options) {
             if (error != null) return Flux.error(error);
             if (streamChunks != null) return Flux.fromIterable(streamChunks);
+            ChatResponse r;
+            if (responses != null && callCount < responses.size()) {
+                r = responses.get(callCount++);
+            } else {
+                r = response;
+            }
+            if (r != null) {
+                java.util.List<ChatStreamChunk> chunks = new java.util.ArrayList<>();
+                Msg msg = r.getMessage();
+                String text = msg != null ? msg.getTextContent() : "";
+                List<ToolUseBlock> toolUses = msg != null ? msg.getToolUseBlocks() : null;
+                if (toolUses != null && !toolUses.isEmpty()) {
+                    for (ToolUseBlock tb : toolUses) {
+                        chunks.add(ChatStreamChunk.builder()
+                            .type(ChatStreamChunk.TYPE_TOOL_USE_START)
+                            .toolUseId(tb.getId())
+                            .toolName(tb.getName())
+                            .delta("")
+                            .build());
+                        chunks.add(ChatStreamChunk.builder()
+                            .type(ChatStreamChunk.TYPE_TOOL_USE_DELTA)
+                            .toolUseId(tb.getId())
+                            .delta(tb.getArguments())
+                            .build());
+                    }
+                } else {
+                    chunks.add(ChatStreamChunk.builder()
+                        .delta(text)
+                        .type(ChatStreamChunk.TYPE_TEXT)
+                        .finishReason(r.getFinishReason())
+                        .build());
+                }
+                return Flux.fromIterable(chunks);
+            }
             return Flux.empty();
         }
     }
