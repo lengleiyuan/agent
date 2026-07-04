@@ -26,7 +26,7 @@ public class ApproveApprovalTool extends ToolBase {
 
     @Override
     public String getDescription() {
-        return "批准或拒绝一条待审批操作。需提供 approval_id 和 action（approve/deny），可选备注";
+        return "批准或拒绝一条待审批操作。参数: approval_id(审批ID), action(approve或deny), comment(可选备注)";
     }
 
     @Override

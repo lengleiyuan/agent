@@ -40,7 +40,7 @@ public class ListApprovalsTool extends ToolBase {
         for (int i = 0; i < pending.size(); i++) {
             PendingApproval a = pending.get(i);
             sb.append("[").append(i + 1).append("] ");
-            sb.append("ID: ").append(a.getApprovalId()).append("\n");
+            sb.append("approval_id: ").append(a.getApprovalId()).append("\n");
             sb.append("    工具: ").append(a.getToolName());
             if (a.getToolDescription() != null) sb.append(" (").append(a.getToolDescription()).append(")");
             sb.append("\n");
