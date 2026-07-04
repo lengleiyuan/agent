@@ -54,7 +54,7 @@ public class RequestPipeline {
             HookContext callHc = HookContext.from(ctx, 0);
             GenerateOptions opts = resolveOptions();
 
-            return aroundHookChain.aroundReasoningStream(new HookEvent(null), callHc,
+            return aroundHookChain.aroundCallStream(new HookEvent(null), callHc,
                     e -> loadSessionAndHistory(ctx, messages)
                             .flatMapMany(msgs -> injectSystemMessage(msgs).flatMapMany(Flux::just))
                             .concatMap(m -> {
@@ -75,7 +75,7 @@ public class RequestPipeline {
         return Mono.deferContextual(ctxView -> {
             final RuntimeContext ctx = resolveContext(ctxView, rtCtx);
             HookContext callHc = HookContext.from(ctx, 0);
-            return aroundHookChain.aroundReasoning(new HookEvent(null), callHc,
+            return aroundHookChain.aroundCall(new HookEvent(null), callHc,
                     e -> loadSessionAndHistory(ctx, messages)
                             .flatMap(this::injectSystemMessage)
                             .flatMap(m -> {

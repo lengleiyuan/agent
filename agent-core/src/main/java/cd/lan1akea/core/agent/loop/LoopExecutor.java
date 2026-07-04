@@ -131,19 +131,16 @@ public class LoopExecutor {
     }
 
     // ============================================================
-    // 非流式 — 从流式派生
+    // 非流式 — 等待流式循环完成，返回最终模型响应
     // ============================================================
 
     public Mono<ChatResponse> run(LoopContext ctx) {
         return runStream(ctx)
-                .collectList()
-                .flatMap(chunks -> {
-                    ChatResponse resp = ModelCallPipeline.assembleResponseFromChunks(chunks);
-                    if (resp == null) {
-                        resp = new ChatResponse(null, new ChatUsage(0, 0), "empty", "");
-                    }
-                    return Mono.just(resp);
-                });
+                .then(Mono.fromSupplier(() -> {
+                    ChatResponse resp = ctx.getLastResponse();
+                    if (resp != null) return resp;
+                    return new ChatResponse(null, new ChatUsage(0, 0), "empty", "");
+                }));
     }
 
     // ============================================================

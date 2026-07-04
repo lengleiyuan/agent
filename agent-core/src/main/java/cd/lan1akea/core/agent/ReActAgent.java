@@ -3,6 +3,7 @@ package cd.lan1akea.core.agent;
 import cd.lan1akea.core.agent.config.AgentConfig;
 import cd.lan1akea.core.agent.loop.*;
 import cd.lan1akea.core.CoreConstants.UI;
+import cd.lan1akea.core.context.RuntimeContext;
 import cd.lan1akea.core.exception.AgentConfigurationException;
 import cd.lan1akea.core.hook.*;
 import cd.lan1akea.core.hook.recorder.HookRecorder;
@@ -18,7 +19,6 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * ReActAgent - 多租户并发安全的 Agent 实现。
@@ -85,7 +85,7 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
     }
 
     @Override
-    public Mono<ChatResponse> chat(List<Msg> messages, cd.lan1akea.core.context.RuntimeContext ctx) {
+    public Mono<ChatResponse> chat(List<Msg> messages, RuntimeContext ctx) {
         ensureBuilt();
         return pipeline.execute(messages, ctx);
     }
@@ -98,7 +98,7 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
 
     @Override
     public Flux<ChatStreamChunk> stream(List<Msg> messages,
-                                         cd.lan1akea.core.context.RuntimeContext ctx) {
+                                         RuntimeContext ctx) {
         ensureBuilt();
         return pipeline.executeStream(messages, ctx);
     }
