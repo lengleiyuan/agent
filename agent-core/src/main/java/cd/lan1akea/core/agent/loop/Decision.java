@@ -8,8 +8,11 @@ import cd.lan1akea.core.model.ChatResponse;
  */
 public final class Decision {
 
+    /** 是否终止循环。 */
     private final boolean stop;
+    /** 下一循环阶段（stop 为 true 时为 null）。 */
     private final Phase nextPhase;
+    /** 最终响应结果（stop 为 true 时有效）。 */
     private final ChatResponse response;
 
     private Decision(boolean stop, Phase nextPhase, ChatResponse response) {
@@ -28,8 +31,25 @@ public final class Decision {
         return new Decision(true, null, resp);
     }
 
+    /**
+     * 返回是否终止循环。
+     *
+     * @return true 表示终止循环
+     */
     public boolean isStop()          { return stop; }
+
+    /**
+     * 返回下一循环阶段。
+     *
+     * @return 下一阶段，stop 为 true 时为 null
+     */
     public Phase getNextPhase()      { return nextPhase; }
+
+    /**
+     * 返回最终响应结果。
+     *
+     * @return 最终响应，stop 为 true 时有效
+     */
     public ChatResponse getResponse() { return response; }
 
     @Override

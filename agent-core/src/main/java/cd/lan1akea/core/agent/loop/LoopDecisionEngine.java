@@ -33,7 +33,7 @@ public class LoopDecisionEngine {
         if (current.isObserve()) {
             return evaluateObserve(ctx);
         }
-        // Reason -> caller handles post-reason tool check
+        /* Reason 阶段：由调用方（LoopExecutor）在模型返回后检查工具调用并决定下一步 */
         return Decision.continue_(current);
     }
 

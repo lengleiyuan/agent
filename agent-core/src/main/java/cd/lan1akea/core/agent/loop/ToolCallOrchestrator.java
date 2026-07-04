@@ -11,15 +11,36 @@ import reactor.core.publisher.Mono;
 
 /**
  * 工具调用编排器。
- * 将单次工具调用拆为: 构建上下文 → PRE Hook → 审批/执行 → POST Hook。
+ *
+ * <p>将单次工具调用拆为四个独立步骤：
+ * <ol>
+ *   <li>构建上下文 —— 从 ToolUseBlock + LoopContext 组装 ToolCallContext</li>
+ *   <li>PRE Hook —— 分发 PRE_TOOL_CALL 事件，处理 abort/skip/continue</li>
+ *   <li>执行 —— AroundHook 洋葱包裹 toolExecutor，介入异常穿透</li>
+ *   <li>POST Hook —— 分发 POST_TOOL_CALL 事件</li>
+ * </ol>
+ *
+ * <p>人工介入异常不在此处理，直接穿透到 LoopExecutor 统一 catch。
  */
 public class ToolCallOrchestrator {
 
+    /** 工具执行器 */
     private final ToolExecutor toolExecutor;
+    /** 工具注册表 */
     private final ToolRegistry toolRegistry;
+    /** Hook 分发器 */
     private final HookDispatcher hookDispatcher;
+    /** AroundHook 链 */
     private final AroundHookChain aroundHookChain;
 
+    /**
+     * 构建工具调用编排器。
+     *
+     * @param toolExecutor    工具执行器
+     * @param toolRegistry    工具注册表
+     * @param hookDispatcher  Hook 分发器
+     * @param aroundHookChain AroundHook 链
+     */
     public ToolCallOrchestrator(ToolExecutor toolExecutor, ToolRegistry toolRegistry,
                                  HookDispatcher hookDispatcher, AroundHookChain aroundHookChain) {
         this.toolExecutor = toolExecutor;
@@ -30,6 +51,12 @@ public class ToolCallOrchestrator {
 
     /**
      * 执行单个工具调用，返回含 callId 的结果。
+     *
+     * <p>标准流程：构建上下文 → PRE Hook（abort/skip/continue）→ 执行 → POST Hook。
+     *
+     * @param tc  模型请求的工具调用块
+     * @param ctx 循环上下文
+     * @return 含 callId 的工具执行结果
      */
     public Mono<ToolResult> execute(ToolUseBlock tc, LoopContext ctx) {
         HookContext hc = buildHookContext(ctx);
@@ -74,8 +101,13 @@ public class ToolCallOrchestrator {
                 .map(r -> r.withCallId(param.getCallId()));
     }
 
-    // ---- Step 1: 构建上下文 ----
-
+    /**
+     * 步骤一：从 ToolUseBlock 和 LoopContext 构建 ToolCallContext。
+     *
+     * @param tc  模型请求的工具调用块
+     * @param ctx 循环上下文
+     * @return 填充了多租户身份信息的工具调用上下文
+     */
     private ToolCallContext buildContext(ToolUseBlock tc, LoopContext ctx) {
         return ToolCallContext.builder()
                 .callId(tc.getId())
@@ -88,8 +120,15 @@ public class ToolCallOrchestrator {
                 .build();
     }
 
-    // ---- Step 2: PRE Hook 分发 ----
-
+    /**
+     * 步骤二：分发 PRE_TOOL_CALL Hook。
+     *
+     * <p>处理三种结果：abort（终止）、skip（跳过）、continue（继续执行）。
+     *
+     * @param event 工具调用事件
+     * @param hc    Hook 上下文
+     * @return 终止时返回结果 Mono，继续时返回 Mono.empty()
+     */
     private Mono<ToolResult> dispatchPreHook(ToolCallEvent event, HookContext hc) {
         return hookDispatcher.dispatch(event, hc)
                 .flatMap(r -> {
@@ -108,27 +147,51 @@ public class ToolCallOrchestrator {
                 });
     }
 
-    // ---- Step 3: 执行（审批/介入异常穿透到 LoopExecutor 统一处理） ----
-
+    /**
+     * 步骤三：通过 AroundHook 链执行工具。
+     *
+     * <p>介入异常（ToolSuspendException / HumanInterventionException）不在此捕获，
+     * 直接穿透到 LoopExecutor.executeAct() 的 onErrorResume。
+     *
+     * @param param 工具调用上下文
+     * @param event 工具调用事件
+     * @param hc    Hook 上下文
+     * @param ctx   循环上下文
+     * @return 工具执行结果
+     */
     private Mono<ToolResult> executeWithApproval(ToolCallContext param, ToolCallEvent event,
                                                    HookContext hc, LoopContext ctx) {
         return aroundHookChain.aroundToolCall(event, hc,
                         (HookEvent e) -> toolExecutor.execute(param)
                                 .map(result -> {
-                                    e.setPayload("tool_result", result);
+                                e.setPayload("tool_result", result);
                                     ((ToolCallEvent) e).setResult(result);
                                     return e;
                                 }))
                 .flatMap(e -> Mono.justOrEmpty((ToolResult) e.getPayload("tool_result")));
     }
 
-    // ---- Step 4: POST Hook 分发 ----
-
+    /**
+     * 步骤四：分发 POST_TOOL_CALL Hook。
+     *
+     * <p>无论工具执行成功或失败，都会触发 POST Hook。Hook 结果不影响返回值。
+     *
+     * @param param  工具调用上下文
+     * @param result 工具执行结果
+     * @param hc     Hook 上下文
+     * @return 原始执行结果
+     */
     private Mono<ToolResult> dispatchPostHook(ToolCallContext param, ToolResult result, HookContext hc) {
         ToolCallEvent post = new ToolCallEvent(HookEventType.POST_TOOL_CALL, param, result);
         return hookDispatcher.dispatch(post, hc).thenReturn(result);
     }
 
+    /**
+     * 从循环上下文构建 Hook 上下文。
+     *
+     * @param ctx 循环上下文
+     * @return 新的 Hook 上下文
+     */
     private HookContext buildHookContext(LoopContext ctx) {
         return new HookContext(ctx.getAgentName(), ctx.getRequestId(),
                 ctx.getTenantId(), ctx.getSessionId(),

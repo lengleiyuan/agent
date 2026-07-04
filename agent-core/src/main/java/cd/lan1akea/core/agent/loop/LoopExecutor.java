@@ -29,21 +29,43 @@ import java.util.logging.Logger;
  * ReAct 循环执行器。
  * 以显式循环替代递归 flatMap，流式为 canonical。
  *
- * 流程: runStream(Guard) -> executeAndContinue(Reason)
+ * <p>流程: runStream(Guard) -> executeAndContinue(Reason)
  *       -> [no tools: STOP] [has tools: executeAndContinue(Act)]
  *       -> [Act: execute+collect -> runStream(Guard)]
  */
 public class LoopExecutor {
 
+    /** 日志记录器 */
     private static final Logger log = Logger.getLogger(LoopExecutor.class.getName());
 
+    /** 循环决策引擎，用于评估当前阶段并决定下一步行为 */
     private final LoopDecisionEngine engine;
+
+    /** 模型调用管道，负责与 LLM 交互并获取回复 */
     private final ModelCallPipeline modelPipeline;
+
+    /** 工具调用编排器，负责工具的执行与结果收集 */
     private final ToolCallOrchestrator toolOrchestrator;
+
+    /** Hook 分发器，用于在循环各阶段触发回调 */
     private final HookDispatcher hookDispatcher;
+
+    /** Agent 指标收集器，记录迭代次数等运行时数据 */
     private final AgentMetrics metrics;
+
+    /** 人工介入请求存储器 */
     private final InterventionStore interventionStore;
 
+    /**
+     * 构造 ReAct 循环执行器。
+     *
+     * @param engine             循环决策引擎
+     * @param modelPipeline      模型调用管道
+     * @param toolOrchestrator   工具调用编排器
+     * @param hookDispatcher     Hook 分发器
+     * @param metrics            Agent 指标收集器
+     * @param interventionStore  介入请求存储器
+     */
     public LoopExecutor(LoopDecisionEngine engine, ModelCallPipeline modelPipeline,
                          ToolCallOrchestrator toolOrchestrator, HookDispatcher hookDispatcher,
                          AgentMetrics metrics, InterventionStore interventionStore) {
@@ -55,10 +77,15 @@ public class LoopExecutor {
         this.interventionStore = interventionStore;
     }
 
-    // ============================================================
-    // 流式 — canonical
-    // ============================================================
-
+    /**
+     * 启动流式 ReAct 循环（canonical 入口）。
+     *
+     * <p>每次调用首先检查是否需要从介入状态恢复，或处理中断信号；
+     * 否则通过决策引擎评估 Guard 阶段，决定停止或进入 Reason/Act 循环。
+     *
+     * @param ctx 循环上下文
+     * @return 流式输出 chunk 序列
+     */
     public Flux<ChatStreamChunk> runStream(LoopContext ctx) {
         return Flux.defer(() -> {
             // 检查是否有已解决的介入需要恢复
@@ -202,6 +229,16 @@ public class LoopExecutor {
                 .concatWith(Flux.defer(() -> runStream(ctx)));
     }
 
+    /**
+     * 追加单个工具执行结果到上下文消息列表。
+     *
+     * <p>将工具执行结果以 TOOL 角色的消息添加到上下文中。
+     * 在追加之前先保存最后一次模型回复消息。
+     *
+     * @param ctx    循环上下文
+     * @param result 工具执行结果
+     * @param callId 工具调用 ID
+     */
     private void appendSingleToolResult(LoopContext ctx, ToolResult result, String callId) {
         Msg lastMsg = ctx.getLastResponse() != null ? ctx.getLastResponse().getMessage() : null;
         if (lastMsg != null) ctx.addMessage(lastMsg);
@@ -213,6 +250,20 @@ public class LoopExecutor {
                 .build());
     }
 
+    /**
+     * 根据阶段决策执行并继续 ReAct 循环。
+     *
+     * <p>根据传入的阶段类型路由到对应的执行方法：
+     * <ul>
+     *   <li>Reason 阶段 — 调用模型获取回复</li>
+     *   <li>Act 阶段 — 执行工具调用</li>
+     *   <li>Observe 阶段 — 分发 after-iteration hook 后重新进入循环</li>
+     * </ul>
+     *
+     * @param phase 当前决策阶段
+     * @param ctx   循环上下文
+     * @return 流式输出 chunk 序列
+     */
     private Flux<ChatStreamChunk> executeAndContinue(Phase phase, LoopContext ctx) {
         if (phase.isReason()) {
             return executeReason(ctx);
@@ -227,8 +278,15 @@ public class LoopExecutor {
         return Flux.empty();
     }
 
-    // ---- Reason ----
-
+    /**
+     * 执行推理阶段：调用模型获取回复，检查是否有工具调用。
+     *
+     * <p>流式收集模型分块 → 组装 ChatResponse → 检查工具调用：
+     * 无工具则保存消息后终止，有工具则链式进入 Act 阶段。
+     *
+     * @param ctx 循环上下文
+     * @return 模型推理的流式分块
+     */
     private Flux<ChatStreamChunk> executeReason(LoopContext ctx) {
         List<ChatStreamChunk> buffer = new ArrayList<>();
         return modelPipeline.executeStream(ctx)
@@ -252,8 +310,17 @@ public class LoopExecutor {
                 }));
     }
 
-    // ---- Act ----
-
+    /**
+     * 执行行动阶段：并行执行工具调用并收集结果。
+     *
+     * <p>增加迭代计数并记录指标，通过 {@link ToolCallOrchestrator} 并行执行所有工具调用，
+     * 处理可能出现的异常，将结果追加到上下文后执行 after-iteration hook，
+     * 最后重新进入 {@link #runStream} 循环。
+     *
+     * @param ctx       循环上下文
+     * @param toolCalls 待执行的工具调用列表
+     * @return 流式输出 chunk 序列
+     */
     private Flux<ChatStreamChunk> executeAct(LoopContext ctx, List<ToolUseBlock> toolCalls) {
         ctx.setIteration(ctx.getIteration() + 1);
         metrics.recordIteration(ctx.getAgentName(), ctx.getSessionId(),
@@ -305,8 +372,6 @@ public class LoopExecutor {
         return Flux.just(chunkFromToolResult(failure));
     }
 
-    // ---- Intervention handling ----
-
     /**
      * 处理人工介入异常，创建介入请求并暂停循环。
      *
@@ -357,6 +422,12 @@ public class LoopExecutor {
         return handleIntervention(hie, ctx);
     }
 
+    /**
+     * 将 {@link HumanInterventionException.Type} 转换为 {@link InterventionRequest.Type}。
+     *
+     * @param t 人工介入异常类型
+     * @return 对应的介入请求类型
+     */
     private static InterventionRequest.Type toInterventionType(HumanInterventionException.Type t) {
         switch (t) {
             case TOOL_APPROVAL: return InterventionRequest.Type.TOOL_APPROVAL;
@@ -422,10 +493,15 @@ public class LoopExecutor {
                 .build();
     }
 
-    // ============================================================
-    // 非流式 — 等待流式循环完成，返回最终模型响应
-    // ============================================================
-
+    /**
+     * 非流式入口：等待流式循环完成，返回最终模型响应。
+     *
+     * <p>收集所有流式 chunk 后返回上下文中保存的最后一次模型响应。
+     * 如果上下文中没有响应记录，返回一个空响应（包含零 token 用量和 "empty" 结束原因）。
+     *
+     * @param ctx 循环上下文
+     * @return 最终模型响应（Mono）
+     */
     public Mono<ChatResponse> run(LoopContext ctx) {
         return runStream(ctx)
                 .then(Mono.fromSupplier(() -> {
@@ -435,10 +511,16 @@ public class LoopExecutor {
                 }));
     }
 
-    // ============================================================
-    // 中断处理
-    // ============================================================
-
+    /**
+     * 处理中断流：分发中断事件 Hook，根据结果决定中止或恢复。
+     *
+     * <p>通过 {@link HookDispatcher} 分发 {@link InterruptEvent}，
+     * 如果 hook 返回 abort 则生成中断结束 chunk；
+     * 否则注入反馈消息后恢复循环，或返回已中断原因。
+     *
+     * @param ctx 循环上下文
+     * @return 中断处理后的流式 chunk 序列
+     */
     private Flux<ChatStreamChunk> handleInterruptStream(LoopContext ctx) {
         Msg feedback = ctx.getFeedbackMsg();
         HookContext hc = buildHookContext(ctx);
@@ -465,10 +547,14 @@ public class LoopExecutor {
                 });
     }
 
-    // ============================================================
-    // 工具方法
-    // ============================================================
-
+    /**
+     * 批量追加工具执行结果到上下文消息列表。
+     *
+     * <p>将最后一次模型回复和所有工具执行结果以 TOOL 角色的消息添加到上下文中。
+     *
+     * @param ctx     循环上下文
+     * @param results 工具执行结果列表
+     */
     private void appendToolResults(LoopContext ctx, List<ToolResult> results) {
         Msg lastMsg = ctx.getLastResponse() != null
                 ? ctx.getLastResponse().getMessage() : null;
@@ -487,6 +573,15 @@ public class LoopExecutor {
         }
     }
 
+    /**
+     * 分发迭代后 Hook 事件。
+     *
+     * <p>在每次迭代（Reason 或 Act 阶段）完成后触发 {@link HookEventType#AFTER_ITERATION} 事件，
+     * 允许外部监听器感知循环进度。事件分发失败时仅记录警告，不影响循环继续。
+     *
+     * @param ctx 循环上下文
+     * @return 分发完成信号
+     */
     private Mono<Void> dispatchAfterIteration(LoopContext ctx) {
         HookContext hc = buildHookContext(ctx);
         HookEvent event = new HookEvent(HookEventType.AFTER_ITERATION);
@@ -500,12 +595,24 @@ public class LoopExecutor {
                 .then();
     }
 
+    /**
+     * 从模型回复中提取工具调用列表。
+     *
+     * @param response 模型回复
+     * @return 工具调用列表，空列表表示无工具调用
+     */
     private List<ToolUseBlock> extractToolCalls(ChatResponse response) {
         if (response == null || response.getMessage() == null) return List.of();
         List<ToolUseBlock> blocks = response.getMessage().getToolUseBlocks();
         return blocks != null ? blocks : List.of();
     }
 
+    /**
+     * 构建 Hook 分发的上下文对象。
+     *
+     * @param ctx 循环上下文
+     * @return Hook 上下文
+     */
     private HookContext buildHookContext(LoopContext ctx) {
         return new HookContext(ctx.getAgentName(), ctx.getRequestId(),
                 ctx.getTenantId(), ctx.getSessionId(),
@@ -513,6 +620,12 @@ public class LoopExecutor {
                 List.of(), ctx.getAttributes());
     }
 
+    /**
+     * 从 {@link ChatResponse} 构建文本类型的输出 chunk。
+     *
+     * @param resp 模型回复
+     * @return 输出 chunk
+     */
     private static ChatStreamChunk chunkFromResponse(ChatResponse resp) {
         if (resp == null || resp.getMessage() == null) return chunkFromText("", "");
         return ChatStreamChunk.builder()
@@ -521,6 +634,13 @@ public class LoopExecutor {
                 .build();
     }
 
+    /**
+     * 从文本内容和结束原因构建输出 chunk。
+     *
+     * @param text         输出文本
+     * @param finishReason 结束原因
+     * @return 输出 chunk
+     */
     private static ChatStreamChunk chunkFromText(String text, String finishReason) {
         return ChatStreamChunk.builder()
                 .delta(text)

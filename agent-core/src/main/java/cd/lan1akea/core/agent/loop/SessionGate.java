@@ -18,6 +18,11 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class SessionGate {
 
+    /**
+     * 会话门控映射表。
+     * key 为 sessionId，value 为前一个请求释放的信号量。
+     * 使用 ConcurrentHashMap 保证线程安全，同一 session 的 put 操作为原子替换。
+     */
     private final ConcurrentHashMap<String, Sinks.One<Void>> gates = new ConcurrentHashMap<>();
 
     /**
