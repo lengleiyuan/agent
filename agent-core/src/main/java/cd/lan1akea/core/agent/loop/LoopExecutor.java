@@ -109,7 +109,7 @@ public class LoopExecutor {
         metrics.recordIteration(ctx.getAgentName(), ctx.getSessionId(),
                 ctx.getIteration(), toolCalls.size());
 
-        List<ToolResult> results = new ArrayList<>();
+        List<ToolResult> results = new java.util.concurrent.CopyOnWriteArrayList<>();
 
         return Flux.fromIterable(toolCalls)
                 .flatMap(tc -> toolOrchestrator.execute(tc, ctx)
@@ -166,7 +166,7 @@ public class LoopExecutor {
                     String reason = ctx.getLastResponse() != null
                             ? ctx.getLastResponse().getMessage().getTextContent()
                             : UI.INTERRUPT_EXEC;
-                    return Flux.just(chunkFromText(reason, "interrupted"));
+                    return Flux.just(chunkFromText(reason, FinishReason.INTERRUPTED));
                 });
     }
 
@@ -219,6 +219,7 @@ public class LoopExecutor {
     }
 
     private static ChatStreamChunk chunkFromResponse(ChatResponse resp) {
+        if (resp == null || resp.getMessage() == null) return chunkFromText("", "");
         return ChatStreamChunk.builder()
                 .delta(resp.getMessage() != null ? resp.getMessage().getTextContent() : "")
                 .finishReason(resp.getFinishReason())
