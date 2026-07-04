@@ -144,9 +144,10 @@ public abstract class ToolBase implements Tool {
 
     /**
      * 校验必需参数是否存在。
+     * 失败时给出明确错误信息，帮助模型自修正。
      *
      * @param callParam 调用参数
-     * @throws IllegalArgumentException 缺少必需参数时抛出
+     * @throws IllegalArgumentException 缺少必需参数时抛出（含实际传入 key 和期望 key）
      */
     protected void validateParams(ToolCallContext callParam) {
         ValidationUtils.notNull(callParam, "callParam");
@@ -154,8 +155,15 @@ public abstract class ToolBase implements Tool {
             if (param.isRequired()) {
                 Object value = callParam.get(param.getName());
                 if (value == null) {
+                    java.util.Set<String> actualKeys = callParam.getArguments().asMap().keySet();
+                    String requiredNames = params.stream()
+                            .filter(ToolParam::isRequired)
+                            .map(ToolParam::getName)
+                            .reduce((a, b) -> a + ", " + b).orElse("");
+                    String actualStr = actualKeys.isEmpty() ? "（无参数）" : String.join(", ", actualKeys);
                     throw new IllegalArgumentException(
-                        "工具 [" + getName() + "] 缺少必需参数: " + param.getName());
+                            "参数名不匹配。你传了 [" + actualStr + "]，但工具 [" + getName()
+                            + "] 需要 [" + requiredNames + "]。缺少: " + param.getName());
                 }
             }
         }

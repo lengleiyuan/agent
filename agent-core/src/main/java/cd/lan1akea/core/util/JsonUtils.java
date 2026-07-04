@@ -97,31 +97,45 @@ public final class JsonUtils {
      * 修复 LLM 常见 JSON 格式错误。
      */
     public static String repairJson(String raw) {
-        if (raw == null || raw.isEmpty() || isValidJson(raw)) return raw;
+        if (raw == null || raw.isEmpty()) return raw;
 
         String s = raw;
 
-        // 1. 去除 ```json ... ``` 代码块包裹
-        s = stripCodeFences(s);
+        // 1. 去除尾部逗号: "value",} → "value"}（FastJSON 对此宽容，需先于 isValidJson）
+        s = s.replaceAll(",\\s*}", "}");
+        if (isValidJson(s) && !raw.equals(s)) return s;
+
+        // 若原始已合法，直接返回
         if (isValidJson(s)) return s;
 
-        // 2. "key""value" → "key":"value"（缺失冒号）
+        // 2. 去除 ```json ... ``` 代码块包裹
+        String stripped = stripCodeFences(s);
+        if (!stripped.equals(s) && isValidJson(stripped)) return stripped;
+        s = stripped;
+
+        // 3. 键名缺引号: {key: → {"key":
+        s = s.replaceAll("\\{([a-zA-Z_]\\w*)\\s*:", "{\"$1\":");
+        if (isValidJson(s)) return s;
+
+        // 4. "key""value" → "key":"value"（缺失冒号）
         s = s.replaceAll("\"(\\w+)\"\"", "\"$1\":\"");
         if (isValidJson(s)) return s;
 
-        // 3. "...} trailing text..." → 截取到最后一个 }
+        // 5. "...} trailing text..." → 截取到最后一个 }
         s = trimToJson(s);
         if (isValidJson(s)) return s;
 
-        // 4. value} → value"}（未闭合的字符串值）
-        s = raw.replaceAll("\"(\\w+)\"\"", "\"$1\":\"");
+        // 6. 未闭合字符串值: ..., "key": "value} → ..., "key": "value"}
         if (s.endsWith("}") && !s.endsWith("\"}") && !s.endsWith("\" }")) {
+            int lastQuote = s.lastIndexOf('"');
             int lastBrace = s.lastIndexOf('}');
-            String candidate = s.substring(0, lastBrace) + "\"}";
-            if (isValidJson(candidate)) return candidate;
+            if (lastQuote > 0 && lastBrace > lastQuote) {
+                String candidate = s.substring(0, lastBrace) + "\"}";
+                if (isValidJson(candidate)) return candidate;
+            }
         }
 
-        return raw;
+        return s;
     }
 
     public static boolean isValidJson(String str) {
