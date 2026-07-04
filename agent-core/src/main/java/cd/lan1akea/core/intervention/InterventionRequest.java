@@ -53,7 +53,7 @@ public class InterventionRequest {
         this.recentMessages = builder.recentMessages != null
                 ? List.copyOf(builder.recentMessages) : List.of();
         this.createdAt = Instant.now();
-        int ttl = builder.ttlMinutes > 0 ? builder.ttlMinutes : 5;
+        int ttl = builder.ttlMinutes >= 0 ? builder.ttlMinutes : 5;
         this.expiresAt = createdAt.plus(ttl, ChronoUnit.MINUTES);
     }
 
