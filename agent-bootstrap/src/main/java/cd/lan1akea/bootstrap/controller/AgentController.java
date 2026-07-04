@@ -42,8 +42,8 @@ public class AgentController {
 
     @GetMapping("/session/{sessionId}/history")
     public Flux<Msg> history(@PathVariable("sessionId") String sessionId,
-                              @RequestParam(defaultValue = "0") int offset,
-                              @RequestParam(defaultValue = "50") int limit) {
+                              @RequestParam(name = "offset", defaultValue = "0") int offset,
+                              @RequestParam(name = "limit", defaultValue = "50") int limit) {
         return defaultAgent.getStateStore().getHistory(new SessionId(sessionId), offset, limit);
     }
 
