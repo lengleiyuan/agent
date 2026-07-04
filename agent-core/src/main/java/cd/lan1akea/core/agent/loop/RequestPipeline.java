@@ -33,6 +33,7 @@ public class RequestPipeline {
     private final String agentName;
     private final String systemMessage;
     private final ConcurrentHashMap<String, LoopContext> activeRequests;
+    private final SessionGate sessionGate;
 
     public RequestPipeline(LoopExecutor loopExecutor, AgentStateStore stateStore,
                             AroundHookChain aroundHookChain, AgentExecutionConfig execConfig,
@@ -44,6 +45,7 @@ public class RequestPipeline {
         this.agentName = agentName;
         this.systemMessage = systemMessage;
         this.activeRequests = new ConcurrentHashMap<>();
+        this.sessionGate = new SessionGate();
     }
 
     public Flux<ChatStreamChunk> executeStream(List<Msg> messages, RuntimeContext rtCtx) {
@@ -63,7 +65,7 @@ public class RequestPipeline {
                                         .doFinally(s -> activeRequests.remove(loopCtx.getRequestId()));
                                 long timeout = execConfig.getTotalTimeoutMs();
                                 if (timeout > 0) stream = stream.timeout(Duration.ofMillis(timeout));
-                                return stream;
+                                return sessionGate.enqueueStream(loopCtx.getSessionId(), stream);
                             })
                             .contextWrite(c -> writeContext(c, ctx)));
         });
@@ -84,9 +86,9 @@ public class RequestPipeline {
                                         .doFinally(s -> activeRequests.remove(loopCtx.getRequestId()));
                                 long timeout = execConfig.getTotalTimeoutMs();
                                 if (timeout > 0) exec = exec.timeout(Duration.ofMillis(timeout));
-                                return exec;
+                                return sessionGate.enqueue(loopCtx.getSessionId(), exec);
                             })
-                            .map(resp -> { e.setPayload("response", resp); return e; }))
+                        .map(resp -> { e.setPayload("response", resp); return e; }))
                     .map(e -> (ChatResponse) e.getPayload("response"))
                     .contextWrite(c -> writeContext(c, ctx));
         });
