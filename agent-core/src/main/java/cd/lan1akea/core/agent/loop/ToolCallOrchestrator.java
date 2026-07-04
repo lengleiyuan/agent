@@ -93,14 +93,7 @@ public class ToolCallOrchestrator {
                                     ((ToolCallEvent) e).setResult(result);
                                     return e;
                                 }))
-                .flatMap(e -> {
-                    ToolResult result = e.getPayload("tool_result");
-                    if (result == null && e instanceof ToolCallEvent) {
-                        ToolCallEvent tce = (ToolCallEvent) e;
-                        result = tce.getResult();
-                    }
-                    return Mono.justOrEmpty(result);
-                })
+                .flatMap(e -> Mono.justOrEmpty((ToolResult) e.getPayload("tool_result")))
                 .onErrorResume(ToolSuspendException.class, e ->
                         handleSuspension(param, event, hc, ctx, e));
     }
