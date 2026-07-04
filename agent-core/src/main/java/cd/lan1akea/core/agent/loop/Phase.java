@@ -3,6 +3,8 @@ package cd.lan1akea.core.agent.loop;
 import cd.lan1akea.core.message.ToolUseBlock;
 import cd.lan1akea.core.tool.ToolResult;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -19,8 +21,12 @@ public final class Phase {
 
     private Phase(Type type, List<ToolUseBlock> toolCalls, List<ToolResult> results) {
         this.type = type;
-        this.toolCalls = toolCalls;
-        this.results = results;
+        this.toolCalls = toolCalls != null
+                ? Collections.unmodifiableList(new ArrayList<>(toolCalls))
+                : null;
+        this.results = results != null
+                ? Collections.unmodifiableList(new ArrayList<>(results))
+                : null;
     }
 
     // ---- 静态工厂 ----
@@ -43,9 +49,9 @@ public final class Phase {
 
     // ---- 访问器 ----
 
-    public Type type() { return type; }
-    public List<ToolUseBlock> toolCalls() { return toolCalls; }
-    public List<ToolResult> results() { return results; }
+    public Type getType() { return type; }
+    public List<ToolUseBlock> getToolCalls() { return toolCalls; }
+    public List<ToolResult> getResults() { return results; }
 
     public boolean isGuard()   { return type == Type.GUARD; }
     public boolean isReason()  { return type == Type.REASON; }

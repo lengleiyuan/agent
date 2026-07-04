@@ -29,8 +29,8 @@ public final class Decision {
     }
 
     public boolean isStop()          { return stop; }
-    public Phase nextPhase()         { return nextPhase; }
-    public ChatResponse response()   { return response; }
+    public Phase getNextPhase()      { return nextPhase; }
+    public ChatResponse getResponse() { return response; }
 
     @Override
     public String toString() {
