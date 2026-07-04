@@ -1,6 +1,6 @@
 package cd.lan1akea.bootstrap.config;
 
-import cd.lan1akea.core.approval.ApprovalStore;
+import cd.lan1akea.core.intervention.InterventionStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -15,10 +15,10 @@ public class ScheduledTasksConfig {
 
     private static final Logger log = LoggerFactory.getLogger(ScheduledTasksConfig.class);
 
-    private final ApprovalStore approvalStore;
+    private final InterventionStore interventionStore;
 
-    public ScheduledTasksConfig(ApprovalStore approvalStore) {
-        this.approvalStore = approvalStore;
+    public ScheduledTasksConfig(InterventionStore interventionStore) {
+        this.interventionStore = interventionStore;
     }
 
     /**
@@ -27,7 +27,7 @@ public class ScheduledTasksConfig {
     @Scheduled(fixedRate = 60_000)
     public void cleanupExpiredApprovals() {
         try {
-            approvalStore.cleanupExpired();
+            interventionStore.cleanupExpired();
         } catch (Exception e) {
             log.warn("审批过期清理失败", e);
         }

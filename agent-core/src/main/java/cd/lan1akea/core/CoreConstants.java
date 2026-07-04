@@ -185,4 +185,47 @@ public final class CoreConstants {
 
         private Logs() {}
     }
+
+    /**
+     * 人工介入相关常量。
+     */
+    public static final class Intervention {
+        /** 介入信号 chunk 类型 */
+        public static final String CHUNK_TYPE = "intervention";
+        /** 介入信号 payload type */
+        public static final String PAYLOAD_TYPE = "intervention_required";
+        /** 默认风险等级 */
+        public static final String DEFAULT_RISK_LEVEL = "MEDIUM";
+        /** 默认介入 TTL（分钟） */
+        public static final int DEFAULT_TTL_MINUTES = 5;
+        /** 默认解决人 */
+        public static final String DEFAULT_RESOLVER = "resolver";
+        /** 最近消息截断条数 */
+        public static final int RECENT_MSG_LIMIT = 20;
+        /** 介入暂停 chunk 的 finish_reason */
+        public static final String FINISH_REASON = "interrupted";
+
+        /** 审批操作：批准 */
+        public static final String ACTION_APPROVE = "approve";
+        /** 审批操作：拒绝 */
+        public static final String ACTION_DENY = "deny";
+        /** 审批操作：澄清 */
+        public static final String ACTION_CLARIFY = "clarify";
+        /** 审批操作：回复 */
+        public static final String ACTION_REPLY = "reply";
+
+        /** 工具参数名：介入ID */
+        public static final String PARAM_INTERVENTION_ID = "intervention_id";
+        /** 工具参数名：操作 */
+        public static final String PARAM_ACTION = "action";
+        /** 工具参数名：备注 */
+        public static final String PARAM_COMMENT = "comment";
+
+        /** 介入拒绝消息 */
+        public static final String MSG_DENIED = "上一步操作被拒绝";
+        /** 介入过期消息 */
+        public static final String MSG_EXPIRED = "上一步操作审批已过期";
+
+        private Intervention() {}
+    }
 }

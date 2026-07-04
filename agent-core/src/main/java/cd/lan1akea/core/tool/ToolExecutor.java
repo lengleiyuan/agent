@@ -2,7 +2,6 @@ package cd.lan1akea.core.tool;
 
 import cd.lan1akea.core.CoreConstants.Defaults;
 import cd.lan1akea.core.CoreConstants.UI;
-import cd.lan1akea.core.approval.ApprovalStore;
 import cd.lan1akea.core.exception.ToolExecutionException;
 import reactor.core.publisher.Mono;
 
@@ -27,11 +26,6 @@ public class ToolExecutor {
      */
     private final ToolValidator toolValidator;
     /**
-     * 审批存储（可选），注入后自动在 approval 查询前重试
-     */
-    private ApprovalStore approvalStore;
-
-    /**
      * 使用默认值创建工具执行器。
      *
      * @param registry 工具注册表
@@ -53,9 +47,6 @@ public class ToolExecutor {
         this.emitter = emitter;
         this.toolValidator = toolValidator != null ? toolValidator : new ToolValidator();
     }
-
-    public void setApprovalStore(ApprovalStore store) { this.approvalStore = store; }
-    public ApprovalStore getApprovalStore() { return approvalStore; }
 
     /**
      * 执行工具调用，完整的执行链：
@@ -128,11 +119,6 @@ public class ToolExecutor {
 
             return execution
                 .doOnNext(result -> emitter.afterExecute(tool, callParam, result))
-                .doOnNext(result -> {
-                    if (result.isSuccess() && callParam.isApproved() && approvalStore != null) {
-                        approvalStore.consume(callParam.getSessionId(), callParam.getToolName());
-                    }
-                })
                 .map(r -> r.withCallId(callParam.getCallId()));
         });
     }

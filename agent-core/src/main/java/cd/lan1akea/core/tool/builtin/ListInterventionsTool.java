@@ -11,11 +11,19 @@ import java.util.List;
 
 /**
  * 列出所有待处理的人工介入请求。
+ *
+ * <p>通过 {@code list_interventions} 工具调用，
+ * 返回当前所有 PENDING 状态的介入请求详情。
  */
 public class ListInterventionsTool extends ToolBase {
 
     private final InterventionStore store;
 
+    /**
+     * 创建 ListInterventionsTool 实例。
+     *
+     * @param store 介入存储实现
+     */
     public ListInterventionsTool(InterventionStore store) {
         this.store = store;
     }
@@ -28,6 +36,15 @@ public class ListInterventionsTool extends ToolBase {
         return "列出所有待处理的人工介入请求。返回每条介入的intervention_id、类型、工具名、问题描述";
     }
 
+    /**
+     * 执行列表查询操作。
+     *
+     * <p>从存储中获取所有待处理介入请求，格式化输出每条记录的
+     * intervention_id、类型、会话、Agent、工具名、问题和参数。
+     *
+     * @param params 工具调用参数（本工具无需额外参数）
+     * @return 格式化介入列表的 Mono
+     */
     @Override
     public Mono<ToolResult> execute(ToolCallContext params) {
         List<InterventionRequest> pending = store.getAllPending();

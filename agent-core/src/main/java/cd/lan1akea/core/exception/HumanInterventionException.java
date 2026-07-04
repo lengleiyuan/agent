@@ -5,21 +5,48 @@ import cd.lan1akea.core.tool.ToolCallContext;
 /**
  * 人工介入异常。工具审批、参数澄清、业务暂停的统一入口。
  * 所有介入暂停循环（不写错误消息到对话历史），人工解决后从 checkpoint 恢复续跑。
+ *
+ * <p>使用场景：
+ * <ul>
+ *   <li>TOOL_APPROVAL — 工具调用前需要人工审批</li>
+ *   <li>TOOL_CLARIFY — 工具参数需要人工澄清/修正</li>
+ *   <li>BUSINESS_PAUSE — 业务流程需要人工干预后继续</li>
+ * </ul>
  */
 public class HumanInterventionException extends RuntimeException {
 
+    /**
+     * 介入类型枚举。
+     */
     public enum Type {
-        TOOL_APPROVAL,   // 工具审批：人工 approve/deny 后原参数重放
-        TOOL_CLARIFY,    // 工具澄清：人工修正参数后重放
-        BUSINESS_PAUSE   // 业务暂停：人工注入反馈消息续跑
+        /** 工具审批：人工 approve/deny 后原参数重放 */
+        TOOL_APPROVAL,
+        /** 工具澄清：人工修正参数后重放 */
+        TOOL_CLARIFY,
+        /** 业务暂停：人工注入反馈消息续跑 */
+        BUSINESS_PAUSE
     }
 
+    /** 介入类型 */
     private final Type type;
+    /** 暂停原因/问题描述 */
     private final String reason;
+    /** 是否可恢复（true=等待人工解决后可恢复，false=直接中断） */
     private final boolean resumable;
+    /** 被暂停的工具名称（仅 TOOL_APPROVAL/TOOL_CLARIFY 时有效） */
     private final String toolName;
+    /** 调用参数上下文（TOOL_APPROVAL/TOOL_CLARIFY 时携带原参数） */
     private final ToolCallContext callParam;
 
+    /**
+     * 构造人工介入异常。
+     *
+     * @param type      介入类型
+     * @param reason    暂停原因
+     * @param resumable 是否可恢复
+     * @param toolName  工具名称
+     * @param callParam 调用参数
+     */
     private HumanInterventionException(Type type, String reason, boolean resumable,
                                         String toolName, ToolCallContext callParam) {
         super(reason);
@@ -30,27 +57,74 @@ public class HumanInterventionException extends RuntimeException {
         this.callParam = callParam;
     }
 
+    /**
+     * 创建工具审批介入。人工 approve/deny 后可恢复。
+     *
+     * @param toolName  需要审批的工具名称
+     * @param question  审批问题描述
+     * @param callParam 调用参数上下文
+     * @return HumanInterventionException 实例
+     */
     public static HumanInterventionException approval(String toolName, String question,
                                                        ToolCallContext callParam) {
         return new HumanInterventionException(Type.TOOL_APPROVAL, question, true, toolName, callParam);
     }
 
+    /**
+     * 创建工具澄清介入。人工修正参数后可恢复。
+     *
+     * @param toolName  需要澄清的工具名称
+     * @param question  澄清问题描述
+     * @param callParam 调用参数上下文
+     * @return HumanInterventionException 实例
+     */
     public static HumanInterventionException clarify(String toolName, String question,
                                                       ToolCallContext callParam) {
         return new HumanInterventionException(Type.TOOL_CLARIFY, question, true, toolName, callParam);
     }
 
+    /**
+     * 创建业务暂停介入。人工注入反馈后可恢复。
+     *
+     * @param reason 暂停原因
+     * @return HumanInterventionException 实例
+     */
     public static HumanInterventionException pause(String reason) {
         return new HumanInterventionException(Type.BUSINESS_PAUSE, reason, true, null, null);
     }
 
+    /**
+     * 创建不可恢复的中止。无法继续执行。
+     *
+     * @param reason 中止原因
+     * @return HumanInterventionException 实例
+     */
     public static HumanInterventionException abort(String reason) {
         return new HumanInterventionException(Type.BUSINESS_PAUSE, reason, false, null, null);
     }
 
+    /**
+     * @return 介入类型
+     */
     public Type getType() { return type; }
+
+    /**
+     * @return 暂停原因/问题描述
+     */
     public String getReason() { return reason; }
+
+    /**
+     * @return 是否可恢复
+     */
     public boolean isResumable() { return resumable; }
+
+    /**
+     * @return 被暂停的工具名称（可能为 null）
+     */
     public String getToolName() { return toolName; }
+
+    /**
+     * @return 调用参数上下文（可能为 null）
+     */
     public ToolCallContext getCallParam() { return callParam; }
 }

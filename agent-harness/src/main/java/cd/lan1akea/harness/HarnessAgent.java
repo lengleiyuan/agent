@@ -16,8 +16,7 @@ import cd.lan1akea.core.hook.impl.LoggingHook;
 import cd.lan1akea.core.hook.impl.MemoryEnrichmentHook;
 import cd.lan1akea.core.hook.impl.RateLimitHook;
 import cd.lan1akea.core.hook.impl.SessionPersistenceHook;
-import cd.lan1akea.core.approval.ApprovalHook;
-import cd.lan1akea.core.approval.ApprovalStore;
+import cd.lan1akea.core.intervention.InterventionStore;
 import cd.lan1akea.core.hook.impl.ContextCompressionHook;
 import cd.lan1akea.core.hook.impl.ToolAccessHook;
 import cd.lan1akea.core.memory.Memory;
@@ -237,9 +236,9 @@ public class HarnessAgent implements StreamableAgent, CallableAgent {
          */
         private AgentStateStore stateStore;
         /**
-         * 审批存储（可选），注入后工具需审批时自动查询。
+         * 人工介入存储（可选），注入后自动注册介入处理。
          */
-        private ApprovalStore approvalStore;
+        private InterventionStore interventionStore;
         /**
          * 最大推理轮次。
          */
@@ -340,10 +339,9 @@ public class HarnessAgent implements StreamableAgent, CallableAgent {
         public Builder stateStore(AgentStateStore v) { this.stateStore = v; return this; }
 
         /**
-         * 注入审批存储。启用后，工具抛出的 ToolSuspendException 会先查询 ApprovalStore，
-         * 已批准的 bypassKey 自动重试执行。同时自动注册 {@link ApprovalHook}。
+         * 注入人工介入存储。启用后自动处理工具介入请求。
          */
-        public Builder approvalStore(ApprovalStore v) { this.approvalStore = v; return this; }
+        public Builder interventionStore(InterventionStore v) { this.interventionStore = v; return this; }
         /**
          * 设置最大推理轮次。
          */
@@ -502,11 +500,6 @@ public class HarnessAgent implements StreamableAgent, CallableAgent {
             if (toolAccessPolicy != null) hooksChain.register(new ToolAccessHook(toolAccessPolicy));
             if (contentFilterWords != null) hooksChain.register(new ContentFilterHook("ContentFilter", contentFilterWords));
 
-            // === 审批 ===
-            if (approvalStore != null) {
-                hooksChain.register(new ApprovalHook(approvalStore));
-            }
-
             // === 用户 Hook ===
             for (Hook hook : hooks) hooksChain.register(hook);
 
@@ -532,6 +525,7 @@ public class HarnessAgent implements StreamableAgent, CallableAgent {
                 .aroundHookChain(aroundHooksChain)
                 .stateStore(effectiveStore)
                 .executionConfig(execConfig)
+                .interventionStore(interventionStore)
                 .build();
 
             ReActAgent agent = new ReActAgent(agentConfig);

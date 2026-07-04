@@ -2,6 +2,7 @@ package cd.lan1akea.core.agent.loop;
 
 import cd.lan1akea.core.CoreConstants.EventPayload;
 import cd.lan1akea.core.CoreConstants.FinishReason;
+import cd.lan1akea.core.CoreConstants.Intervention;
 import cd.lan1akea.core.CoreConstants.Logs;
 import cd.lan1akea.core.CoreConstants.UI;
 import cd.lan1akea.core.exception.HumanInterventionException;
@@ -75,6 +76,21 @@ public class LoopExecutor {
         });
     }
 
+    /**
+     * 从人工介入状态恢复执行。
+     *
+     * <p>检查介入请求的当前状态并执行对应恢复策略：
+     * <ul>
+     *   <li>APPROVED — 以原参数重新执行被暂停的工具</li>
+     *   <li>CLARIFIED — 以修正参数重新执行被暂停的工具</li>
+     *   <li>DENIED — 向 Agent 注入拒绝消息后继续循环</li>
+     *   <li>EXPIRED — 清除介入状态，正常继续执行</li>
+     *   <li>PENDING — 返回等待中的干预 chunk</li>
+     * </ul>
+     *
+     * @param ctx 循环上下文
+     * @return 恢复后的流式 chunk 序列
+     */
     private Flux<ChatStreamChunk> resumeFromIntervention(LoopContext ctx) {
         String id = ctx.getInterventionId();
         InterventionRequest req = interventionStore.getById(id);
@@ -91,7 +107,7 @@ public class LoopExecutor {
             case DENIED:
                 ctx.setInterventionId(null);
                 ctx.setInterventionType(null);
-                ctx.addMessage(SystemMessage.of("上一步操作被拒绝"));
+                ctx.addMessage(SystemMessage.of(Intervention.MSG_DENIED));
                 return runStream(ctx);
             default:
                 return Flux.just(interventionChunk(id, "等待人工处理中...",
@@ -99,6 +115,16 @@ public class LoopExecutor {
         }
     }
 
+    /**
+     * 恢复已批准的介入：以原参数重新执行工具。
+     *
+     * <p>将暂停时保存的工具参数反序列化，构建 ToolCallContext 并标记为 approved，
+     * 通过 {@link ToolCallOrchestrator#executeDirect} 直接执行（跳过审批流程）。
+     *
+     * @param ctx 循环上下文
+     * @param req 已批准的介入请求（含原工具参数）
+     * @return 恢复后的流式 chunk 序列
+     */
     private Flux<ChatStreamChunk> resumeApprovedTool(LoopContext ctx, InterventionRequest req) {
         String argsJson = ctx.getPausedToolArgs();
         Map<String, Object> args = argsJson != null
@@ -133,6 +159,16 @@ public class LoopExecutor {
                 .concatWith(Flux.defer(() -> runStream(ctx)));
     }
 
+    /**
+     * 恢复已澄清的介入：以修正参数重新执行工具。
+     *
+     * <p>使用介入请求中保存的 {@code modifiedArgs} 构建 ToolCallContext，
+     * 以人工修正后的参数重新执行被暂停的工具。
+     *
+     * @param ctx 循环上下文
+     * @param req 已澄清的介入请求（含修正参数）
+     * @return 恢复后的流式 chunk 序列
+     */
     private Flux<ChatStreamChunk> resumeClarifiedTool(LoopContext ctx, InterventionRequest req) {
         Map<String, Object> modified = req.getModifiedArgs() != null
                 ? req.getModifiedArgs() : Map.of();
@@ -239,6 +275,21 @@ public class LoopExecutor {
                 .concatWith(Flux.defer(() -> runStream(ctx)));
     }
 
+    /**
+     * 处理工具执行过程中的异常。
+     *
+     * <p>根据异常类型分别处理：
+     * <ul>
+     *   <li>{@link HumanInterventionException} — 可恢复时进入介入流程，不可恢复时透传</li>
+     *   <li>{@link ToolSuspendException} — 转换为 HumanInterventionException 后进入介入流程</li>
+     *   <li>其他异常 — 构造失败结果后继续循环</li>
+     * </ul>
+     *
+     * @param e       异常
+     * @param ctx     循环上下文
+     * @param results 已收集的工具结果列表
+     * @return 处理后的流式 chunk 序列
+     */
     private Flux<ChatStreamChunk> handleToolError(Throwable e, LoopContext ctx,
                                                    List<ToolResult> results) {
         if (e instanceof HumanInterventionException hie) {
@@ -256,6 +307,16 @@ public class LoopExecutor {
 
     // ---- Intervention handling ----
 
+    /**
+     * 处理人工介入异常，创建介入请求并暂停循环。
+     *
+     * <p>将 {@link HumanInterventionException} 转换为 {@link InterventionRequest} 并持久化，
+     * 设置上下文的中断状态，返回包含介入信息的 chunk 给前端。
+     *
+     * @param e   HumanInterventionException 实例
+     * @param ctx 循环上下文
+     * @return 包含介入信息的 chunk 序列
+     */
     private Flux<ChatStreamChunk> handleIntervention(HumanInterventionException e, LoopContext ctx) {
         InterventionRequest req = InterventionRequest.builder()
                 .type(toInterventionType(e.getType()))
@@ -280,6 +341,16 @@ public class LoopExecutor {
         return Flux.just(interventionChunk(id, e.getReason(), e.getType().name(), e.getToolName()));
     }
 
+    /**
+     * 处理旧的 {@link ToolSuspendException}（兼容老版本）。
+     *
+     * <p>将 ToolSuspendException 转换为 HumanInterventionException 后，
+     * 委托给 {@link #handleIntervention} 统一处理。
+     *
+     * @param e   ToolSuspendException 实例
+     * @param ctx 循环上下文
+     * @return 包含介入信息的 chunk 序列
+     */
     private Flux<ChatStreamChunk> handleLegacySuspension(ToolSuspendException e, LoopContext ctx) {
         HumanInterventionException hie = HumanInterventionException.approval(
                 e.getBypassKey(), e.getQuestion(), null);
@@ -294,12 +365,26 @@ public class LoopExecutor {
         }
     }
 
+    /**
+     * 截断消息列表至最近的 {@value Intervention#RECENT_MSG_LIMIT} 条。
+     *
+     * <p>在创建介入请求时使用，仅保存最近的上下文消息以减小持久化开销。
+     *
+     * @param messages 原始消息列表
+     * @return 截断后的消息列表
+     */
     private List<Msg> truncateMessages(List<Msg> messages) {
         int size = messages.size();
-        int from = Math.max(0, size - 20);
+        int from = Math.max(0, size - Intervention.RECENT_MSG_LIMIT);
         return new ArrayList<>(messages.subList(from, size));
     }
 
+    /**
+     * 从工具结果构建文本类型的消息 chunk。
+     *
+     * @param result 工具执行结果
+     * @return 消息 chunk
+     */
     private ChatStreamChunk chunkFromToolResult(ToolResult result) {
         String content = result.isSuccess()
                 ? result.getContent()
@@ -308,18 +393,32 @@ public class LoopExecutor {
                 .delta(content).type(ChatStreamChunk.TYPE_TEXT).build();
     }
 
+    /**
+     * 构建一个干预信号 chunk，通知前端需要人工介入。
+     *
+     * <p>该 chunk 包含介入 ID、问题描述、介入类型和工具名称，
+     * 并设置 chunk 类型为 {@value Intervention#CHUNK_TYPE}，
+     * payload type 为 {@value Intervention#PAYLOAD_TYPE}，
+     * finish_reason 为 {@value Intervention#FINISH_REASON} 以标记流式结束。
+     *
+     * @param id               介入记录 ID
+     * @param question         审批问题描述
+     * @param interventionType 介入类型名称
+     * @param toolName         工具名称
+     * @return 干预信号 chunk
+     */
     private ChatStreamChunk interventionChunk(String id, String question,
                                                String interventionType, String toolName) {
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("type", "intervention_required");
+        payload.put("type", Intervention.PAYLOAD_TYPE);
         payload.put("interventionId", id);
         payload.put("question", question);
         payload.put("interventionType", interventionType);
         payload.put("toolName", toolName);
         return ChatStreamChunk.builder()
                 .delta(JsonUtils.toCompactJson(payload))
-                .type("intervention")
-                .finishReason("interrupted")
+                .type(Intervention.CHUNK_TYPE)
+                .finishReason(Intervention.FINISH_REASON)
                 .build();
     }
 

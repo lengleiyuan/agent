@@ -2,7 +2,6 @@ package cd.lan1akea.core.agent.loop;
 
 import cd.lan1akea.core.CoreConstants.EventPayload;
 import cd.lan1akea.core.CoreConstants.UI;
-import cd.lan1akea.core.approval.ApprovalStore;
 import cd.lan1akea.core.hook.*;
 import cd.lan1akea.core.message.ToolUseBlock;
 import cd.lan1akea.core.tool.*;
@@ -47,7 +46,22 @@ public class ToolCallOrchestrator {
     }
 
     /**
-     * 直接执行（恢复介入时使用，跳过 PRE Hook，param 已标记 approved）。
+     * 直接执行工具调用，跳过 PRE Hook 和审批流程。
+     *
+     * <p>用于人工介入恢复场景。当介入被批准或澄清后，需要以原参数
+     * （或修正参数）重新执行工具调用。此时 ToolCallContext 已被标记为
+     * approved，不再需要经过审批 Hook，直接进入 AroundHookChain 执行。
+     *
+     * <p>与 {@link #execute(ToolUseBlock, LoopContext)} 的区别：
+     * <ul>
+     *   <li>不调用 dispatchPreHook（跳过审批）</li>
+     *   <li>参数已预先构建（非从 ToolUseBlock 解析）</li>
+     *   <li>仍会经过 AroundHookChain 和 POST Hook</li>
+     * </ul>
+     *
+     * @param param 预先构建的工具调用上下文（标记为 approved）
+     * @param ctx   循环上下文
+     * @return 工具执行结果的 Mono
      */
     public Mono<ToolResult> executeDirect(ToolCallContext param, LoopContext ctx) {
         HookContext hc = buildHookContext(ctx);

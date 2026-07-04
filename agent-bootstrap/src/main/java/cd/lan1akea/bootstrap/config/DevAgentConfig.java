@@ -2,11 +2,11 @@ package cd.lan1akea.bootstrap.config;
 
 import cd.lan1akea.bootstrap.tool.DeleteFileTool;
 import cd.lan1akea.bootstrap.tool.TransferTool;
-import cd.lan1akea.core.approval.ApprovalStore;
-import cd.lan1akea.core.approval.InMemoryApprovalStore;
+import cd.lan1akea.core.intervention.InterventionStore;
+import cd.lan1akea.core.intervention.InMemoryInterventionStore;
 import cd.lan1akea.core.formatter.OpenAiMessageFormatter;
-import cd.lan1akea.core.tool.builtin.ApproveApprovalTool;
-import cd.lan1akea.core.tool.builtin.ListApprovalsTool;
+import cd.lan1akea.core.tool.builtin.ListInterventionsTool;
+import cd.lan1akea.core.tool.builtin.ResolveInterventionTool;
 import cd.lan1akea.core.hook.impl.AuditHook;
 import cd.lan1akea.core.hook.impl.ContentFilterHook;
 import cd.lan1akea.core.hook.impl.SessionPersistenceHook;
@@ -230,9 +230,9 @@ public class DevAgentConfig {
     }
 
     @Bean
-    @ConditionalOnMissingBean(ApprovalStore.class)
-    public ApprovalStore approvalStore() {
-        return new InMemoryApprovalStore();
+    @ConditionalOnMissingBean(InterventionStore.class)
+    public InterventionStore interventionStore() {
+        return new InMemoryInterventionStore();
     }
 
     @Bean
@@ -245,7 +245,7 @@ public class DevAgentConfig {
     @Bean
     @ConditionalOnMissingBean(HarnessAgent.class)
     public HarnessAgent defaultAgent(DynamicChatModel model, AgentStateStore stateStore,
-                                      ApprovalStore approvalStore, AgentMetrics agentMetrics) {
+                                      InterventionStore interventionStore, AgentMetrics agentMetrics) {
         log.info("启动 HarnessAgent: DevAgent, model={}:{}", model.getProvider(), model.getModelName());
         return HarnessAgent.builder()
             .name("DevAgent")
@@ -254,13 +254,13 @@ public class DevAgentConfig {
             .tool(new CalculatorTool())
             .tool(new TransferTool())
             .tool(new DeleteFileTool())
-            .tool(new ListApprovalsTool(approvalStore))
-            .tool(new ApproveApprovalTool(approvalStore))
+            .tool(new ListInterventionsTool(interventionStore))
+            .tool(new ResolveInterventionTool(interventionStore))
             .hook(new ContentFilterHook())
             .hook(new AuditHook("DevAudit"))
             .hook(new SessionPersistenceHook(stateStore))
             .stateStore(stateStore)
-            .approvalStore(approvalStore)
+            .interventionStore(interventionStore)
             .maxIterations(5)
             .build();
     }
