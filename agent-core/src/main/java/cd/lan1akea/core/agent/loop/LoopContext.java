@@ -83,6 +83,18 @@ public class LoopContext {
      * 迭代间退避延迟（毫秒），0 表示无退避。
      */
     private final long backoffMs;
+    /**
+     * 待解决的介入 ID（null 表示无待解决介入）。
+     */
+    private volatile String interventionId;
+    /**
+     * 介入类型（APPROVAL/CLARIFY/PAUSE），用于恢复时判断逻辑。
+     */
+    private volatile String interventionType;
+    /**
+     * 暂停时快照的工具参数 JSON（APPROVAL/CLARIFY 时有效）。
+     */
+    private volatile String pausedToolArgs;
 
     /**
      * 从 builder 创建 LoopContext。
@@ -226,6 +238,12 @@ public class LoopContext {
      * @return 迭代间退避延迟（毫秒）
      */
     public long getBackoffMs() { return backoffMs; }
+    public String getInterventionId() { return interventionId; }
+    public void setInterventionId(String v) { this.interventionId = v; }
+    public String getInterventionType() { return interventionType; }
+    public void setInterventionType(String v) { this.interventionType = v; }
+    public String getPausedToolArgs() { return pausedToolArgs; }
+    public void setPausedToolArgs(String v) { this.pausedToolArgs = v; }
 
     /**
      * 创建 Builder。

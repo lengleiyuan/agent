@@ -45,6 +45,18 @@ public class AgentState {
      */
     private String planState;
     /**
+     * 待解决的介入 ID（null=无）
+     */
+    private String pendingInterventionId;
+    /**
+     * 介入类型（APPROVAL/CLARIFY/PAUSE）
+     */
+    private String interventionType;
+    /**
+     * 暂停时快照的工具参数 JSON
+     */
+    private String pausedToolArgsJson;
+    /**
      * 状态快照时间戳
      */
     private long timestamp;
@@ -154,6 +166,13 @@ public class AgentState {
      * 设置计划模式状态。
      */
     public void setPlanState(String planState) { this.planState = planState; }
+
+    public String getPendingInterventionId() { return pendingInterventionId; }
+    public void setPendingInterventionId(String v) { this.pendingInterventionId = v; }
+    public String getInterventionType() { return interventionType; }
+    public void setInterventionType(String v) { this.interventionType = v; }
+    public String getPausedToolArgsJson() { return pausedToolArgsJson; }
+    public void setPausedToolArgsJson(String v) { this.pausedToolArgsJson = v; }
 
     /**
      * @return 状态快照时间戳
