@@ -41,11 +41,10 @@ public class LoopDecisionEngine {
      * Guard 阶段：检查最大迭代次数。
      * 中断检查在 LoopExecutor 中异步处理（需 Hook 分发）。
      */
-    public Decision evaluateGuard(LoopContext ctx) {
+    private Decision evaluateGuard(LoopContext ctx) {
         if (ctx.getIteration() >= ctx.getMaxIterations()) {
             ctx.addMessage(SystemMessage.of(
                     Prompt.MAX_ITERATIONS_SUMMARY + Prompt.MAX_ITERATIONS_NO_TOOLS));
-            return Decision.continue_(Phase.reason());
         }
         return Decision.continue_(Phase.reason());
     }
