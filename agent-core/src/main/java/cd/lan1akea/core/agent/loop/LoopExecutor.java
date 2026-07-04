@@ -60,6 +60,10 @@ public class LoopExecutor {
 
     public Flux<ChatStreamChunk> runStream(LoopContext ctx) {
         return Flux.defer(() -> {
+            // 检查是否有已解决的介入需要恢复
+            if (ctx.getInterventionId() != null && !ctx.isInterrupted()) {
+                return resumeFromIntervention(ctx);
+            }
             if (ctx.isInterrupted()) {
                 return handleInterruptStream(ctx);
             }
@@ -69,6 +73,108 @@ public class LoopExecutor {
             }
             return executeAndContinue(d.getNextPhase(), ctx);
         });
+    }
+
+    private Flux<ChatStreamChunk> resumeFromIntervention(LoopContext ctx) {
+        String id = ctx.getInterventionId();
+        InterventionRequest req = interventionStore.getById(id);
+        if (req == null || req.getStatus() == InterventionRequest.Status.EXPIRED) {
+            ctx.setInterventionId(null);
+            ctx.setInterventionType(null);
+            return runStream(ctx); // 过期，继续正常执行
+        }
+        switch (req.getStatus()) {
+            case APPROVED:
+                return resumeApprovedTool(ctx, req);
+            case CLARIFIED:
+                return resumeClarifiedTool(ctx, req);
+            case DENIED:
+                ctx.setInterventionId(null);
+                ctx.setInterventionType(null);
+                ctx.addMessage(SystemMessage.of("上一步操作被拒绝"));
+                return runStream(ctx);
+            default:
+                return Flux.just(interventionChunk(id, "等待人工处理中...",
+                        req.getType().name(), req.getToolName()));
+        }
+    }
+
+    private Flux<ChatStreamChunk> resumeApprovedTool(LoopContext ctx, InterventionRequest req) {
+        String argsJson = ctx.getPausedToolArgs();
+        Map<String, Object> args = argsJson != null
+                ? JsonUtils.safeParseMap(argsJson) : Map.of();
+
+        ToolCallContext callParam = ToolCallContext.builder()
+                .callId("resume_" + req.getInterventionId())
+                .toolName(req.getToolName())
+                .arguments(args)
+                .tenantId(ctx.getTenantId())
+                .userId(ctx.getUserId())
+                .sessionId(ctx.getSessionId())
+                .attributes(ctx.getAttributes())
+                .build();
+        callParam.setApproved(true);
+
+        ctx.setInterventionId(null);
+        ctx.setInterventionType(null);
+        ctx.setPausedToolArgs(null);
+
+        return toolOrchestrator.executeDirect(callParam, ctx)
+                .flatMapMany(result -> {
+                    ChatStreamChunk chunk = chunkFromToolResult(result);
+                    return Flux.just(chunk)
+                            .concatWith(Flux.defer(() -> {
+                                appendSingleToolResult(ctx, result.withCallId(callParam.getCallId()), callParam.getCallId());
+                                return dispatchAfterIteration(ctx)
+                                        .thenMany(Mono.delay(Duration.ofMillis(ctx.getBackoffMs())).flux())
+                                        .thenMany(Flux.<ChatStreamChunk>empty());
+                            }));
+                })
+                .concatWith(Flux.defer(() -> runStream(ctx)));
+    }
+
+    private Flux<ChatStreamChunk> resumeClarifiedTool(LoopContext ctx, InterventionRequest req) {
+        Map<String, Object> modified = req.getModifiedArgs() != null
+                ? req.getModifiedArgs() : Map.of();
+
+        ToolCallContext callParam = ToolCallContext.builder()
+                .callId("resume_" + req.getInterventionId())
+                .toolName(req.getToolName())
+                .arguments(modified)
+                .tenantId(ctx.getTenantId())
+                .userId(ctx.getUserId())
+                .sessionId(ctx.getSessionId())
+                .attributes(ctx.getAttributes())
+                .build();
+        callParam.setApproved(true);
+
+        ctx.setInterventionId(null);
+        ctx.setInterventionType(null);
+        ctx.setPausedToolArgs(null);
+
+        return toolOrchestrator.executeDirect(callParam, ctx)
+                .flatMapMany(result -> {
+                    ChatStreamChunk chunk = chunkFromToolResult(result);
+                    return Flux.just(chunk)
+                            .concatWith(Flux.defer(() -> {
+                                appendSingleToolResult(ctx, result.withCallId(callParam.getCallId()), callParam.getCallId());
+                                return dispatchAfterIteration(ctx)
+                                        .thenMany(Mono.delay(Duration.ofMillis(ctx.getBackoffMs())).flux())
+                                        .thenMany(Flux.<ChatStreamChunk>empty());
+                            }));
+                })
+                .concatWith(Flux.defer(() -> runStream(ctx)));
+    }
+
+    private void appendSingleToolResult(LoopContext ctx, ToolResult result, String callId) {
+        Msg lastMsg = ctx.getLastResponse() != null ? ctx.getLastResponse().getMessage() : null;
+        if (lastMsg != null) ctx.addMessage(lastMsg);
+        ctx.addMessage(Msg.builder(MsgRole.TOOL)
+                .addToolResult(callId,
+                        result.isSuccess() ? result.getContent()
+                                : UI.TOOL_ERROR_PREFIX + result.getErrorMessage(),
+                        !result.isSuccess())
+                .build());
     }
 
     private Flux<ChatStreamChunk> executeAndContinue(Phase phase, LoopContext ctx) {

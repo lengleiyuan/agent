@@ -5,6 +5,8 @@ import cd.lan1akea.core.CoreConstants.RuntimeCtx;
 import cd.lan1akea.core.agent.config.AgentExecutionConfig;
 import cd.lan1akea.core.context.RuntimeContext;
 import cd.lan1akea.core.hook.*;
+import cd.lan1akea.core.intervention.InterventionRequest;
+import cd.lan1akea.core.intervention.InterventionStore;
 import cd.lan1akea.core.message.Msg;
 import cd.lan1akea.core.message.SystemMessage;
 import cd.lan1akea.core.model.*;
@@ -34,10 +36,12 @@ public class RequestPipeline {
     private final String systemMessage;
     private final ConcurrentHashMap<String, LoopContext> activeRequests;
     private final SessionGate sessionGate;
+    private final InterventionStore interventionStore;
 
     public RequestPipeline(LoopExecutor loopExecutor, AgentStateStore stateStore,
                             AroundHookChain aroundHookChain, AgentExecutionConfig execConfig,
-                            String agentName, String systemMessage) {
+                            String agentName, String systemMessage,
+                            InterventionStore interventionStore) {
         this.loopExecutor = loopExecutor;
         this.stateStore = stateStore;
         this.aroundHookChain = aroundHookChain;
@@ -46,6 +50,7 @@ public class RequestPipeline {
         this.systemMessage = systemMessage;
         this.activeRequests = new ConcurrentHashMap<>();
         this.sessionGate = new SessionGate();
+        this.interventionStore = interventionStore;
     }
 
     public Flux<ChatStreamChunk> executeStream(List<Msg> messages, RuntimeContext rtCtx) {
@@ -56,10 +61,17 @@ public class RequestPipeline {
 
             return aroundHookChain.aroundCallStream(new HookEvent(null), callHc,
                     e -> loadSessionAndHistory(ctx, messages)
-                            .flatMapMany(msgs -> injectSystemMessage(msgs).flatMapMany(Flux::just))
-                            .concatMap(m -> {
+                            .flatMapMany(result -> injectSystemMessage(result.messages)
+                                    .flatMapMany(Flux::just)
+                                    .map(m -> new LoadAndMessages(m, result)))
+                            .concatMap(lm -> {
                                 LoopContext loopCtx = LoopContextFactory.create(
-                                        agentName, ctx, m, opts, execConfig, true);
+                                        agentName, ctx, lm.messages, opts, execConfig, true);
+                                if (lm.result.interventionId != null) {
+                                    loopCtx.setInterventionId(lm.result.interventionId);
+                                    loopCtx.setInterventionType(lm.result.interventionType);
+                                    loopCtx.setPausedToolArgs(lm.result.pausedToolArgs);
+                                }
                                 activeRequests.put(loopCtx.getRequestId(), loopCtx);
                                 Flux<ChatStreamChunk> stream = loopExecutor.runStream(loopCtx)
                                         .doFinally(s -> activeRequests.remove(loopCtx.getRequestId()));
@@ -77,10 +89,16 @@ public class RequestPipeline {
             HookContext callHc = HookContext.from(ctx, 0);
             return aroundHookChain.aroundCall(new HookEvent(null), callHc,
                     e -> loadSessionAndHistory(ctx, messages)
-                            .flatMap(this::injectSystemMessage)
-                            .flatMap(m -> {
+                            .flatMap(result -> injectSystemMessage(result.messages)
+                                    .map(m -> new LoadAndMessages(m, result)))
+                            .flatMap(lm -> {
                                 LoopContext loopCtx = LoopContextFactory.create(
-                                        agentName, ctx, m, resolveOptions(), execConfig, false);
+                                        agentName, ctx, lm.messages, resolveOptions(), execConfig, false);
+                                if (lm.result.interventionId != null) {
+                                    loopCtx.setInterventionId(lm.result.interventionId);
+                                    loopCtx.setInterventionType(lm.result.interventionType);
+                                    loopCtx.setPausedToolArgs(lm.result.pausedToolArgs);
+                                }
                                 activeRequests.put(loopCtx.getRequestId(), loopCtx);
                                 Mono<ChatResponse> exec = loopExecutor.run(loopCtx)
                                         .doFinally(s -> activeRequests.remove(loopCtx.getRequestId()));
@@ -132,9 +150,33 @@ public class RequestPipeline {
         return c;
     }
 
-    private Mono<List<Msg>> loadSessionAndHistory(RuntimeContext ctx, List<Msg> messages) {
+    private static class SessionLoadResult {
+        final List<Msg> messages;
+        final String interventionId;
+        final String interventionType;
+        final String pausedToolArgs;
+
+        SessionLoadResult(List<Msg> messages, String interventionId,
+                          String interventionType, String pausedToolArgs) {
+            this.messages = messages;
+            this.interventionId = interventionId;
+            this.interventionType = interventionType;
+            this.pausedToolArgs = pausedToolArgs;
+        }
+    }
+
+    private static class LoadAndMessages {
+        final List<Msg> messages;
+        final SessionLoadResult result;
+        LoadAndMessages(List<Msg> messages, SessionLoadResult result) {
+            this.messages = messages; this.result = result;
+        }
+    }
+
+    private Mono<SessionLoadResult> loadSessionAndHistory(RuntimeContext ctx, List<Msg> messages) {
         String sessionId = ctx.getSessionId();
-        if (sessionId == null || stateStore == null) return Mono.just(messages);
+        if (sessionId == null || stateStore == null)
+            return Mono.just(new SessionLoadResult(messages, null, null, null));
 
         SessionId sid = new SessionId(sessionId);
         String tenantId = ctx.getTenantId() != null ? ctx.getTenantId() : Defaults.TENANT;
@@ -146,21 +188,61 @@ public class RequestPipeline {
                                 checkpoint.setShutdownInterrupted(false);
                                 return stateStore.saveCheckpoint(checkpoint).thenReturn(checkpoint);
                             }
+                            // 检查是否有待解决的介入
+                            if (checkpoint.getPendingInterventionId() != null) {
+                                return handlePendingIntervention(checkpoint);
+                            }
                             return Mono.just(checkpoint);
                         })
                         .flatMap(checkpoint -> {
                             List<Msg> restored = checkpoint.getMessages();
                             if (restored != null && !restored.isEmpty()) {
                                 restored.addAll(messages);
-                                return Mono.just(restored);
+                                return Mono.just(new SessionLoadResult(restored,
+                                        checkpoint.getPendingInterventionId(),
+                                        checkpoint.getInterventionType(),
+                                        checkpoint.getPausedToolArgsJson()));
                             }
-                            return loadHistory(sessionId, messages);
+                            return loadHistory(sessionId, messages).map(
+                                    msgs -> new SessionLoadResult(msgs, null, null, null));
                         })
-                        .switchIfEmpty(loadHistory(sessionId, messages)))
+                        .switchIfEmpty(loadHistory(sessionId, messages).map(
+                                msgs -> new SessionLoadResult(msgs, null, null, null))))
                 .switchIfEmpty(
                         stateStore.create(new Session(sid, tenantId, agentName,
                                         SessionState.ACTIVE, null, null, null))
-                                .then(Mono.just(messages)));
+                                .then(Mono.just(new SessionLoadResult(messages, null, null, null))));
+    }
+
+    private Mono<cd.lan1akea.core.state.AgentState> handlePendingIntervention(
+            cd.lan1akea.core.state.AgentState checkpoint) {
+        String id = checkpoint.getPendingInterventionId();
+        InterventionRequest req = interventionStore.getById(id);
+
+        if (req == null || req.getStatus() == InterventionRequest.Status.EXPIRED) {
+            // 过期 → 清除介入标记
+            checkpoint.setPendingInterventionId(null);
+            checkpoint.setInterventionType(null);
+            checkpoint.setPausedToolArgsJson(null);
+            return stateStore.saveCheckpoint(checkpoint).thenReturn(checkpoint);
+        }
+
+        switch (req.getStatus()) {
+            case PENDING:
+                return Mono.error(new IllegalStateException(
+                        "Intervention still pending: " + id));
+            case APPROVED:
+            case CLARIFIED:
+                // 保留 checkpoint 中的介入信息，LoopExecutor 恢复时使用
+                return Mono.just(checkpoint);
+            case DENIED:
+                checkpoint.setPendingInterventionId(null);
+                checkpoint.setInterventionType(null);
+                checkpoint.setPausedToolArgsJson(null);
+                return stateStore.saveCheckpoint(checkpoint).thenReturn(checkpoint);
+            default:
+                return Mono.just(checkpoint);
+        }
     }
 
     private Mono<List<Msg>> loadHistory(String sessionId, List<Msg> messages) {

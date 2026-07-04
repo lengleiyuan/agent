@@ -46,6 +46,20 @@ public class ToolCallOrchestrator {
                 .map(r -> r.withCallId(param.getCallId()));
     }
 
+    /**
+     * 直接执行（恢复介入时使用，跳过 PRE Hook，param 已标记 approved）。
+     */
+    public Mono<ToolResult> executeDirect(ToolCallContext param, LoopContext ctx) {
+        HookContext hc = buildHookContext(ctx);
+        ToolCallEvent event = new ToolCallEvent(HookEventType.PRE_TOOL_CALL, param);
+        event.setTool(toolRegistry.getForContext(
+                ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId(), param.getToolName()));
+
+        return executeWithApproval(param, event, hc, ctx)
+                .flatMap(result -> dispatchPostHook(param, result, hc))
+                .map(r -> r.withCallId(param.getCallId()));
+    }
+
     // ---- Step 1: 构建上下文 ----
 
     private ToolCallContext buildContext(ToolUseBlock tc, LoopContext ctx) {

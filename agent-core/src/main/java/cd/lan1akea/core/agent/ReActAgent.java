@@ -79,7 +79,7 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
                 engine, modelPipeline, toolOrch, hookDispatcher, metrics, interventionStore);
         this.pipeline = new RequestPipeline(
                 loopExecutor, stateStore, aroundHookChain,
-                config.getExecutionConfig(), name, systemMessage);
+                config.getExecutionConfig(), name, systemMessage, interventionStore);
     }
 
     @Override
