@@ -28,7 +28,7 @@ public class LoopDecisionEngine {
             return evaluateGuard(ctx);
         }
         if (current.isAct()) {
-            return Decision.continue_(Phase.observe(java.util.Collections.emptyList()));
+            return Decision.continue_(Phase.observe());
         }
         if (current.isObserve()) {
             return evaluateObserve(ctx);

@@ -1,7 +1,6 @@
 package cd.lan1akea.core.agent.loop;
 
 import cd.lan1akea.core.message.ToolUseBlock;
-import cd.lan1akea.core.tool.ToolResult;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -17,41 +16,36 @@ public final class Phase {
 
     private final Type type;
     private final List<ToolUseBlock> toolCalls;
-    private final List<ToolResult> results;
 
-    private Phase(Type type, List<ToolUseBlock> toolCalls, List<ToolResult> results) {
+    private Phase(Type type, List<ToolUseBlock> toolCalls) {
         this.type = type;
         this.toolCalls = toolCalls != null
                 ? Collections.unmodifiableList(new ArrayList<>(toolCalls))
-                : null;
-        this.results = results != null
-                ? Collections.unmodifiableList(new ArrayList<>(results))
                 : null;
     }
 
     // ---- 静态工厂 ----
 
     public static Phase guard() {
-        return new Phase(Type.GUARD, null, null);
+        return new Phase(Type.GUARD, null);
     }
 
     public static Phase reason() {
-        return new Phase(Type.REASON, null, null);
+        return new Phase(Type.REASON, null);
     }
 
     public static Phase act(List<ToolUseBlock> toolCalls) {
-        return new Phase(Type.ACT, toolCalls, null);
+        return new Phase(Type.ACT, toolCalls);
     }
 
-    public static Phase observe(List<ToolResult> results) {
-        return new Phase(Type.OBSERVE, null, results);
+    public static Phase observe() {
+        return new Phase(Type.OBSERVE, null);
     }
 
     // ---- 访问器 ----
 
     public Type getType() { return type; }
     public List<ToolUseBlock> getToolCalls() { return toolCalls; }
-    public List<ToolResult> getResults() { return results; }
 
     public boolean isGuard()   { return type == Type.GUARD; }
     public boolean isReason()  { return type == Type.REASON; }
@@ -62,7 +56,7 @@ public final class Phase {
     public String toString() {
         switch (type) {
             case ACT: return "Act[tools=" + (toolCalls != null ? toolCalls.size() : 0) + "]";
-            case OBSERVE: return "Observe[results=" + (results != null ? results.size() : 0) + "]";
+            case OBSERVE: return "Observe[]";
             default: return type.name();
         }
     }
