@@ -177,10 +177,7 @@ public class ModelCallPipeline {
     }
 
     private static ChatStreamChunk chunkFromMessage(Msg msg, String finishReason) {
-        return ChatStreamChunk.builder()
-                .delta(msg.getTextContent())
-                .finishReason(finishReason)
-                .build();
+        return chunkFromText(msg.getTextContent(), finishReason);
     }
 
     private static ChatStreamChunk chunkFromText(String text, String finishReason) {
