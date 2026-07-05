@@ -69,6 +69,8 @@ public final class CoreConstants {
         public static final String INTERVENTION_TYPE = "interventionType";
         /** 干预 chunk payload 键 */
         public static final String TOOL_NAME = "toolName";
+        /** 中断消息 metadata key（buildInterruptedResponse） */
+        public static final String INTERRUPT_ID = "interruptId";
 
         private EventPayload() {}
     }

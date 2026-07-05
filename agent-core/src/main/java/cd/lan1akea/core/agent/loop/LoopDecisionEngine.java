@@ -1,5 +1,6 @@
 package cd.lan1akea.core.agent.loop;
 
+import cd.lan1akea.core.CoreConstants.EventPayload;
 import cd.lan1akea.core.CoreConstants.Prompt;
 import cd.lan1akea.core.CoreConstants.UI;
 import cd.lan1akea.core.CoreConstants.FinishReason;
@@ -63,7 +64,7 @@ public class LoopDecisionEngine {
     public static ChatResponse buildInterruptedResponse(String reason) {
         Msg msg = Msg.builder(MsgRole.ASSISTANT)
                 .addText(UI.INTERRUPT_PREFIX + reason + UI.INTERRUPT_SUFFIX)
-                .putMetadata("interruptId", reason)
+                .putMetadata(EventPayload.INTERRUPT_ID, reason)
                 .build();
         return new ChatResponse(msg, new ChatUsage(0, 0), FinishReason.INTERRUPTED, "");
     }
