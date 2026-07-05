@@ -1,5 +1,7 @@
 package cd.lan1akea.core.tool.builtin;
 
+import cd.lan1akea.core.CoreConstants.JsonSchema;
+import cd.lan1akea.core.CoreConstants.RuntimeCtx;
 import cd.lan1akea.core.agent.ReActAgent;
 import cd.lan1akea.core.agent.config.AgentConfig;
 import cd.lan1akea.core.agent.config.AgentExecutionConfig;
@@ -103,11 +105,11 @@ public class AgentTool implements Tool {
     @Override
     public ToolSchema getParameters() {
         Map<String, Object> props = new LinkedHashMap<>();
-        props.put("task", Map.of("type", "string", "description", "委托给子Agent的任务描述"));
+        props.put("task", Map.of(JsonSchema.TYPE, JsonSchema.TYPE_STRING, JsonSchema.DESCRIPTION, "委托给子Agent的任务描述"));
         Map<String, Object> schema = new LinkedHashMap<>();
-        schema.put("type", "object");
-        schema.put("properties", props);
-        schema.put("required", List.of("task"));
+        schema.put(JsonSchema.TYPE, JsonSchema.TYPE_OBJECT);
+        schema.put(JsonSchema.PROPERTIES, props);
+        schema.put(JsonSchema.REQUIRED, List.of("task"));
         return new ToolSchema(name, description, schema);
     }
 
@@ -154,11 +156,11 @@ public class AgentTool implements Tool {
                 return subAgent.chat(messages)
                     .contextWrite(ctx -> {
                         if (params.getTenantId() != null)
-                            ctx = ctx.put("tenantId", params.getTenantId());
+                            ctx = ctx.put(RuntimeCtx.TENANT_ID, params.getTenantId());
                         if (params.getUserId() != null)
-                            ctx = ctx.put("userId", params.getUserId());
+                            ctx = ctx.put(RuntimeCtx.USER_ID, params.getUserId());
                         if (params.getSessionId() != null)
-                            ctx = ctx.put("sessionId", params.getSessionId());
+                            ctx = ctx.put(RuntimeCtx.SESSION_ID, params.getSessionId());
                         return ctx;
                     });
             }))
