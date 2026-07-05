@@ -84,6 +84,7 @@ public class ModelCallPipeline {
     public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
         HookContext hc = buildHookContext(ctx);
         ReasoningEvent pre = new ReasoningEvent(HookEventType.PRE_REASONING);
+        pre.setMessages(ctx.getMessages());
 
         return hookDispatcher.dispatch(pre, hc)
                 .flatMapMany(r -> {
