@@ -23,7 +23,7 @@ public final class CoreConstants {
      * Reactor Context / RuntimeContext 传播键。
      * 用于跨线程/跨 Agent 传递租户、用户、会话等上下文。
      */
-    public static final class RuntimeCtx {
+public static final class RuntimeCtx {
         /** 请求追踪 ID */
         public static final String REQUEST_ID = "requestId";
         /** 租户标识 */

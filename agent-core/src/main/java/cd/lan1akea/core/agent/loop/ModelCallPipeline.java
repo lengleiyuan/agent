@@ -222,7 +222,9 @@ public class ModelCallPipeline {
         }
 
         List<ContentBlock> blocks = new ArrayList<>();
-    if (!text.isEmpty()) blocks.add(new TextBlock(text.toString()));
+    if (!text.isEmpty()) {
+            blocks.add(new TextBlock(text.toString()));
+        }
         for (Map.Entry<String, String> e : toolArgs.entrySet()) {
             String id = e.getKey();
             blocks.add(new ToolUseBlock(id, toolNames.getOrDefault(id, ""),
