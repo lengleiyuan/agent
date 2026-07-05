@@ -137,7 +137,7 @@ public class LoopExecutor {
                 ctx.addMessage(SystemMessage.of(Intervention.MSG_DENIED));
                 return runStream(ctx);
             default:
-                return Flux.just(interventionChunk(id, "等待人工处理中...",
+                return Flux.just(interventionChunk(id, Intervention.MSG_WAITING,
                         req.getType().name(), req.getToolName()));
         }
     }
@@ -158,7 +158,7 @@ public class LoopExecutor {
                 ? JsonUtils.safeParseMap(argsJson) : Map.of();
 
         ToolCallContext callParam = ToolCallContext.builder()
-                .callId("resume_" + req.getInterventionId())
+                .callId(Intervention.RESUME_CALL_PREFIX + req.getInterventionId())
                 .toolName(req.getToolName())
                 .arguments(args)
                 .tenantId(ctx.getTenantId())
@@ -201,7 +201,7 @@ public class LoopExecutor {
                 ? req.getModifiedArgs() : Map.of();
 
         ToolCallContext callParam = ToolCallContext.builder()
-                .callId("resume_" + req.getInterventionId())
+                .callId(Intervention.RESUME_CALL_PREFIX + req.getInterventionId())
                 .toolName(req.getToolName())
                 .arguments(modified)
                 .tenantId(ctx.getTenantId())
@@ -481,11 +481,11 @@ public class LoopExecutor {
     private ChatStreamChunk interventionChunk(String id, String question,
                                                String interventionType, String toolName) {
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("type", Intervention.PAYLOAD_TYPE);
-        payload.put("interventionId", id);
-        payload.put("question", question);
-        payload.put("interventionType", interventionType);
-        payload.put("toolName", toolName);
+        payload.put(EventPayload.TYPE, Intervention.PAYLOAD_TYPE);
+        payload.put(EventPayload.INTERVENTION_ID, id);
+        payload.put(EventPayload.QUESTION, question);
+        payload.put(EventPayload.INTERVENTION_TYPE, interventionType);
+        payload.put(EventPayload.TOOL_NAME, toolName);
         return ChatStreamChunk.builder()
                 .delta(JsonUtils.toCompactJson(payload))
                 .type(Intervention.CHUNK_TYPE)
@@ -507,7 +507,7 @@ public class LoopExecutor {
                 .then(Mono.fromSupplier(() -> {
                     ChatResponse resp = ctx.getLastResponse();
                     if (resp != null) return resp;
-                    return new ChatResponse(null, new ChatUsage(0, 0), "empty", "");
+                    return new ChatResponse(null, new ChatUsage(0, 0), Intervention.EMPTY_REASON, "");
                 }));
     }
 

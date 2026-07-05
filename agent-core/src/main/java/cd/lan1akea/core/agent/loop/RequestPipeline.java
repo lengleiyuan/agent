@@ -1,6 +1,8 @@
 package cd.lan1akea.core.agent.loop;
 
 import cd.lan1akea.core.CoreConstants.Defaults;
+import cd.lan1akea.core.CoreConstants.EventPayload;
+import cd.lan1akea.core.CoreConstants.Intervention;
 import cd.lan1akea.core.CoreConstants.RuntimeCtx;
 import cd.lan1akea.core.agent.config.AgentExecutionConfig;
 import cd.lan1akea.core.context.RuntimeContext;
@@ -158,8 +160,8 @@ public class RequestPipeline {
                                 if (timeout > 0) exec = exec.timeout(Duration.ofMillis(timeout));
                                 return sessionGate.enqueue(loopCtx.getSessionId(), exec);
                             })
-                        .map(resp -> { e.setPayload("response", resp); return e; }))
-                    .map(e -> (ChatResponse) e.getPayload("response"))
+                        .map(resp -> { e.setPayload(EventPayload.RESPONSE, resp); return e; }))
+                    .map(e -> (ChatResponse) e.getPayload(EventPayload.RESPONSE))
                     .contextWrite(c -> writeContext(c, ctx));
         });
     }
@@ -336,7 +338,7 @@ public class RequestPipeline {
         switch (req.getStatus()) {
             case PENDING:
                 return Mono.error(new IllegalStateException(
-                        "Intervention still pending: " + id));
+                        Intervention.ERR_PENDING + id));
             case APPROVED:
             case CLARIFIED:
                 return Mono.just(checkpoint);

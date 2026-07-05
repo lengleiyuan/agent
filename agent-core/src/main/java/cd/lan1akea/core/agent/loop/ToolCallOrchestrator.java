@@ -164,11 +164,11 @@ public class ToolCallOrchestrator {
         return aroundHookChain.aroundToolCall(event, hc,
                         (HookEvent e) -> toolExecutor.execute(param)
                                 .map(result -> {
-                                e.setPayload("tool_result", result);
+                                e.setPayload(EventPayload.TOOL_RESULT, result);
                                     ((ToolCallEvent) e).setResult(result);
                                     return e;
                                 }))
-                .flatMap(e -> Mono.justOrEmpty((ToolResult) e.getPayload("tool_result")));
+                .flatMap(e -> Mono.justOrEmpty((ToolResult) e.getPayload(EventPayload.TOOL_RESULT)));
     }
 
     /**
