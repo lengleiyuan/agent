@@ -103,6 +103,17 @@ public class ChatStreamChunk {
 
     public static Builder builder() { return new Builder(); }
 
+    /**
+     * 从文本内容和完成原因创建纯文本 chunk。
+     *
+     * @param text         文本内容
+     * @param finishReason 完成原因
+     * @return 纯文本类型 chunk
+     */
+    public static ChatStreamChunk of(String text, String finishReason) {
+        return new Builder().delta(text).finishReason(finishReason).build();
+    }
+
     public static class Builder {
         private String delta;
         private String type = TYPE_TEXT;

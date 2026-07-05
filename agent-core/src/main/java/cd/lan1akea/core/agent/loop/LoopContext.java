@@ -1,6 +1,7 @@
 package cd.lan1akea.core.agent.loop;
 
 import cd.lan1akea.core.context.RuntimeContext;
+import cd.lan1akea.core.hook.HookContext;
 import cd.lan1akea.core.message.Msg;
 import cd.lan1akea.core.model.ChatResponse;
 import cd.lan1akea.core.model.GenerateOptions;
@@ -249,6 +250,16 @@ public class LoopContext {
      * @return 迭代间退避延迟（毫秒）
      */
     public long getBackoffMs() { return backoffMs; }
+
+    /**
+     * 从当前循环上下文构建 Hook 上下文。
+     *
+     * @return 新的 HookContext，包含当前循环的所有身份和状态信息
+     */
+    public HookContext toHookContext() {
+        return new HookContext(agentName, requestId, tenantId, sessionId,
+                userId, iteration, List.of(), attributes);
+    }
 
     /**
      * @return 待解决的介入请求 ID（null 表示无待解决介入）

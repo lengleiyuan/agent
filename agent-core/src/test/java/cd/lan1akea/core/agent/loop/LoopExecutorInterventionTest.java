@@ -159,6 +159,76 @@ class LoopExecutorInterventionTest {
     }
 
     // ===========================================================
+    // 介入恢复：approved 路径 → 使用 ctx.pausedToolArgs
+    // ===========================================================
+
+    @Test
+    void resumeApproved_shouldUsePausedToolArgs() {
+        InterventionRequest req = InterventionRequest.builder()
+                .type(InterventionRequest.Type.TOOL_APPROVAL)
+                .sessionId("s1").requestId("r1").agentName("test")
+                .toolName("transfer").question("approve?").build();
+        req.approve("resolver", "ok");
+
+        when(interventionStore.getById("int_1")).thenReturn(req);
+        when(toolExecutor.execute(any())).thenReturn(Mono.just(
+                ToolResult.success("resume_int_1", "done")));
+        when(model.streamWithTools(any(), any(), any()))
+                .thenReturn(Flux.just(ChatStreamChunk.of("ok", FinishReason.STOP)));
+
+        LoopContext ctx = buildCtx("s1");
+        ctx.setInterventionId("int_1");
+        ctx.setInterventionType("TOOL_APPROVAL");
+        ctx.setPausedToolArgs("{\"amount\":100}");
+
+        StepVerifier.create(executor.runStream(ctx).collectList())
+                .assertNext(chunks -> {
+                    boolean hasResult = chunks.stream()
+                            .anyMatch(c -> "done".equals(c.getDelta()));
+                    assertTrue(hasResult, "should contain tool result: " + chunks);
+                })
+                .verifyComplete();
+
+        verify(toolExecutor, times(1)).execute(argThat(
+                call -> call.getArgumentsMap().get("amount").equals(100)));
+    }
+
+    // ===========================================================
+    // 介入恢复：clarified 路径 → 使用 req.modifiedArgs
+    // ===========================================================
+
+    @Test
+    void resumeClarified_shouldUseModifiedArgs() {
+        InterventionRequest req = InterventionRequest.builder()
+                .type(InterventionRequest.Type.TOOL_CLARIFY)
+                .sessionId("s1").requestId("r1").agentName("test")
+                .toolName("transfer").question("clarify?").build();
+        req.clarify("resolver", "ok", Map.of("amount", 200));
+
+        when(interventionStore.getById("int_2")).thenReturn(req);
+        when(toolExecutor.execute(any())).thenReturn(Mono.just(
+                ToolResult.success("resume_int_2", "done")));
+        when(model.streamWithTools(any(), any(), any()))
+                .thenReturn(Flux.just(ChatStreamChunk.of("ok", FinishReason.STOP)));
+
+        LoopContext ctx = buildCtx("s1");
+        ctx.setInterventionId("int_2");
+        ctx.setInterventionType("TOOL_CLARIFY");
+        ctx.setPausedToolArgs("{\"amount\":100}");
+
+        StepVerifier.create(executor.runStream(ctx).collectList())
+                .assertNext(chunks -> {
+                    boolean hasResult = chunks.stream()
+                            .anyMatch(c -> "done".equals(c.getDelta()));
+                    assertTrue(hasResult, "should contain tool result: " + chunks);
+                })
+                .verifyComplete();
+
+        verify(toolExecutor, times(1)).execute(argThat(
+                call -> call.getArgumentsMap().get("amount").equals(200)));
+    }
+
+    // ===========================================================
     // helpers
     // ===========================================================
 

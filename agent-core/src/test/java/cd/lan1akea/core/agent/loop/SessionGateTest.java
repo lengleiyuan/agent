@@ -100,6 +100,17 @@ class SessionGateTest {
     }
 
     @Test
+    void enqueueStream_nullSession_shouldExecuteImmediately() {
+        List<String> order = Collections.synchronizedList(new ArrayList<>());
+        Flux<ChatStreamChunk> work = Flux.just(chunk("a")).doOnComplete(() -> order.add("done"));
+
+        StepVerifier.create(gate.enqueueStream(null, work))
+                .expectNextMatches(c -> "a".equals(c.getDelta()))
+                .verifyComplete();
+        assertEquals(List.of("done"), order);
+    }
+
+    @Test
     void enqueue_errorInPrevious_shouldNotBlockNext() {
         String sid = "error-session";
         List<String> order = Collections.synchronizedList(new ArrayList<>());

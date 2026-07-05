@@ -26,10 +26,16 @@ public class SessionGate {
     private final ConcurrentHashMap<String, Sinks.One<Void>> gates = new ConcurrentHashMap<>();
 
     /**
+     * 获取会话门控，返回当前和上一个门的句柄。
+     */
+    private GateHandle acquire(String sessionId) {
+        Sinks.One<Void> mine = Sinks.one();
+        Sinks.One<Void> prev = gates.put(sessionId, mine);
+        return new GateHandle(mine, prev);
+    }
+
+    /**
      * 串行化 Mono 执行。sessionId 为 null 时不排队。
-     *
-     * <p>如果已有同会话的请求正在执行，当前请求会等待前一个完成后再开始。
-     * 使用 {@link Sinks.One} 作为信号量，前一个请求的 doFinally 中发出完成信号。
      *
      * @param sessionId 会话标识（null 时不排队直接执行）
      * @param work      要串行化的操作
@@ -39,20 +45,16 @@ public class SessionGate {
     public <T> Mono<T> enqueue(String sessionId, Mono<T> work) {
         if (sessionId == null) return work;
         return Mono.defer(() -> {
-            Sinks.One<Void> myGate = Sinks.one();
-            Sinks.One<Void> prevGate = gates.put(sessionId, myGate);
-            Mono<T> execution = prevGate != null
-                    ? prevGate.asMono().then(work)
+            GateHandle gate = acquire(sessionId);
+            Mono<T> execution = gate.previous != null
+                    ? gate.previous.asMono().then(work)
                     : Mono.defer(() -> work);
-            return execution.doFinally(s -> myGate.tryEmitEmpty());
+            return execution.doFinally(s -> gate.mine.tryEmitEmpty());
         });
     }
 
     /**
      * 串行化 Flux 执行。sessionId 为 null 时不排队。
-     *
-     * <p>与 {@link #enqueue(String, Mono)} 类似，但适用于流式返回的场景。
-     * 使用 {@link Sinks.One} 作为信号量，前一个请求的 doFinally 中发出完成信号。
      *
      * @param sessionId 会话标识（null 时不排队直接执行）
      * @param work      要串行化的流式操作
@@ -61,12 +63,19 @@ public class SessionGate {
     public Flux<ChatStreamChunk> enqueueStream(String sessionId, Flux<ChatStreamChunk> work) {
         if (sessionId == null) return work;
         return Flux.defer(() -> {
-            Sinks.One<Void> myGate = Sinks.one();
-            Sinks.One<Void> prevGate = gates.put(sessionId, myGate);
-            Flux<ChatStreamChunk> execution = prevGate != null
-                    ? prevGate.asMono().thenMany(work)
+            GateHandle gate = acquire(sessionId);
+            Flux<ChatStreamChunk> execution = gate.previous != null
+                    ? gate.previous.asMono().thenMany(work)
                     : Flux.defer(() -> work);
-            return execution.doFinally(s -> myGate.tryEmitEmpty());
+            return execution.doFinally(s -> gate.mine.tryEmitEmpty());
         });
+    }
+
+    private static class GateHandle {
+        final Sinks.One<Void> mine;
+        final Sinks.One<Void> previous;
+        GateHandle(Sinks.One<Void> mine, Sinks.One<Void> previous) {
+            this.mine = mine; this.previous = previous;
+        }
     }
 }

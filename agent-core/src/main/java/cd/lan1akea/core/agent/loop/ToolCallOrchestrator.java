@@ -193,9 +193,6 @@ public class ToolCallOrchestrator {
      * @return 新的 Hook 上下文
      */
     private HookContext buildHookContext(LoopContext ctx) {
-        return new HookContext(ctx.getAgentName(), ctx.getRequestId(),
-                ctx.getTenantId(), ctx.getSessionId(),
-                ctx.getUserId(), ctx.getIteration(),
-                List.of(), ctx.getAttributes());
+        return ctx.toHookContext();
     }
 }

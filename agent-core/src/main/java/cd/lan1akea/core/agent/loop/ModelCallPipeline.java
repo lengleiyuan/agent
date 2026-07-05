@@ -98,7 +98,7 @@ public class ModelCallPipeline {
                     }
                     if (pre.getBypassMessage() != null) {
                         String text = pre.getBypassMessage().getTextContent();
-                        return Flux.just(chunkFromText(text != null ? text : "", FinishReason.STOP));
+                        return Flux.just(ChatStreamChunk.of(text != null ? text : "", FinishReason.STOP));
                     }
                     return callModelStream(ctx, hc, pre);
                 });
@@ -243,10 +243,7 @@ public class ModelCallPipeline {
      * @return 新的 Hook 上下文
      */
     private HookContext buildHookContext(LoopContext ctx) {
-        return new HookContext(ctx.getAgentName(), ctx.getRequestId(),
-                ctx.getTenantId(), ctx.getSessionId(),
-                ctx.getUserId(), ctx.getIteration(),
-                java.util.List.of(), ctx.getAttributes());
+        return ctx.toHookContext();
     }
 
     /**
@@ -257,20 +254,6 @@ public class ModelCallPipeline {
      * @return 流式分块
      */
     private static ChatStreamChunk chunkFromMessage(Msg msg, String finishReason) {
-        return chunkFromText(msg.getTextContent(), finishReason);
-    }
-
-    /**
-     * 从文本创建流式分块。
-     *
-     * @param text         文本内容
-     * @param finishReason 完成原因
-     * @return 流式分块
-     */
-    private static ChatStreamChunk chunkFromText(String text, String finishReason) {
-        return ChatStreamChunk.builder()
-                .delta(text)
-                .finishReason(finishReason)
-                .build();
+        return ChatStreamChunk.of(msg.getTextContent(), finishReason);
     }
 }

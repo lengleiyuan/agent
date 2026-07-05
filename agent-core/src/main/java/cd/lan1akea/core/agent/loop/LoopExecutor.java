@@ -127,7 +127,7 @@ public class LoopExecutor {
                     if (event.getBypassMessage() != null) {
                         Msg bypass = event.getBypassMessage();
                         ctx.addMessage(bypass);
-                        return Flux.just(chunkFromText(bypass.getTextContent(), FinishReason.STOP));
+                        return Flux.just(ChatStreamChunk.of(bypass.getTextContent(), FinishReason.STOP));
                     }
                     applySummarizeFallback(ctx);
                     return executeAndContinue(Phase.reason(), ctx);
@@ -185,7 +185,7 @@ public class LoopExecutor {
         }
     }
 
-    /**
+/**
      * 恢复已批准的介入：以原参数重新执行工具。
      *
      * <p>将暂停时保存的工具参数反序列化，构建 ToolCallContext 并标记为 approved，
@@ -199,34 +199,7 @@ public class LoopExecutor {
         String argsJson = ctx.getPausedToolArgs();
         Map<String, Object> args = argsJson != null
                 ? JsonUtils.safeParseMap(argsJson) : Map.of();
-
-        ToolCallContext callParam = ToolCallContext.builder()
-                .callId(Intervention.RESUME_CALL_PREFIX + req.getInterventionId())
-                .toolName(req.getToolName())
-                .arguments(args)
-                .tenantId(ctx.getTenantId())
-                .userId(ctx.getUserId())
-                .sessionId(ctx.getSessionId())
-                .attributes(ctx.getAttributes())
-                .build();
-        callParam.setApproved(true);
-
-        ctx.setInterventionId(null);
-        ctx.setInterventionType(null);
-        ctx.setPausedToolArgs(null);
-
-        return toolOrchestrator.executeDirect(callParam, ctx)
-                .flatMapMany(result -> {
-                    ChatStreamChunk chunk = chunkFromToolResult(result);
-                    return Flux.just(chunk)
-                            .concatWith(Flux.defer(() -> {
-                                appendSingleToolResult(ctx, result.withCallId(callParam.getCallId()), callParam.getCallId());
-                                return dispatchAfterIteration(ctx)
-                                        .thenMany(Mono.delay(Duration.ofMillis(ctx.getBackoffMs())).flux())
-                                        .thenMany(Flux.<ChatStreamChunk>empty());
-                            }));
-                })
-                .concatWith(Flux.defer(() -> runStream(ctx)));
+        return resumeToolWithArgs(ctx, req, args);
     }
 
     /**
@@ -242,11 +215,15 @@ public class LoopExecutor {
     private Flux<ChatStreamChunk> resumeClarifiedTool(LoopContext ctx, InterventionRequest req) {
         Map<String, Object> modified = req.getModifiedArgs() != null
                 ? req.getModifiedArgs() : Map.of();
+        return resumeToolWithArgs(ctx, req, modified);
+    }
 
+    private Flux<ChatStreamChunk> resumeToolWithArgs(LoopContext ctx, InterventionRequest req,
+                                                      Map<String, Object> args) {
         ToolCallContext callParam = ToolCallContext.builder()
                 .callId(Intervention.RESUME_CALL_PREFIX + req.getInterventionId())
                 .toolName(req.getToolName())
-                .arguments(modified)
+                .arguments(args)
                 .tenantId(ctx.getTenantId())
                 .userId(ctx.getUserId())
                 .sessionId(ctx.getSessionId())
@@ -374,7 +351,7 @@ public class LoopExecutor {
         return Flux.fromIterable(toolCalls)
                 .flatMap(tc -> toolOrchestrator.execute(tc, ctx)
                         .doOnNext(results::add)
-                        .map(result -> chunkFromToolResult(result)))
+                        .map(this::chunkFromToolResult))
                 .onErrorResume(e -> handleToolError(e, ctx, results))
                 .concatWith(Flux.defer(() -> {
                     appendToolResults(ctx, results);
@@ -573,7 +550,7 @@ public class LoopExecutor {
         return hookDispatcher.dispatch(ie, hc)
                 .flatMapMany(r -> {
                     if (r.isAbort()) {
-                        return Flux.just(chunkFromText(
+                        return Flux.just(ChatStreamChunk.of(
                                 UI.INTERRUPT_STREAM_PREFIX + r.getAbortReason()
                                         + UI.INTERRUPT_SUFFIX,
                                 FinishReason.INTERRUPTED));
@@ -586,7 +563,7 @@ public class LoopExecutor {
                     String reason = ctx.getLastResponse() != null
                             ? ctx.getLastResponse().getMessage().getTextContent()
                             : UI.INTERRUPT_EXEC;
-                    return Flux.just(chunkFromText(reason, FinishReason.INTERRUPTED));
+                    return Flux.just(ChatStreamChunk.of(reason, FinishReason.INTERRUPTED));
                 });
     }
 
@@ -657,10 +634,7 @@ public class LoopExecutor {
      * @return Hook 上下文
      */
     private HookContext buildHookContext(LoopContext ctx) {
-        return new HookContext(ctx.getAgentName(), ctx.getRequestId(),
-                ctx.getTenantId(), ctx.getSessionId(),
-                ctx.getUserId(), ctx.getIteration(),
-                List.of(), ctx.getAttributes());
+        return ctx.toHookContext();
     }
 
     /**
@@ -670,24 +644,10 @@ public class LoopExecutor {
      * @return 输出 chunk
      */
     private static ChatStreamChunk chunkFromResponse(ChatResponse resp) {
-        if (resp == null || resp.getMessage() == null) return chunkFromText("", "");
+        if (resp == null || resp.getMessage() == null) return ChatStreamChunk.of("", "");
         return ChatStreamChunk.builder()
                 .delta(resp.getMessage() != null ? resp.getMessage().getTextContent() : "")
                 .finishReason(resp.getFinishReason())
-                .build();
-    }
-
-    /**
-     * 从文本内容和结束原因构建输出 chunk。
-     *
-     * @param text         输出文本
-     * @param finishReason 结束原因
-     * @return 输出 chunk
-     */
-    private static ChatStreamChunk chunkFromText(String text, String finishReason) {
-        return ChatStreamChunk.builder()
-                .delta(text)
-                .finishReason(finishReason)
                 .build();
     }
 }
