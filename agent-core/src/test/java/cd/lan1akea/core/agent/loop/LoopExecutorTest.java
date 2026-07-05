@@ -163,7 +163,116 @@ class LoopExecutorTest {
                 .expectNextMatches(c -> FinishReason.INTERRUPTED.equals(c.getFinishReason()))
                 .verifyComplete();
 
-        // Model should NOT be called
         verify(model, never()).streamWithTools(any(), any(), any());
+    }
+
+    // ============================================================
+    // PRE_SUMMARIZE：达到最大迭代 → Hook 可覆盖内置兜底
+    // ============================================================
+
+    @Test
+    void maxIterations_shouldDispatchPreSummarizeHook() {
+        when(model.streamWithTools(any(), any(), any()))
+                .thenReturn(Flux.just(ChatStreamChunk.builder().delta("summary").finishReason(FinishReason.STOP).build()));
+
+        LoopContext ctx = LoopContext.builder()
+                .agentName("test").messages(List.of(UserMessage.of("hi")))
+                .generateOptions(GenerateOptions.defaults()).maxIterations(1).stream(true).build();
+        ctx.setIteration(1); // reached max
+
+        StepVerifier.create(executor.runStream(ctx))
+                .expectNextMatches(c -> "summary".equals(c.getDelta()))
+                .verifyComplete();
+
+        // Verify PRE_SUMMARIZE hook was dispatched
+        verify(hookDispatcher, atLeastOnce()).dispatch(
+                argThat(e -> e.getHookEventType() == HookEventType.PRE_SUMMARIZE),
+                any());
+        // Tools should be disabled after fallback
+        assertEquals(ToolChoicePolicy.NONE, ctx.getGenerateOptions().getToolChoice());
+    }
+
+    @Test
+    void maxIterations_bypassMessage_shouldSkipModel() {
+        // Hook sets bypassMessage → model never called
+        when(hookDispatcher.dispatch(any(HookEvent.class), any()))
+                .thenAnswer(inv -> {
+                    HookEvent event = inv.getArgument(0);
+                    if (event.getHookEventType() == HookEventType.PRE_SUMMARIZE) {
+                        if (event instanceof ReasoningEvent) {
+                            ((ReasoningEvent) event).setBypassMessage(
+                                    Msg.builder(MsgRole.ASSISTANT).addText("自定义摘要").build());
+                        }
+                    }
+                    return Mono.just(HookResult.continue_());
+                });
+
+        LoopContext ctx = LoopContext.builder()
+                .agentName("test").messages(List.of(UserMessage.of("hi")))
+                .generateOptions(GenerateOptions.defaults()).maxIterations(1).stream(true).build();
+        ctx.setIteration(1);
+
+        StepVerifier.create(executor.runStream(ctx))
+                .expectNextMatches(c -> "自定义摘要".equals(c.getDelta()))
+                .verifyComplete();
+
+        verify(model, never()).streamWithTools(any(), any(), any());
+    }
+
+    @Test
+    void maxIterations_fallback_shouldDisableTools() {
+        when(model.streamWithTools(any(), any(), any()))
+                .thenReturn(Flux.just(ChatStreamChunk.builder().delta("done").finishReason(FinishReason.STOP).build()));
+
+        LoopContext ctx = LoopContext.builder()
+                .agentName("test").messages(List.of(UserMessage.of("hi")))
+                .generateOptions(GenerateOptions.builder().toolChoice(ToolChoicePolicy.AUTO).build())
+                .maxIterations(1).stream(true).build();
+        ctx.setIteration(1);
+
+        executor.runStream(ctx).collectList().block();
+
+        assertEquals(ToolChoicePolicy.NONE, ctx.getGenerateOptions().getToolChoice());
+    }
+
+    // ============================================================
+    // ReasoningEvent 携带消息
+    // ============================================================
+
+    @Test
+    void preReasoningHook_shouldSeeMessages() {
+        List<Msg> messages = List.of(UserMessage.of("hi"));
+        when(model.streamWithTools(any(), any(), any()))
+                .thenReturn(Flux.just(ChatStreamChunk.builder().delta("ok").finishReason(FinishReason.STOP).build()));
+
+        LoopContext ctx = LoopContext.builder()
+                .agentName("test").messages(messages)
+                .generateOptions(GenerateOptions.defaults()).stream(true).build();
+
+        executor.runStream(ctx).collectList().block();
+
+        verify(hookDispatcher, atLeastOnce()).dispatch(
+                argThat(e -> e.getHookEventType() == HookEventType.PRE_REASONING
+                        && e instanceof ReasoningEvent
+                        && !((ReasoningEvent) e).getMessages().isEmpty()),
+                any());
+    }
+
+    // ============================================================
+    // LoopContext.setGenerateOptions
+    // ============================================================
+
+    @Test
+    void setGenerateOptions_shouldOverrideOptions() {
+        LoopContext ctx = LoopContext.builder()
+                .agentName("test").messages(List.of())
+                .generateOptions(GenerateOptions.builder().maxTokens(100).build()).build();
+
+        assertEquals(Integer.valueOf(100), ctx.getGenerateOptions().getMaxTokens());
+
+        ctx.setGenerateOptions(GenerateOptions.builder().maxTokens(200).toolChoice(ToolChoicePolicy.NONE).build());
+
+        assertEquals(Integer.valueOf(200), ctx.getGenerateOptions().getMaxTokens());
+        assertEquals(ToolChoicePolicy.NONE, ctx.getGenerateOptions().getToolChoice());
     }
 }
