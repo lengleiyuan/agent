@@ -1,25 +1,6 @@
 # Agent SDK
 
-面向业务的 AI Agent SDK。依赖 `agent-harness`，通过 Builder 一键装配。
-
----
-
-## 架构
-
-```
-ReActAgent（薄门面）
-  ├── AgentConfig（配置注入）
-  └── RequestPipeline（请求预处理）
-        ├── resolveContext → loadSession → injectSystemMessage → buildLoopCtx
-        ├── SessionGate（会话级 FIFO 串行化）
-        └── LoopExecutor（Phase-Driven 循环）
-              ├── LoopDecisionEngine（纯逻辑状态机，无 Reactor 依赖）
-              │     └── Phase.Guard → Reason → Act → Observe → Guard
-              ├── ModelCallPipeline（推理 Hook 管线）
-              │     └── PRE_REASONING → PRE_MODEL → model.stream → POST_MODEL → POST_REASONING
-              └── ToolCallOrchestrator（工具调用编排）
-                    └── buildContext → PRE Hook → execute → POST Hook
-```
+面向业务的 AI Agent SDK。`HarnessAgent` 是业务唯一入口，Builder 一键装配。
 
 ---
 
@@ -29,12 +10,35 @@ ReActAgent（薄门面）
 HarnessAgent agent = HarnessAgent.builder()
     .name("MyAgent")
     .model(new DeepSeekChatModel("sk-xxx", "deepseek-chat"))
+    .tool(new CalculatorTool())
+    .hook(new AuditHook("audit"))
+    .interventionStore(new InMemoryInterventionStore())
     .build();
 
 agent.stream(List.of(UserMessage.of("你好")))
     .subscribe(chunk -> System.out.print(chunk.getDelta()));
 
 ChatResponse resp = agent.chat(List.of(UserMessage.of("你好"))).block();
+```
+
+---
+
+## 内部架构（框架开发者参考）
+
+```
+HarnessAgent（业务门面）
+  └── ReActAgent（核心门面）
+        ├── AgentConfig（配置注入）
+        └── RequestPipeline（请求预处理）
+              ├── resolveContext → loadSession → injectSystemMessage → buildLoopCtx
+              ├── SessionGate（会话级 FIFO 串行化）
+              └── LoopExecutor（Phase-Driven 循环）
+                    ├── LoopDecisionEngine（纯逻辑状态机）
+                    │     └── Phase.Guard → Reason → Act → Observe → Guard
+                    ├── ModelCallPipeline（推理 Hook 管线）
+                    │     └── PRE_REASONING → PRE_MODEL → model.stream → POST_MODEL → POST_REASONING
+                    └── ToolCallOrchestrator（工具调用编排）
+                          └── buildContext → PRE Hook → execute → POST Hook
 ```
 
 ---
