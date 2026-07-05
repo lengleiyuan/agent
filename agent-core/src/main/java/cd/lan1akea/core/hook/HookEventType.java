@@ -49,5 +49,11 @@ public enum HookEventType {
     /**
      * 单次 ReAct 迭代后（持久化、检查点等系统级 Hook）
      */
-    AFTER_ITERATION
+    AFTER_ITERATION,
+
+    /**
+     * 达到最大迭代次数，进入总结阶段前。
+     * Hook 可注入自定义提示词或设置 bypassMessage 跳过模型总结。
+     */
+    PRE_SUMMARIZE
 }

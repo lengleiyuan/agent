@@ -50,7 +50,7 @@ public class LoopContext {
     /**
      * 生成选项。
      */
-    private final GenerateOptions generateOptions;
+    private volatile GenerateOptions generateOptions;
     /**
      * 最大 ReAct 迭代次数。
      */
@@ -189,6 +189,8 @@ public class LoopContext {
      * @return 生成选项
      */
     public GenerateOptions getGenerateOptions() { return generateOptions; }
+    /** 覆盖生成选项（如达到最大迭代时禁用工具/限制Token） */
+    public void setGenerateOptions(GenerateOptions v) { this.generateOptions = v; }
     /**
      * @return 最大迭代次数
      */

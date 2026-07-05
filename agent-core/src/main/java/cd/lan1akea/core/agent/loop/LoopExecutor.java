@@ -2,9 +2,11 @@ package cd.lan1akea.core.agent.loop;
 
 import cd.lan1akea.core.CoreConstants.EventPayload;
 import cd.lan1akea.core.CoreConstants.FinishReason;
+import cd.lan1akea.core.CoreConstants.HookSource;
 import cd.lan1akea.core.CoreConstants.Intervention;
 import cd.lan1akea.core.CoreConstants.Logs;
 import cd.lan1akea.core.CoreConstants.UI;
+import cd.lan1akea.core.exception.HookAbortException;
 import cd.lan1akea.core.exception.HumanInterventionException;
 import cd.lan1akea.core.hook.*;
 import cd.lan1akea.core.intervention.InterventionRequest;
@@ -99,8 +101,49 @@ public class LoopExecutor {
             if (d.isStop()) {
                 return Flux.just(chunkFromResponse(d.getResponse()));
             }
+            if (ctx.getIteration() >= ctx.getMaxIterations()) {
+                return dispatchSummarizeHook(ctx);
+            }
             return executeAndContinue(d.getNextPhase(), ctx);
         });
+    }
+
+    /**
+     * 分发 PRE_SUMMARIZE Hook 并应用内置兜底。
+     *
+     * <p>Hook 可通过 ReasoningEvent.setBypassMessage() 跳过模型直接返回自定义摘要。
+     * 未设置 bypass 时应用内置兜底：禁用工具 + 限制输出 Token 为 1024。
+     */
+    private Flux<ChatStreamChunk> dispatchSummarizeHook(LoopContext ctx) {
+        HookContext hc = buildHookContext(ctx);
+        ReasoningEvent event = new ReasoningEvent(HookEventType.PRE_SUMMARIZE);
+        event.setMessages(ctx.getMessages());
+
+        return hookDispatcher.dispatch(event, hc)
+                .flatMapMany(r -> {
+                    if (r.isAbort()) {
+                        return Flux.error(new HookAbortException(HookSource.HOOK, r.getAbortReason()));
+                    }
+                    if (event.getBypassMessage() != null) {
+                        Msg bypass = event.getBypassMessage();
+                        ctx.addMessage(bypass);
+                        return Flux.just(chunkFromText(bypass.getTextContent(), FinishReason.STOP));
+                    }
+                    applySummarizeFallback(ctx);
+                    return executeAndContinue(Phase.reason(), ctx);
+                });
+    }
+
+    /**
+     * 内置兜底：禁用工具，其余保持模型配置。
+     */
+    private void applySummarizeFallback(LoopContext ctx) {
+        GenerateOptions opts = ctx.getGenerateOptions();
+        ctx.setGenerateOptions(GenerateOptions.builder()
+                .temperature(opts.getTemperature())
+                .maxTokens(opts.getMaxTokens())
+                .toolChoice(ToolChoicePolicy.NONE)
+                .build());
     }
 
     /**
