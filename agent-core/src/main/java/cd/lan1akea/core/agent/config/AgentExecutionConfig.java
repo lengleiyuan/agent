@@ -37,6 +37,11 @@ public class AgentExecutionConfig {
      */
     private final long iterationBackoffMs;
 
+    /**
+     * 通过 Builder 构造 AgentExecutionConfig。
+     *
+     * @param builder 配置了各字段的 Builder
+     */
     private AgentExecutionConfig(Builder builder) {
         this.maxIterations = builder.maxIterations;
         this.temperature = builder.temperature;
@@ -96,12 +101,19 @@ public class AgentExecutionConfig {
      * AgentExecutionConfig 建造者。
      */
     public static class Builder {
+        /** 最大迭代次数，默认 10 */
         private int maxIterations = 10;
+        /** LLM 温度，默认 0.7 */
         private double temperature = 0.7;
+        /** 最大输出 token 数，默认 4096 */
         private int maxTokens = 4096;
+        /** 工具选择策略，默认 AUTO */
         private ToolChoicePolicy toolChoice = ToolChoicePolicy.AUTO;
+        /** 工具超时毫秒数，默认 30000 */
         private long toolTimeoutMs = 30000;
+        /** 总超时毫秒数，默认 300000 */
         private long totalTimeoutMs = 300000;
+        /** 迭代间退避毫秒数，默认 0（无退避） */
         private long iterationBackoffMs = 0;
 
         /**

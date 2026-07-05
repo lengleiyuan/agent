@@ -71,6 +71,16 @@ public class ToolExecutor {
         return doExecute(callParam);
     }
 
+    /**
+     * 执行工具调用流程：
+     * 1. 查找工具（ToolRegistry）
+     * 2. 参数验证（ToolValidator）
+     * 3. 执行前事件
+     * 4. 执行工具（带超时控制）
+     *
+     * @param callParam 工具调用上下文
+     * @return 执行结果 Mono
+     */
     @SuppressWarnings("deprecation")
     private Mono<ToolResult> doExecute(ToolCallContext callParam) {
         return Mono.defer(() -> {

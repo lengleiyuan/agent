@@ -295,16 +295,27 @@ public class LoopContext {
      * LoopContext 建造者。
      */
     public static class Builder {
+        /** Agent 名称 */
         private String agentName;
+        /** 请求追踪 ID（null 时自动生成） */
         private String requestId;
+        /** 租户标识 */
         private String tenantId;
+        /** 用户标识 */
         private String userId;
+        /** 会话标识 */
         private String sessionId;
+        /** 额外上下文属性 */
         private Map<String, Object> attributes;
+        /** 消息列表 */
         private List<Msg> messages;
+        /** 生成选项 */
         private GenerateOptions generateOptions;
+        /** 最大迭代次数，默认 10 */
         private int maxIterations = 10;
+        /** 是否启用流式模式 */
         private boolean stream;
+        /** 迭代间退避延迟（毫秒），默认 0 */
         private long backoffMs;
 
         /**

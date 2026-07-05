@@ -96,6 +96,9 @@ public class ToolArguments {
      */
     public boolean isEmpty() { return args.isEmpty(); }
 
+    /**
+     * @return 参数的字符串表示
+     */
     @Override
     public String toString() { return args.toString(); }
 }

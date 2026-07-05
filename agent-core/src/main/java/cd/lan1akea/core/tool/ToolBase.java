@@ -104,6 +104,12 @@ public abstract class ToolBase implements Tool {
             .description(description).required(required).build());
     }
 
+    /**
+     * 生成工具参数 JSON Schema。
+     * 基于声明的参数列表和复杂类型 Schema 构建完整的 parameters 定义。
+     *
+     * @return 工具参数 Schema
+     */
     @Override
     public ToolSchema getParameters() {
         Map<String, Object> properties = new LinkedHashMap<>();

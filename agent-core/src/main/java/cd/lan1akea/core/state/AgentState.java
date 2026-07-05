@@ -167,11 +167,35 @@ public class AgentState {
      */
     public void setPlanState(String planState) { this.planState = planState; }
 
+    /**
+     * @return 待解决的介入 ID（null 表示无待解决介入）
+     */
     public String getPendingInterventionId() { return pendingInterventionId; }
+    /**
+     * 设置待解决的介入 ID。
+     *
+     * @param v 介入 ID，null 表示清除
+     */
     public void setPendingInterventionId(String v) { this.pendingInterventionId = v; }
+    /**
+     * @return 介入类型（APPROVAL/CLARIFY/PAUSE）
+     */
     public String getInterventionType() { return interventionType; }
+    /**
+     * 设置介入类型。
+     *
+     * @param v 介入类型名称
+     */
     public void setInterventionType(String v) { this.interventionType = v; }
+    /**
+     * @return 暂停时快照的工具参数 JSON
+     */
     public String getPausedToolArgsJson() { return pausedToolArgsJson; }
+    /**
+     * 设置暂停时快照的工具参数 JSON。
+     *
+     * @param v 工具参数 JSON
+     */
     public void setPausedToolArgsJson(String v) { this.pausedToolArgsJson = v; }
 
     /**

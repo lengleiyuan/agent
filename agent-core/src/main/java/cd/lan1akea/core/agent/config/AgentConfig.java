@@ -41,8 +41,16 @@ public class AgentConfig {
      * 执行配置。
      */
     private final AgentExecutionConfig executionConfig;
+    /**
+     * 介入存储。
+     */
     private final InterventionStore interventionStore;
 
+    /**
+     * 使用 Builder 构造 AgentConfig。
+     *
+     * @param builder 配置了字段的 builder
+     */
     private AgentConfig(Builder builder) {
         this.name = builder.name;
         this.model = builder.model;
@@ -83,6 +91,9 @@ public class AgentConfig {
      * @return 执行配置
      */
     public AgentExecutionConfig getExecutionConfig() { return executionConfig; }
+    /**
+     * @return 介入存储
+     */
     public InterventionStore getInterventionStore() { return interventionStore; }
 
     /**
@@ -102,7 +113,9 @@ public class AgentConfig {
         private HookChain hookChain;
         private AroundHookChain aroundHookChain;
         private AgentStateStore stateStore;
+        /** 执行配置。 */
         private AgentExecutionConfig executionConfig;
+        /** 介入存储。 */
         private InterventionStore interventionStore;
 
         /**

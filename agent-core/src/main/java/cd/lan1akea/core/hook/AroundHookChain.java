@@ -119,7 +119,8 @@ public class AroundHookChain {
     }
 
     /**
-     * 洋葱构建（流式版）。Function 链天然延迟求值，无需 defer。
+     * 构建洋葱调用链（流式版）。
+     * Function 链天然延迟求值，无需 defer。
      */
     private Flux<ChatStreamChunk> wrapStream(HookEvent event, HookContext ctx,
                                               Function<HookEvent, Flux<ChatStreamChunk>> core,
@@ -133,18 +134,45 @@ public class AroundHookChain {
         return chain.apply(event);
     }
 
+    /**
+     * 流式包裹函数接口。
+     */
     @FunctionalInterface
     private interface StreamWrapFunction {
+        /**
+         * 应用 Hook 包裹。
+         *
+         * @param hook 当前 AroundHook
+         * @param event Hook 事件
+         * @param ctx   Hook 上下文
+         * @param next  下一个调用链
+         * @return 包裹后的 Flux 流
+         */
         Flux<ChatStreamChunk> apply(AroundHook hook, HookEvent event, HookContext ctx,
                                      Function<HookEvent, Flux<ChatStreamChunk>> next);
     }
 
+    /**
+     * 非流式包裹函数接口。
+     */
     @FunctionalInterface
     private interface WrapFunction {
+        /**
+         * 应用 Hook 包裹。
+         *
+         * @param hook 当前 AroundHook
+         * @param event Hook 事件
+         * @param ctx   Hook 上下文
+         * @param next  下一个调用链
+         * @return 包裹后的 Mono 结果
+         */
         Mono<HookEvent> apply(AroundHook hook, HookEvent event, HookContext ctx,
                               Function<HookEvent, Mono<HookEvent>> next);
     }
 
+    /**
+     * 构建洋葱调用链（非流式版）。
+     */
     private Mono<HookEvent> wrap(HookEvent event, HookContext ctx,
                                   Function<HookEvent, Mono<HookEvent>> core,
                                   WrapFunction wf) {

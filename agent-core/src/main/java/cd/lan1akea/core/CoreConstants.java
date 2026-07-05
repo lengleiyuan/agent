@@ -57,6 +57,18 @@ public final class CoreConstants {
         public static final String RISK_LEVEL = "riskLevel";
         /** LoopContext 引用（AFTER_ITERATION） */
         public static final String LOOP_CONTEXT = "loopContext";
+        /** 工具执行结果（ToolCallOrchestrator → LoopExecutor） */
+        public static final String TOOL_RESULT = "tool_result";
+        /** 干预 chunk payload 键 */
+        public static final String TYPE = "type";
+        /** 干预 chunk payload 键 */
+        public static final String INTERVENTION_ID = "interventionId";
+        /** 干预 chunk payload 键 */
+        public static final String QUESTION = "question";
+        /** 干预 chunk payload 键 */
+        public static final String INTERVENTION_TYPE = "interventionType";
+        /** 干预 chunk payload 键 */
+        public static final String TOOL_NAME = "toolName";
 
         private EventPayload() {}
     }
@@ -225,6 +237,14 @@ public final class CoreConstants {
         public static final String MSG_DENIED = "上一步操作被拒绝";
         /** 介入过期消息 */
         public static final String MSG_EXPIRED = "上一步操作审批已过期";
+        /** 介入暂停提示 */
+        public static final String MSG_WAITING = "等待人工处理中...";
+        /** 介入恢复调用 ID 前缀 */
+        public static final String RESUME_CALL_PREFIX = "resume_";
+        /** 介入 pending 错误模板 */
+        public static final String ERR_PENDING = "Intervention still pending: ";
+        /** 空响应 fallback */
+        public static final String EMPTY_REASON = "empty";
 
         private Intervention() {}
     }
