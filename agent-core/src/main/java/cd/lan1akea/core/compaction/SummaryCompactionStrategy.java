@@ -85,7 +85,7 @@ public class SummaryCompactionStrategy implements CompactionStrategy {
         if (ctx.getModel() != null) {
             cd.lan1akea.core.model.GenerateOptions opts = ctx.getGenerateOptions() != null
                 ? ctx.getGenerateOptions()
-                : cd.lan1akea.core.model.GenerateOptions.builder().maxTokens(512).build();
+                : cd.lan1akea.core.model.GenerateOptions.builder().maxTokens(ctx.getModel().getDefaultMaxTokens()).build();
             return ctx.getModel().chat(
                     List.of(SystemMessage.of(summaryPrompt)), opts)
                 .map(resp -> {
