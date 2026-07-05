@@ -2,6 +2,7 @@ package cd.lan1akea.core.agent;
 
 import cd.lan1akea.core.agent.config.AgentConfig;
 import cd.lan1akea.core.agent.loop.*;
+import cd.lan1akea.core.CoreConstants;
 import cd.lan1akea.core.CoreConstants.UI;
 import cd.lan1akea.core.context.RuntimeContext;
 import cd.lan1akea.core.exception.AgentConfigurationException;
@@ -81,8 +82,8 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
      * @param config Agent 配置，必须包含 ChatModel
      */
     public ReActAgent(AgentConfig config) {
-        ValidationUtils.notNull(config, "AgentConfig");
-        ValidationUtils.notNull(config.getModel(), "ChatModel");
+        ValidationUtils.notNull(config, CoreConstants.Validation.PARAM_AGENT_CONFIG);
+        ValidationUtils.notNull(config.getModel(), CoreConstants.Validation.PARAM_CHAT_MODEL);
 
         this.config = config;
         this.id = IdGenerator.nextIdStr();

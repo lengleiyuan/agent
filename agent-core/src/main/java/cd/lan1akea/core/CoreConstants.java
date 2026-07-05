@@ -250,4 +250,51 @@ public final class CoreConstants {
 
         private Intervention() {}
     }
+
+    /**
+     * JSON Schema 字段名常量。
+     * 用于 ToolBase.getParameters() 构建工具参数 Schema。
+     */
+    public static final class JsonSchema {
+        /** 类型字段 */
+        public static final String TYPE = "type";
+        /** 对象类型 */
+        public static final String TYPE_OBJECT = "object";
+        /** 数组类型 */
+        public static final String TYPE_ARRAY = "array";
+        /** 字符串类型 */
+        public static final String TYPE_STRING = "string";
+        /** 数字类型 */
+        public static final String TYPE_NUMBER = "number";
+        /** 布尔类型 */
+        public static final String TYPE_BOOLEAN = "boolean";
+        /** 数组子项 Schema */
+        public static final String ITEMS = "items";
+        /** 属性定义 */
+        public static final String PROPERTIES = "properties";
+        /** 必填字段列表 */
+        public static final String REQUIRED = "required";
+        /** 字段描述 */
+        public static final String DESCRIPTION = "description";
+        /** 默认值 */
+        public static final String DEFAULT = "default";
+        /** 枚举值 */
+        public static final String ENUM = "enum";
+
+        private JsonSchema() {}
+    }
+
+    /**
+     * 参数校验相关常量。
+     */
+    public static final class Validation {
+        /** AgentConfig 参数名 */
+        public static final String PARAM_AGENT_CONFIG = "AgentConfig";
+        /** ChatModel 参数名 */
+        public static final String PARAM_CHAT_MODEL = "ChatModel";
+        /** callParam 参数名 */
+        public static final String PARAM_CALL_PARAM = "callParam";
+
+        private Validation() {}
+    }
 }

@@ -1,5 +1,7 @@
 package cd.lan1akea.core.tool;
 
+import cd.lan1akea.core.CoreConstants.JsonSchema;
+import cd.lan1akea.core.CoreConstants.Validation;
 import cd.lan1akea.core.model.ToolSchema;
 import cd.lan1akea.core.util.TypeSchemaGenerator;
 import cd.lan1akea.core.util.ValidationUtils;
@@ -46,7 +48,7 @@ public abstract class ToolBase implements Tool {
     protected void declareObjectParam(String name, String description, boolean required, Type type) {
         Map<String, Object> schema = TypeSchemaGenerator.generate(type);
         complexSchemas.put(name, schema);
-        declareParam(ToolParam.builder(name, "object")
+        declareParam(ToolParam.builder(name, JsonSchema.TYPE_OBJECT)
             .description(description).required(required).build());
     }
 
@@ -61,10 +63,10 @@ public abstract class ToolBase implements Tool {
     protected void declareArrayParam(String name, String description, boolean required, Type elementType) {
         Map<String, Object> items = TypeSchemaGenerator.generate(elementType);
         Map<String, Object> schema = new LinkedHashMap<>();
-        schema.put("type", "array");
-        schema.put("items", items);
+        schema.put(JsonSchema.TYPE, JsonSchema.TYPE_ARRAY);
+        schema.put(JsonSchema.ITEMS, items);
         complexSchemas.put(name, schema);
-        declareParam(ToolParam.builder(name, "array")
+        declareParam(ToolParam.builder(name, JsonSchema.TYPE_ARRAY)
             .description(description).required(required).build());
     }
 
@@ -76,7 +78,7 @@ public abstract class ToolBase implements Tool {
      * @param required    是否必需
      */
     protected void declareStringParam(String name, String description, boolean required) {
-        declareParam(ToolParam.builder(name, "string")
+        declareParam(ToolParam.builder(name, JsonSchema.TYPE_STRING)
             .description(description).required(required).build());
     }
 
@@ -88,7 +90,7 @@ public abstract class ToolBase implements Tool {
      * @param required    是否必需
      */
     protected void declareNumberParam(String name, String description, boolean required) {
-        declareParam(ToolParam.builder(name, "number")
+        declareParam(ToolParam.builder(name, JsonSchema.TYPE_NUMBER)
             .description(description).required(required).build());
     }
 
@@ -100,7 +102,7 @@ public abstract class ToolBase implements Tool {
      * @param required    是否必需
      */
     protected void declareBooleanParam(String name, String description, boolean required) {
-        declareParam(ToolParam.builder(name, "boolean")
+        declareParam(ToolParam.builder(name, JsonSchema.TYPE_BOOLEAN)
             .description(description).required(required).build());
     }
 
@@ -122,14 +124,14 @@ public abstract class ToolBase implements Tool {
                 propDef = new LinkedHashMap<>(complexSchema);
             } else {
                 propDef = new LinkedHashMap<>();
-                propDef.put("type", param.getType());
+                propDef.put(JsonSchema.TYPE, param.getType());
             }
-            propDef.put("description", param.getDescription());
+            propDef.put(JsonSchema.DESCRIPTION, param.getDescription());
             if (param.getDefaultValue() != null) {
-                propDef.put("default", param.getDefaultValue());
+                propDef.put(JsonSchema.DEFAULT, param.getDefaultValue());
             }
             if (param.getEnumValues() != null && param.getEnumValues().length > 0) {
-                propDef.put("enum", param.getEnumValues());
+                propDef.put(JsonSchema.ENUM, param.getEnumValues());
             }
             properties.put(param.getName(), propDef);
 
@@ -139,10 +141,10 @@ public abstract class ToolBase implements Tool {
         }
 
         Map<String, Object> schema = new LinkedHashMap<>();
-        schema.put("type", "object");
-        schema.put("properties", properties);
+        schema.put(JsonSchema.TYPE, JsonSchema.TYPE_OBJECT);
+        schema.put(JsonSchema.PROPERTIES, properties);
         if (!requiredFields.isEmpty()) {
-            schema.put("required", requiredFields);
+            schema.put(JsonSchema.REQUIRED, requiredFields);
         }
 
         return new ToolSchema(getName(), getDescription(), schema);
@@ -156,7 +158,7 @@ public abstract class ToolBase implements Tool {
      * @throws IllegalArgumentException 缺少必需参数时抛出（含实际传入 key 和期望 key）
      */
     protected void validateParams(ToolCallContext callParam) {
-        ValidationUtils.notNull(callParam, "callParam");
+        ValidationUtils.notNull(callParam, Validation.PARAM_CALL_PARAM);
         for (ToolParam param : params) {
             if (param.isRequired()) {
                 Object value = callParam.get(param.getName());
