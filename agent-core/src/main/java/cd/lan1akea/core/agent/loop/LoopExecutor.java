@@ -112,7 +112,7 @@ public class LoopExecutor {
      * 分发 PRE_SUMMARIZE Hook 并应用内置兜底。
      *
      * <p>Hook 可通过 ReasoningEvent.setBypassMessage() 跳过模型直接返回自定义摘要。
-     * 未设置 bypass 时应用内置兜底：禁用工具 + 限制输出 Token 为 1024。
+     * 未设置 bypass 时应用内置兜底：禁用工具
      */
     private Flux<ChatStreamChunk> dispatchSummarizeHook(LoopContext ctx) {
         HookContext hc = buildHookContext(ctx);
