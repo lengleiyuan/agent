@@ -14,6 +14,7 @@ import reactor.core.publisher.Mono;
 
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/agent")
@@ -26,7 +27,7 @@ public class AgentController {
     }
 
     @PostMapping("/chat")
-    public Mono<ChatResponse> chat(@RequestBody Map<String, Object> request,
+    public Mono<Map<String, Object>> chat(@RequestBody Map<String, Object> request,
                                     @RequestHeader(value = "X-Tenant-Id", required = false) String tenantId,
                                     @RequestHeader(value = "X-User-Id", required = false) String userId,
                                     @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
@@ -34,10 +35,21 @@ public class AgentController {
         if (message.isEmpty()) {
             return Mono.error(new IllegalArgumentException("message不能为空"));
         }
+        String sid = sessionId != null && !sessionId.isBlank() ? sessionId : UUID.randomUUID().toString();
         Msg userMsg = UserMessage.of(message);
         RuntimeContext ctx = RuntimeContext.builder()
-            .tenantId(tenantId).userId(userId).sessionId(sessionId).build();
-        return defaultAgent.chat(List.of(userMsg), ctx);
+            .tenantId(tenantId).userId(userId).sessionId(sid).build();
+        return defaultAgent.chat(List.of(userMsg), ctx)
+                .map(resp -> {
+                    String text = resp.getMessage() != null ? resp.getMessage().getTextContent() : "";
+                    long tokens = resp.getUsage() != null ? resp.getUsage().getTotalTokens() : 0;
+                    return Map.<String, Object>of(
+                        "text", text,
+                        "tokens", tokens,
+                        "sessionId", sid,
+                        "finishReason", resp.getFinishReason() != null ? resp.getFinishReason() : ""
+                    );
+                });
     }
 
     @GetMapping("/session/{sessionId}/history")
@@ -65,9 +77,18 @@ public class AgentController {
         if (message.isEmpty()) {
             return Flux.error(new IllegalArgumentException("message不能为空"));
         }
+        String sid = sessionId != null && !sessionId.isBlank() ? sessionId : UUID.randomUUID().toString();
         Msg userMsg = UserMessage.of(message);
         RuntimeContext ctx = RuntimeContext.builder()
-            .tenantId(tenantId).userId(userId).sessionId(sessionId).build();
-        return defaultAgent.stream(List.of(userMsg), ctx);
+            .tenantId(tenantId).userId(userId).sessionId(sid).build();
+
+        // 首个事件返回 sessionId，前端可用此统一会话标识
+        ChatStreamChunk sessionChunk = ChatStreamChunk.builder()
+                .delta(sid)
+                .type("session")
+                .build();
+
+        Flux<ChatStreamChunk> agentStream = defaultAgent.stream(List.of(userMsg), ctx);
+        return Flux.just(sessionChunk).concatWith(agentStream);
     }
 }

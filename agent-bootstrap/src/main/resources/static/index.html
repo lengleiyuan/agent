@@ -145,7 +145,10 @@
             <div style="background:var(--surface-2);border-radius:4px;height:6px;overflow:hidden">
                 <div id="ctxBar" style="background:var(--accent);height:100%;width:100%;transition:width 0.5s;border-radius:4px"></div>
             </div>
-            <div id="ctxLabel" style="font-size:0.65rem;color:var(--text-muted);margin-top:2px">--/-- tokens</div>
+            <div id="ctxLabel" style="font-size:0.65rem;color:var(--text-muted);margin-top:2px">--  tokens</div>
+        </div>
+        <div style="padding:6px 16px;border-top:1px solid var(--border);font-size:0.7rem;color:var(--text-muted)">
+            会话: <code id="sessIdBadge" style="font-size:0.65rem;color:var(--accent)">—</code>
         </div>
     </aside>
     <main class="main">
@@ -196,13 +199,19 @@
 // ===================== App State =====================
 let isLoading = false;
 let streamMode = true;
-let sessionId = sessionStorage.getItem('chatSessionId') || newSessionId();
+let sessionId = localStorage.getItem('chatSessionId') || newSessionId();
 let abortController = null;  // 用于中断流式请求
+let lastTokenUsage = 0;      // 最后一次模型调用的 token 消耗
 
 function newSessionId() {
     const id = crypto.randomUUID();
-    sessionStorage.setItem('chatSessionId', id);
+    localStorage.setItem('chatSessionId', id);
     return id;
+}
+
+function useSessionId(id) {
+    sessionId = id;
+    localStorage.setItem('chatSessionId', id);
 }
 
 function toggleStreamMode() {
@@ -418,12 +427,15 @@ async function sendMessage() {
                     const chunk = JSON.parse(data);
                     const eventType = sseEvent || chunk.type || 'text';
                     const delta = chunk.delta || '';
-                    if (delta && eventType !== 'tool_use_start' && eventType !== 'tool_use_delta') {
+                    if (delta && eventType !== 'tool_use_start' && eventType !== 'tool_use_delta' && eventType !== 'thinking') {
                         accumulatedText += delta;
                         contentEl.textContent = accumulatedText;  // 逐字纯文本，流畅不卡
                     }
                     if (eventType === 'thinking') {
                         thinkingText += delta;
+                    } else if (eventType === 'session') {
+                        // 后端自动生成的 sessionId，统一使用
+                        useSessionId(delta);
                     } else if (eventType === 'tool_use_start') {
                         toolCalls.push({ name: chunk.toolName || '', args: '' });
                     } else if (eventType === 'tool_use_delta') {
@@ -552,7 +564,8 @@ function updateContextBar() {
     const remaining = Math.max(0, max - used);
     const pct = max > 0 ? (remaining / max) * 100 : 100;
     document.getElementById('ctxBar').style.width = pct + '%';
-    document.getElementById('ctxLabel').textContent = '剩余 ' + (remaining/1000).toFixed(0) + 'K / ' + (max/1000).toFixed(0) + 'K';
+    document.getElementById('ctxLabel').textContent = '≈' + (used/1000).toFixed(0) + 'K / ' + (max/1000).toFixed(0) + 'K tokens';
+    document.getElementById('sessIdBadge').textContent = sessionId ? sessionId.slice(0, 8) + '...' : '—';
 }
 
 function renderSettings() {
@@ -644,7 +657,7 @@ async function loadHooks() {
 
 // ===================== Init =====================
 async function loadHistory() {
-    const sid = sessionStorage.getItem('chatSessionId');
+    const sid = localStorage.getItem('chatSessionId');
     if (!sid) return;
     try {
         const resp = await fetch('/api/agent/session/' + sid + '/history');
@@ -685,14 +698,14 @@ loadSettings();
 // ===================== 审批轮询 =====================
 async function pollApprovals() {
     try {
-        const r = await fetch('/api/approvals?sessionId=' + sessionId);
-        const approvals = await r.json();
-        if (!approvals || approvals.length === 0) return;
+        const r = await fetch('/api/interventions/pending/' + sessionId);
+        const interventions = await r.json();
+        if (!interventions || interventions.length === 0) return;
 
         // 移除旧的审批卡片
         document.querySelectorAll('.approval-card').forEach(el => el.remove());
 
-        approvals.forEach(a => {
+        interventions.forEach(a => {
             const pending = a.status === 'PENDING';
             const approved = a.status === 'APPROVED';
             const denied = a.status === 'DENIED';
@@ -709,7 +722,7 @@ async function pollApprovals() {
                     <span style="font-size:0.75rem;color:${ac}">${pending ? '⏳ 等待审批' : approved ? '✓ 已批准' : '✗ 已拒绝'}</span>
                 </div>
                 <div style="margin-bottom:4px">${esc(a.question||'')}</div>
-                ${a.arguments ? '<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:6px">' + Object.entries(a.arguments).map(([k,v]) => '<code>'+esc(k)+'</code>: '+esc(String(v))).join('&nbsp;|&nbsp;') + '</div>' : ''}
+                ${a.toolArgs ? '<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:6px">' + Object.entries(a.toolArgs).map(([k,v]) => '<code>'+esc(k)+'</code>: '+esc(String(v))).join('&nbsp;|&nbsp;') + '</div>' : ''}
                 ${pending
                     ? '<a href="/approvals.html" target="_blank" style="font-size:0.75rem;color:var(--accent);text-decoration:none">📋 打开审批页面（需审批人操作）</a>'
                     : '<div style="font-size:0.7rem;color:var(--text-muted)">'+esc(a.approverId||'')+(a.approverComment?' | '+esc(a.approverComment):'')+'</div>'}

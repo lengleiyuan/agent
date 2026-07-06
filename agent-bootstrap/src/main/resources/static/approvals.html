@@ -59,14 +59,14 @@
 <div id="list"></div>
 
 <script>
-let allApprovals = [];
+let allInterventions = [];
 let currentTab = 'pending';
 
 async function load() {
     try {
-        const r = await fetch('/api/approvals/all');
-        allApprovals = await r.json();
-    } catch(e) { allApprovals = []; }
+        const r = await fetch('/api/interventions/all');
+        allInterventions = await r.json();
+    } catch(e) { allInterventions = []; }
     render();
 }
 
@@ -79,8 +79,8 @@ function showTab(tab) {
 
 function render() {
     const filtered = currentTab === 'pending'
-        ? allApprovals.filter(a => a.status === 'PENDING')
-        : allApprovals.filter(a => a.status !== 'PENDING');
+        ? allInterventions.filter(a => a.status === 'PENDING')
+        : allInterventions.filter(a => a.status !== 'PENDING');
 
     if (filtered.length === 0) {
         document.getElementById('list').innerHTML =
@@ -90,7 +90,7 @@ function render() {
     }
 
     document.getElementById('list').innerHTML = filtered.map(a => {
-        const args = a.arguments ? Object.entries(a.arguments).map(([k,v]) =>
+        const args = a.toolArgs ? Object.entries(a.toolArgs).map(([k,v]) =>
             `<tr><td>${esc(k)}</td><td>${esc(String(v))}</td></tr>`).join('') : '';
         const msgs = a.recentMessages ? a.recentMessages.map(m => {
             const role = (m.role||'').toLowerCase();
@@ -100,7 +100,7 @@ function render() {
             return `<div class="${cls}"><b>${role}</b>: ${esc(text)}</div>`;
         }).join('') : '';
         const isPending = a.status === 'PENDING';
-        const time = new Date(a.createdAt).toLocaleString();
+        const time = a.createdAt ? new Date(a.createdAt).toLocaleString() : '—';
         const expiresIn = a.expiresAt ? Math.max(0, Math.ceil((a.expiresAt - Date.now())/60000)) : 0;
 
         return `<div class="card">
@@ -108,14 +108,13 @@ function render() {
                 <div>
                     <span class="risk risk-${a.riskLevel || 'MEDIUM'}">${a.riskLevel || 'MEDIUM'}</span>
                     <strong style="margin-left:8px">${esc(a.toolName)}</strong>
-                    ${a.toolDescription ? `<span style="color:var(--text-muted);font-size:0.8rem;margin-left:6px">— ${esc(a.toolDescription)}</span>` : ''}
                 </div>
                 <div style="font-size:0.75rem;color:var(--text-muted);text-align:right">
                     <div>${time}</div>
                     ${isPending ? `<div style="color:#f59e0b">${expiresIn}分钟后过期</div>` : ''}
                 </div>
             </div>
-            <div><b>请求人:</b> ${esc(a.requesterId||'—')} &nbsp;|&nbsp; <b>会话:</b> <code style="font-size:0.75rem">${esc(a.sessionId||'')}</code></div>
+            <div><b>会话:</b> <code style="font-size:0.75rem">${esc(a.sessionId||'')}</code></div>
             ${args ? `<table class="args-table">${args}</table>` : ''}
             <div style="margin-top:6px"><b>问题:</b> ${esc(a.question||'')}</div>
             ${msgs ? `<details style="margin-top:6px"><summary style="cursor:pointer;font-size:0.8rem;color:var(--accent)">对话上下文</summary><div class="context-msgs">${msgs}</div></details>` : ''}
@@ -123,13 +122,13 @@ function render() {
                 <div style="margin-top:8px;font-size:0.8rem">
                     <span class="status-badge status-${a.status}">${a.status}</span>
                     <span style="margin-left:8px;color:var(--text-muted)">审批人: ${esc(a.approverId||'—')} ${a.approverComment ? '| 备注: '+esc(a.approverComment) : ''}</span>
-                    <span style="margin-left:8px;color:var(--text-muted)">${new Date(a.resolvedAt).toLocaleString()}</span>
+                    ${a.resolvedAt ? `<span style="margin-left:8px;color:var(--text-muted)">${new Date(a.resolvedAt).toLocaleString()}</span>` : ''}
                 </div>
             ` : `
                 <div class="actions">
-                    <input class="comment-input" placeholder="审批备注（可选）" id="comment-${a.approvalId}">
-                    <button class="btn-approve" onclick="resolve('${a.approvalId}','approve')">批准</button>
-                    <button class="btn-deny" onclick="resolve('${a.approvalId}','deny')">拒绝</button>
+                    <input class="comment-input" placeholder="审批备注（可选）" id="comment-${a.interventionId}">
+                    <button class="btn-approve" onclick="resolve('${a.interventionId}','approve')">批准</button>
+                    <button class="btn-deny" onclick="resolve('${a.interventionId}','deny')">拒绝</button>
                 </div>
             `}
         </div>`;
@@ -139,10 +138,10 @@ function render() {
 async function resolve(id, action) {
     const comment = document.getElementById('comment-' + id)?.value || '';
     try {
-        await fetch('/api/approvals/' + id + '/' + action, {
+        await fetch('/api/interventions/' + id + '/resolve', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ comment })
+            body: JSON.stringify({ action, comment })
         });
         load();
     } catch(e) { alert('操作失败: ' + e.message); }
