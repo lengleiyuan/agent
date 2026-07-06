@@ -121,7 +121,7 @@ function render() {
             ${!isPending ? `
                 <div style="margin-top:8px;font-size:0.8rem">
                     <span class="status-badge status-${a.status}">${a.status}</span>
-                    <span style="margin-left:8px;color:var(--text-muted)">审批人: ${esc(a.approverId||'—')} ${a.approverComment ? '| 备注: '+esc(a.approverComment) : ''}</span>
+                    <span style="margin-left:8px;color:var(--text-muted)">审批人: ${esc(a.resolverId||'—')} ${a.resolution ? '| 备注: '+esc(a.resolution) : ''}</span>
                     ${a.resolvedAt ? `<span style="margin-left:8px;color:var(--text-muted)">${new Date(a.resolvedAt).toLocaleString()}</span>` : ''}
                 </div>
             ` : `

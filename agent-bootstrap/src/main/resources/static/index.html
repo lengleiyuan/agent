@@ -199,19 +199,19 @@
 // ===================== App State =====================
 let isLoading = false;
 let streamMode = true;
-let sessionId = localStorage.getItem('chatSessionId') || newSessionId();
+let sessionId = sessionStorage.getItem('chatSessionId') || newSessionId();
 let abortController = null;  // 用于中断流式请求
 let lastTokenUsage = 0;      // 最后一次模型调用的 token 消耗
 
 function newSessionId() {
     const id = crypto.randomUUID();
-    localStorage.setItem('chatSessionId', id);
+    sessionStorage.setItem('chatSessionId', id);
     return id;
 }
 
 function useSessionId(id) {
     sessionId = id;
-    localStorage.setItem('chatSessionId', id);
+    sessionStorage.setItem('chatSessionId', id);
 }
 
 function toggleStreamMode() {
@@ -678,7 +678,7 @@ async function countHistoryTokens(bubbleId, text) {
 
 // ===================== Init =====================
 async function loadHistory() {
-    const sid = localStorage.getItem('chatSessionId');
+    const sid = sessionStorage.getItem('chatSessionId');
     if (!sid) return;
     try {
         const resp = await fetch('/api/agent/session/' + sid + '/history');
@@ -747,7 +747,7 @@ async function pollApprovals() {
                 ${a.toolArgs ? '<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:6px">' + Object.entries(a.toolArgs).map(([k,v]) => '<code>'+esc(k)+'</code>: '+esc(String(v))).join('&nbsp;|&nbsp;') + '</div>' : ''}
                 ${pending
                     ? '<a href="/approvals.html" target="_blank" style="font-size:0.75rem;color:var(--accent);text-decoration:none">📋 打开审批页面（需审批人操作）</a>'
-                    : '<div style="font-size:0.7rem;color:var(--text-muted)">'+esc(a.approverId||'')+(a.approverComment?' | '+esc(a.approverComment):'')+'</div>'}
+                    : '<div style="font-size:0.7rem;color:var(--text-muted)">'+esc(a.resolverId||'')+(a.resolution?' | '+esc(a.resolution):'')+'</div>'}
             `;
             chatMessages.appendChild(card);
         });
