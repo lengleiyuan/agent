@@ -326,12 +326,12 @@ function createStreamingBubble() {
     const wrapper = document.createElement('div');
     wrapper.style.display = 'flex'; wrapper.style.flexDirection = 'column'; wrapper.style.alignItems = 'flex-start';
     const bubble = document.createElement('div');
+    const bubbleId = 'b' + Date.now();
     bubble.className = 'chat-bubble assistant';
-    bubble.innerHTML = '<div class="role-tag">assistant</div>';
+    bubble.innerHTML = '<div class="role-tag">assistant <span id="tokenBadge-' + bubbleId + '" style="font-size:0.65rem;background:rgba(99,102,241,0.12);color:var(--accent);padding:1px 6px;border-radius:3px;margin-left:6px"></span></div>';
     const stepsEl = document.createElement('div');
     stepsEl.className = 'steps-container';
     bubble.appendChild(stepsEl);
-    // streaming content — pre-wrap for real-time plain text output
     const contentEl = document.createElement('div');
     contentEl.style.whiteSpace = 'pre-wrap';
     contentEl.style.wordBreak = 'break-word';
@@ -339,7 +339,7 @@ function createStreamingBubble() {
     wrapper.appendChild(bubble);
     chatMessages.appendChild(wrapper);
     scrollChat();
-    return { wrapper, bubble, stepsEl, contentEl };
+    return { wrapper, bubble, stepsEl, contentEl, bubbleId };
 }
 
 async function sendMessage() {
@@ -427,15 +427,20 @@ async function sendMessage() {
                     const chunk = JSON.parse(data);
                     const eventType = sseEvent || chunk.type || 'text';
                     const delta = chunk.delta || '';
-                    if (delta && eventType !== 'tool_use_start' && eventType !== 'tool_use_delta' && eventType !== 'thinking') {
+                    if (delta && eventType !== 'tool_use_start' && eventType !== 'tool_use_delta' && eventType !== 'thinking' && eventType !== 'session' && eventType !== 'usage') {
                         accumulatedText += delta;
-                        contentEl.textContent = accumulatedText;  // 逐字纯文本，流畅不卡
+                        contentEl.textContent = accumulatedText;
                     }
                     if (eventType === 'thinking') {
                         thinkingText += delta;
                     } else if (eventType === 'session') {
-                        // 后端自动生成的 sessionId，统一使用
                         useSessionId(delta);
+                    } else if (eventType === 'usage') {
+                        try {
+                            const u = JSON.parse(delta);
+                            document.getElementById('tokenBadge-' + stream.bubbleId).textContent =
+                                '↑' + u.promptTokens + ' ↓' + u.completionTokens + ' tok';
+                        } catch(e) {}
                     } else if (eventType === 'tool_use_start') {
                         toolCalls.push({ name: chunk.toolName || '', args: '' });
                     } else if (eventType === 'tool_use_delta') {
