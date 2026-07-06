@@ -328,28 +328,17 @@ public class RequestPipeline {
         String id = checkpoint.getPendingInterventionId();
         InterventionRequest req = interventionStore.getById(id);
 
-        if (req == null || req.getStatus() == InterventionRequest.Status.EXPIRED) {
+        if (req == null || req.getStatus() == InterventionRequest.Status.EXPIRED
+                || req.getStatus() == InterventionRequest.Status.DENIED) {
             checkpoint.setPendingInterventionId(null);
             checkpoint.setInterventionType(null);
             checkpoint.setPausedToolArgsJson(null);
-            return stateStore.saveCheckpoint(checkpoint).thenReturn(checkpoint);
+            return Mono.just(checkpoint);
         }
 
-        switch (req.getStatus()) {
-            case PENDING:
-                return Mono.error(new IllegalStateException(
-                        Intervention.ERR_PENDING + id));
-            case APPROVED:
-            case CLARIFIED:
-                return Mono.just(checkpoint);
-            case DENIED:
-                checkpoint.setPendingInterventionId(null);
-                checkpoint.setInterventionType(null);
-                checkpoint.setPausedToolArgsJson(null);
-                return stateStore.saveCheckpoint(checkpoint).thenReturn(checkpoint);
-            default:
-                return Mono.just(checkpoint);
-        }
+        // PENDING / APPROVED / CLARIFIED — 保留介入字段，
+        // 由 LoopExecutor.runStream → resumeFromIntervention 决定如何处理
+        return Mono.just(checkpoint);
     }
 
     /**

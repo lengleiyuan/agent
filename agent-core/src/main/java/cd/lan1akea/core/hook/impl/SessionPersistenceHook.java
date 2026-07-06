@@ -82,10 +82,27 @@ public class SessionPersistenceHook implements Hook {
     }
 
     private void saveCheckpoint(LoopContext ctx, String sessionId) {
+        List<Msg> msgs = new ArrayList<>(ctx.getMessages());
+
+        // 介入未解决时，移除最后一条含未完成 tool_use 的 assistant 消息，
+        // 避免 LLM 下次加载上下文时看到未完结工具调用并重复触发
+        if (ctx.getInterventionId() != null) {
+            for (int i = msgs.size() - 1; i >= 0; i--) {
+                if (msgs.get(i).getRole() == MsgRole.ASSISTANT) {
+                    msgs.remove(i);
+                    break;
+                }
+            }
+        }
+
         AgentState state = new AgentState(ctx.getAgentName(), sessionId,
-            ctx.getIteration(), new ArrayList<>(ctx.getMessages()),
+            ctx.getIteration(), msgs,
             Map.of(), ctx.getTotalTokens(), false, null,
             System.currentTimeMillis());
+
+        state.setPendingInterventionId(ctx.getInterventionId());
+        state.setInterventionType(ctx.getInterventionType());
+        state.setPausedToolArgsJson(ctx.getPausedToolArgs());
 
         stateStore.saveCheckpoint(state).subscribe();
     }

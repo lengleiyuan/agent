@@ -186,6 +186,11 @@ public class LoopExecutor {
                 ctx.setInterventionType(null);
                 ctx.addMessage(SystemMessage.of(Intervention.MSG_DENIED));
                 return runStream(ctx);
+            case PENDING:
+                ctx.setInterventionId(null);
+                ctx.setInterventionType(null);
+                ctx.setPausedToolArgs(null);
+                return runStream(ctx);
             default:
                 return Flux.just(interventionChunk(id, Intervention.MSG_WAITING,
                         req.getType().name(), req.getToolName()));
