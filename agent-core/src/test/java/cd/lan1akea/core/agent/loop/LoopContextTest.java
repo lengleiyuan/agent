@@ -60,4 +60,22 @@ class LoopContextTest {
         assertNotNull(hc.getCalledTools());
         assertTrue(hc.getCalledTools().isEmpty());
     }
+
+    @Test
+    void markComplete_shouldSetCompleteFlag() {
+        LoopContext ctx = LoopContext.builder()
+                .agentName("a").messages(List.of())
+                .generateOptions(GenerateOptions.defaults()).build();
+        assertFalse(ctx.isComplete());
+        ctx.markComplete();
+        assertTrue(ctx.isComplete());
+    }
+
+    @Test
+    void newContext_shouldNotBeComplete() {
+        LoopContext ctx = LoopContext.builder()
+                .agentName("a").messages(List.of())
+                .generateOptions(GenerateOptions.defaults()).build();
+        assertFalse(ctx.isComplete());
+    }
 }

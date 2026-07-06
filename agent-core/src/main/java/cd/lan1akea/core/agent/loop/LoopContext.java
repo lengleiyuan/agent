@@ -105,6 +105,19 @@ public class LoopContext {
      * 当介入被澄清后，使用 {@link cd.lan1akea.core.intervention.InterventionRequest#getModifiedArgs()} 替代。
      */
     private volatile String pausedToolArgs;
+    /**
+     * 会话是否已完成（无需继续推理）。
+     * 由引擎在 REASON 阶段评估无工具调用时标记，
+     * Guard 阶段检查此标记决定 Stop。
+     */
+    private volatile boolean complete;
+
+    /** 标记会话完成，下一轮 Guard 评估时将返回 Stop */
+    public void markComplete() { this.complete = true; }
+
+    /** @return 会话是否已完成 */
+    public boolean isComplete() { return complete; }
+
 
     /**
      * 从 builder 创建 LoopContext。
