@@ -165,6 +165,24 @@ public class LoopExecutor {
      *   <li>PENDING — 返回等待中的干预 chunk</li>
      * </ul>
      *
+    /** 从消息列表中取最后一条 assistant 消息的最后一个 tool_use id */
+    private String extractLastToolCallId(LoopContext ctx) {
+        List<Msg> msgs = ctx.getMessages();
+        for (int i = msgs.size() - 1; i >= 0; i--) {
+            Msg m = msgs.get(i);
+            if (m.getRole() == MsgRole.ASSISTANT) {
+                List<ToolUseBlock> tools = m.getToolUseBlocks();
+                if (tools != null && !tools.isEmpty()) {
+                    return tools.get(tools.size() - 1).getId();
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 从人工介入状态恢复执行。
+     *
      * @param ctx 循环上下文
      * @return 恢复后的流式 chunk 序列
      */
@@ -187,6 +205,15 @@ public class LoopExecutor {
                 ctx.addMessage(SystemMessage.of(Intervention.MSG_DENIED));
                 return runStream(ctx);
             case PENDING:
+                // 注入合成 tool_result 闭合未完成的工具调用，避免 LLM 看到无结果 tool_use 后重复触发
+                String pauseCallId = extractLastToolCallId(ctx);
+                if (pauseCallId != null) {
+                    ctx.addMessage(Msg.builder(MsgRole.TOOL)
+                        .addToolResult(pauseCallId,
+                            "[等待审批] " + (req.getQuestion() != null ? req.getQuestion() : ""),
+                            true)
+                        .build());
+                }
                 ctx.setInterventionId(null);
                 ctx.setInterventionType(null);
                 ctx.setPausedToolArgs(null);
