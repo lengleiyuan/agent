@@ -24,7 +24,7 @@ public class InterventionController {
     }
 
     @GetMapping("/pending/{sessionId}")
-    public List<InterventionRequest> pendingBySession(@PathVariable String sessionId) {
+    public List<InterventionRequest> pendingBySession(@PathVariable("sessionId") String sessionId) {
         return interventionStore.getPendingBySession(sessionId);
     }
 
@@ -34,14 +34,14 @@ public class InterventionController {
     }
 
     @GetMapping("/{id}")
-    public InterventionRequest getById(@PathVariable String id) {
+    public InterventionRequest getById(@PathVariable("id") String id) {
         InterventionRequest req = interventionStore.getById(id);
         if (req == null) throw new RuntimeException("Intervention not found: " + id);
         return req;
     }
 
     @PostMapping("/{id}/resolve")
-    public Map<String, Object> resolve(@PathVariable String id, @RequestBody Map<String, Object> body) {
+    public Map<String, Object> resolve(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         String action = (String) body.get("action");
         String comment = (String) body.getOrDefault("comment", "");
         String resolver = (String) body.getOrDefault("resolver", "api");
