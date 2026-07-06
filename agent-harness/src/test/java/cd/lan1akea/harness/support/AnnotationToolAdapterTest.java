@@ -1,10 +1,10 @@
 package cd.lan1akea.harness.support;
 
+import cd.lan1akea.core.exception.HumanInterventionException;
 import cd.lan1akea.core.tool.Tool;
 import cd.lan1akea.core.tool.ToolCallContext;
 import cd.lan1akea.core.tool.ToolRegistry;
 import cd.lan1akea.core.tool.ToolResult;
-import cd.lan1akea.core.tool.ToolSuspendException;
 import cd.lan1akea.harness.annotation.ToolFunction;
 import cd.lan1akea.harness.annotation.ToolParam;
 import org.junit.jupiter.api.Test;
@@ -404,18 +404,18 @@ class AnnotationToolAdapterTest {
     }
 
     // ========================================================================
-    // ToolSuspendException 传播
+    // HumanInterventionException 传播
     // ========================================================================
 
     @ToolFunction(name = "needs_approval", riskLevel = "HIGH")
     static class ApprovalTool {
         public ToolResult run() {
-            throw new ToolSuspendException("needs_approval", "需要审批");
+            throw HumanInterventionException.approval("needs_approval", "需要审批", null);
         }
     }
 
     @Test
-    void toolSuspendExceptionPropagatesNotSwallowed() {
+    void humanInterventionExceptionPropagatesNotSwallowed() {
         ToolRegistry registry = new ToolRegistry();
         registry.addAdapter(new AnnotationToolAdapter());
         List<Tool> tools = registry.registerTool(new ApprovalTool());
@@ -425,12 +425,12 @@ class AnnotationToolAdapterTest {
             .callId("c1").toolName("needs_approval")
             .arguments(Map.of()).build();
 
-        // ToolSuspendException 必须传播，不能被转为 ToolResult.failure
+        // HumanInterventionException 必须传播，不能被转为 ToolResult.failure
         try {
             tool.execute(ctx).block();
-            fail("应该抛出 ToolSuspendException");
-        } catch (ToolSuspendException e) {
-            assertEquals("需要审批", e.getQuestion());
+            fail("应该抛出 HumanInterventionException");
+        } catch (HumanInterventionException e) {
+            assertEquals("需要审批", e.getReason());
         }
     }
 

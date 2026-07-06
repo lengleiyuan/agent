@@ -2,6 +2,7 @@ package cd.lan1akea.core.tool;
 
 import cd.lan1akea.core.CoreConstants.Defaults;
 import cd.lan1akea.core.CoreConstants.UI;
+import cd.lan1akea.core.exception.HumanInterventionException;
 import cd.lan1akea.core.exception.ToolExecutionException;
 import reactor.core.publisher.Mono;
 
@@ -111,7 +112,7 @@ public class ToolExecutor {
             Mono<ToolResult> execution = tool.execute(callParam)
                 .onErrorResume(e -> {
                     emitter.onError(tool, callParam, e);
-                    if (e instanceof ToolSuspendException) {
+                    if (e instanceof HumanInterventionException) {
                         return Mono.error(e); // 不吞掉，抛给 ReActLoop 处理
                     }
                     return Mono.just(ToolResult.failure(

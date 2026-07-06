@@ -1,11 +1,12 @@
 package cd.lan1akea.bootstrap.tool;
 
+import cd.lan1akea.core.exception.HumanInterventionException;
 import cd.lan1akea.core.tool.*;
 import reactor.core.publisher.Mono;
 
 /**
  * 转账工具（演示审批流程）。
- * 金额超过 10000 时抛出 ToolSuspendException 触发审批，风险等级 HIGH。
+ * 金额超过 10000 时抛出 HumanInterventionException 触发审批，风险等级 HIGH。
  */
 public class TransferTool extends ToolBase {
 
@@ -32,8 +33,9 @@ public class TransferTool extends ToolBase {
         Number amount = params.getNumber("amount");
 
         if (!params.isApproved() && amount != null && amount.longValue() > MAX_AUTO_AMOUNT) {
-            throw new ToolSuspendException("transfer",
-                "转账金额 " + amount + " 超过 " + MAX_AUTO_AMOUNT + " 上限，是否继续？");
+            throw HumanInterventionException.approval("transfer",
+                "转账金额 " + amount + " 超过 " + MAX_AUTO_AMOUNT + " 上限，是否继续？",
+                params);
         }
 
         return Mono.just(ToolResult.success(

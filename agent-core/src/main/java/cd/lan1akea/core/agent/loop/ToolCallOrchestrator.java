@@ -150,7 +150,7 @@ public class ToolCallOrchestrator {
     /**
      * 步骤三：通过 AroundHook 链执行工具。
      *
-     * <p>介入异常（ToolSuspendException / HumanInterventionException）不在此捕获，
+     * <p>介入异常（HumanInterventionException）不在此捕获，
      * 直接穿透到 LoopExecutor.executeAct() 的 onErrorResume。
      *
      * @param param 工具调用上下文

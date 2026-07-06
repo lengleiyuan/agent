@@ -129,36 +129,6 @@ class LoopExecutorInterventionTest {
     }
 
     // ===========================================================
-    // ToolSuspendException（legacy）→ 自动转为 HumanInterventionException
-    // ===========================================================
-
-    @Test
-    void legacyToolSuspend_shouldConvertToIntervention() {
-        when(model.streamWithTools(any(), any(), any()))
-                .thenReturn(Flux.just(
-                        chunkToolStart("c1", "transfer"),
-                        chunkFinish("tool_calls")));
-
-        when(toolExecutor.execute(any()))
-                .thenReturn(Mono.error(new ToolSuspendException("transfer", "确认转账?")));
-
-        when(interventionStore.create(any())).thenReturn("int_legacy");
-
-        LoopContext ctx = buildCtx("s4");
-
-        StepVerifier.create(executor.runStream(ctx).collectList())
-                .assertNext(chunks -> {
-                    boolean hasIntervention = chunks.stream()
-                            .anyMatch(c -> "intervention".equals(c.getType()));
-                    assertTrue(hasIntervention, "should have intervention chunk: " + chunks);
-                })
-                .verifyComplete();
-
-        verify(interventionStore, times(1)).create(any());
-        assertTrue(ctx.isInterrupted());
-    }
-
-    // ===========================================================
     // 介入恢复：approved 路径 → 使用 ctx.pausedToolArgs
     // ===========================================================
 

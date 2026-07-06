@@ -165,19 +165,37 @@ public class LoopExecutor {
      *   <li>PENDING — 返回等待中的干预 chunk</li>
      * </ul>
      *
-    /** 从消息列表中取最后一条 assistant 消息的最后一个 tool_use id */
-    private String extractLastToolCallId(LoopContext ctx) {
+    /** 找到最后一条 assistant 消息的索引，-1 表示不存在 */
+    private int lastAssistantIndex(LoopContext ctx) {
         List<Msg> msgs = ctx.getMessages();
         for (int i = msgs.size() - 1; i >= 0; i--) {
-            Msg m = msgs.get(i);
-            if (m.getRole() == MsgRole.ASSISTANT) {
-                List<ToolUseBlock> tools = m.getToolUseBlocks();
-                if (tools != null && !tools.isEmpty()) {
-                    return tools.get(tools.size() - 1).getId();
-                }
+            if (msgs.get(i).getRole() == MsgRole.ASSISTANT) {
+                return i;
             }
         }
+        return -1;
+    }
+
+    /** 取最后一条 assistant 消息的最后一个 tool_use id */
+    private String extractLastToolCallId(LoopContext ctx) {
+        int idx = lastAssistantIndex(ctx);
+        if (idx < 0) return null;
+        List<ToolUseBlock> tools = ctx.getMessages().get(idx).getToolUseBlocks();
+        if (tools != null && !tools.isEmpty()) {
+            return tools.get(tools.size() - 1).getId();
+        }
         return null;
+    }
+
+    /** 在最后一条 assistant 消息之后插入 tool_result 以闭合 tool_use */
+    private void closeOriginalToolUse(LoopContext ctx, String toolName) {
+        String callId = extractLastToolCallId(ctx);
+        int insertAt = lastAssistantIndex(ctx);
+        if (callId != null && insertAt >= 0) {
+            ctx.getMessages().add(insertAt + 1, Msg.builder(MsgRole.TOOL)
+                .addToolResult(callId, "[已处理] " + toolName, false)
+                .build());
+        }
     }
 
     /**
@@ -196,28 +214,34 @@ public class LoopExecutor {
         }
         switch (req.getStatus()) {
             case APPROVED:
+                closeOriginalToolUse(ctx, req.getToolName());
                 return resumeApprovedTool(ctx, req);
             case CLARIFIED:
+                closeOriginalToolUse(ctx, req.getToolName());
                 return resumeClarifiedTool(ctx, req);
-            case DENIED:
-                ctx.setInterventionId(null);
-                ctx.setInterventionType(null);
-                ctx.addMessage(SystemMessage.of(Intervention.MSG_DENIED));
-                return runStream(ctx);
-            case PENDING:
-                // 注入合成 tool_result 闭合未完成的工具调用，避免 LLM 看到无结果 tool_use 后重复触发
-                String pauseCallId = extractLastToolCallId(ctx);
-                if (pauseCallId != null) {
-                    ctx.addMessage(Msg.builder(MsgRole.TOOL)
-                        .addToolResult(pauseCallId,
-                            "[等待审批] " + (req.getQuestion() != null ? req.getQuestion() : ""),
+            case DENIED: {
+                String deniedCallId = extractLastToolCallId(ctx);
+                int deniedInsertAt = lastAssistantIndex(ctx);
+                if (deniedCallId != null && deniedInsertAt >= 0) {
+                    ctx.getMessages().add(deniedInsertAt + 1, Msg.builder(MsgRole.TOOL)
+                        .addToolResult(deniedCallId,
+                            Intervention.MSG_DENIED + " — " + req.getToolName()
+                                    + (req.getResolution() != null && !req.getResolution().isBlank()
+                                            ? ": " + req.getResolution() : ""),
                             true)
                         .build());
                 }
                 ctx.setInterventionId(null);
                 ctx.setInterventionType(null);
-                ctx.setPausedToolArgs(null);
                 return runStream(ctx);
+            }
+            case PENDING:
+                // 保持 intervention 字段不变，等待人工通过 API/审批页面处理。
+                // 不予继续循环 — 下次对话加载时根据最新状态决定恢复或再次等待。
+                return Flux.just(ChatStreamChunk.of(
+                        "[等待处理] " + req.getType() + " — " + req.getToolName() + ": "
+                                + (req.getQuestion() != null ? req.getQuestion() : ""),
+                        FinishReason.INTERRUPTED));
             default:
                 return Flux.just(interventionChunk(id, Intervention.MSG_WAITING,
                         req.getType().name(), req.getToolName()));
@@ -436,7 +460,6 @@ public class LoopExecutor {
      * <p>根据异常类型分别处理：
      * <ul>
      *   <li>{@link HumanInterventionException} — 可恢复时进入介入流程，不可恢复时透传</li>
-     *   <li>{@link ToolSuspendException} — 转换为 HumanInterventionException 后进入介入流程</li>
      *   <li>其他异常 — 构造失败结果后继续循环</li>
      * </ul>
      *
@@ -450,9 +473,6 @@ public class LoopExecutor {
         if (e instanceof HumanInterventionException hie) {
             if (!hie.isResumable()) return Flux.error(e);
             return handleIntervention(hie, ctx);
-        }
-        if (e instanceof ToolSuspendException tse) {
-            return handleLegacySuspension(tse, ctx);
         }
         // Other errors: add failure result and continue
         ToolResult failure = ToolResult.failure(UI.TOOL_EXEC_ERROR + e.getMessage());
@@ -492,22 +512,6 @@ public class LoopExecutor {
         ctx.interrupt();
 
         return Flux.just(interventionChunk(id, e.getReason(), e.getType().name(), e.getToolName()));
-    }
-
-    /**
-     * 处理旧的 {@link ToolSuspendException}（兼容老版本）。
-     *
-     * <p>将 ToolSuspendException 转换为 HumanInterventionException 后，
-     * 委托给 {@link #handleIntervention} 统一处理。
-     *
-     * @param e   ToolSuspendException 实例
-     * @param ctx 循环上下文
-     * @return 包含介入信息的 chunk 序列
-     */
-    private Flux<ChatStreamChunk> handleLegacySuspension(ToolSuspendException e, LoopContext ctx) {
-        HumanInterventionException hie = HumanInterventionException.approval(
-                e.getBypassKey(), e.getQuestion(), null);
-        return handleIntervention(hie, ctx);
     }
 
     /**

@@ -1,5 +1,6 @@
 package cd.lan1akea.bootstrap.tool;
 
+import cd.lan1akea.core.exception.HumanInterventionException;
 import cd.lan1akea.core.tool.*;
 import reactor.core.publisher.Mono;
 
@@ -28,8 +29,9 @@ public class DeleteFileTool extends ToolBase {
         String path = params.getString("path");
 
         if (!params.isApproved()) {
-            throw new ToolSuspendException("delete_file",
-                "确认删除文件 " + path + "？此操作不可逆！");
+            throw HumanInterventionException.approval("delete_file",
+                "确认删除文件 " + path + "？此操作不可逆！",
+                params);
         }
 
         return Mono.just(ToolResult.success("文件已删除: " + path + " [模拟]"));

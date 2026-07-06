@@ -428,7 +428,7 @@ public class AnnotationToolAdapter implements ToolAdapter {
             }).onErrorResume(e -> {
                 Throwable cause = e instanceof java.lang.reflect.InvocationTargetException
                     ? e.getCause() : e;
-                if (cause instanceof cd.lan1akea.core.tool.ToolSuspendException) {
+                if (cause instanceof cd.lan1akea.core.exception.HumanInterventionException) {
                     return Mono.error(cause);
                 }
                 String msg = cause != null ? cause.getMessage() : e.getMessage();

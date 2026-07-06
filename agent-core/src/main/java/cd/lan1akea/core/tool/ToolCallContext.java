@@ -43,7 +43,7 @@ public class ToolCallContext {
      */
     private final CallerIdentity identity;
     /**
-     * 审批预检通过标记。框架在 ToolSuspendException 重试时设为 true，工具据此跳过审批检查。
+     * 审批预检通过标记。框架在介入恢复重试时设为 true，工具据此跳过审批检查。
      */
     private volatile boolean approved;
 
