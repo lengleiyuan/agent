@@ -285,6 +285,20 @@ public static final class RuntimeCtx {
     }
 
     /**
+     * Token 用量相关常量。
+     */
+    public static final class Usage {
+        /** usage SSE chunk 类型 */
+        public static final String CHUNK_TYPE = "usage";
+        /** 输入 token 数 */
+        public static final String PROMPT_TOKENS = "promptTokens";
+        /** 输出 token 数 */
+        public static final String COMPLETION_TOKENS = "completionTokens";
+
+        private Usage() {}
+    }
+
+    /**
      * 参数校验相关常量。
      */
     public static final class Validation {

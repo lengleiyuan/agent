@@ -175,7 +175,7 @@ class ReActAgentTest {
 
         ReActAgent agent = createAgent("TestAgent");
         String result = agent.stream(List.of(UserMessage.of("hi")))
-            .filter(c -> c.getDelta() != null)
+            .filter(c -> ChatStreamChunk.TYPE_TEXT.equals(c.getType()) && c.getDelta() != null)
             .map(ChatStreamChunk::getDelta)
             .collectList()
             .map(list -> String.join("", list))
@@ -194,7 +194,7 @@ class ReActAgentTest {
         String result = agent.stream(
                 List.of(UserMessage.of("hi")),
                 RuntimeContext.builder().tenantId("t1").userId("u1").build())
-            .filter(c -> c.getDelta() != null)
+            .filter(c -> ChatStreamChunk.TYPE_TEXT.equals(c.getType()) && c.getDelta() != null)
             .map(ChatStreamChunk::getDelta)
             .collectList()
             .map(list -> String.join("", list))
@@ -210,7 +210,7 @@ class ReActAgentTest {
 
         ReActAgent agent = createAgent("TestAgent");
         String result = agent.stream(List.of(UserMessage.of("hi")), Map.class)
-            .filter(c -> c.getDelta() != null)
+            .filter(c -> ChatStreamChunk.TYPE_TEXT.equals(c.getType()) && c.getDelta() != null)
             .map(ChatStreamChunk::getDelta)
             .collectList()
             .map(list -> String.join("", list))

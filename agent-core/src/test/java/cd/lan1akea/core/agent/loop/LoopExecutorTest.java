@@ -45,7 +45,8 @@ class LoopExecutorTest {
                 toolExecutor, toolRegistry, hookDispatcher, aroundHooks);
 
         executor = new LoopExecutor(engine, modelPipeline, orchestrator, hookDispatcher,
-                AgentMetrics.NOOP, new cd.lan1akea.core.intervention.InMemoryInterventionStore());
+                AgentMetrics.NOOP, new cd.lan1akea.core.intervention.InMemoryInterventionStore(),
+                new Cl100kTokenEstimator());
     }
 
     // ============================================================
@@ -92,9 +93,12 @@ class LoopExecutorTest {
                 .agentName("test").messages(List.of(UserMessage.of("hi")))
                 .generateOptions(GenerateOptions.defaults()).stream(true).build();
 
-        StepVerifier.create(executor.runStream(ctx))
-                .expectNextMatches(c -> ChatStreamChunk.TYPE_TEXT.equals(c.getType())
-                        && "hello".equals(c.getDelta()))
+        StepVerifier.create(executor.runStream(ctx).collectList())
+                .assertNext(chunks -> {
+                    assertTrue(chunks.stream().anyMatch(c ->
+                            ChatStreamChunk.TYPE_TEXT.equals(c.getType()) && "hello".equals(c.getDelta())));
+                    assertTrue(chunks.stream().anyMatch(c -> "usage".equals(c.getType())));
+                })
                 .verifyComplete();
     }
 
@@ -182,6 +186,7 @@ class LoopExecutorTest {
 
         StepVerifier.create(executor.runStream(ctx))
                 .expectNextMatches(c -> "summary".equals(c.getDelta()))
+                .expectNextMatches(c -> "usage".equals(c.getType()))
                 .verifyComplete();
 
         // Verify PRE_SUMMARIZE hook was dispatched
@@ -293,6 +298,7 @@ class LoopExecutorTest {
 
         StepVerifier.create(executor.runStream(ctx))
                 .expectNextMatches(c -> "hello".equals(c.getDelta()))
+                .expectNextMatches(c -> "usage".equals(c.getType()))
                 .verifyComplete();
 
         // AFTER_ITERATION 通过 Observe 阶段触发

@@ -6,6 +6,7 @@ import cd.lan1akea.core.CoreConstants.HookSource;
 import cd.lan1akea.core.CoreConstants.Intervention;
 import cd.lan1akea.core.CoreConstants.Logs;
 import cd.lan1akea.core.CoreConstants.UI;
+import cd.lan1akea.core.CoreConstants.Usage;
 import cd.lan1akea.core.exception.HookAbortException;
 import cd.lan1akea.core.exception.HumanInterventionException;
 import cd.lan1akea.core.hook.*;
@@ -58,6 +59,9 @@ public class LoopExecutor {
     /** 人工介入请求存储器 */
     private final InterventionStore interventionStore;
 
+    /** Token 估算器，用于统计每次模型调用的实际 token 消耗 */
+    private final TokenEstimator tokenEstimator;
+
     /**
      * 构造 ReAct 循环执行器。
      *
@@ -67,16 +71,19 @@ public class LoopExecutor {
      * @param hookDispatcher     Hook 分发器
      * @param metrics            Agent 指标收集器
      * @param interventionStore  介入请求存储器
+     * @param tokenEstimator     Token 估算器
      */
     public LoopExecutor(LoopDecisionEngine engine, ModelCallPipeline modelPipeline,
                          ToolCallOrchestrator toolOrchestrator, HookDispatcher hookDispatcher,
-                         AgentMetrics metrics, InterventionStore interventionStore) {
+                         AgentMetrics metrics, InterventionStore interventionStore,
+                         TokenEstimator tokenEstimator) {
         this.engine = engine;
         this.modelPipeline = modelPipeline;
         this.toolOrchestrator = toolOrchestrator;
         this.hookDispatcher = hookDispatcher;
         this.metrics = metrics;
         this.interventionStore = interventionStore;
+        this.tokenEstimator = tokenEstimator;
     }
 
     /**
@@ -289,7 +296,18 @@ public class LoopExecutor {
                     if (assistantMsg != null) {
                         ctx.addMessage(assistantMsg);
                     }
-                    return Flux.empty();
+
+                    // 统计真实 token 用量，作为 usage chunk 下发前端
+                    int promptTokens = tokenEstimator.estimate(ctx.getMessages());
+                    int completionTokens = assistantMsg != null
+                            ? tokenEstimator.estimate(assistantMsg) : 0;
+                    Map<String, Object> usage = new LinkedHashMap<>();
+                    usage.put(Usage.PROMPT_TOKENS, promptTokens);
+                    usage.put(Usage.COMPLETION_TOKENS, completionTokens);
+                    return Flux.just(ChatStreamChunk.builder()
+                            .delta(JsonUtils.toCompactJson(usage))
+                            .type(Usage.CHUNK_TYPE)
+                            .build());
                 }));
     }
 
