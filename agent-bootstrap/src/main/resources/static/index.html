@@ -303,8 +303,9 @@ function addUserBubble(text) {
 function addAssistantBubble(text, thinking, tools) {
     if (emptyState) { emptyState.remove(); emptyState = null; }
     const bubble = document.createElement('div');
+    const bubbleId = 'b' + Date.now() + Math.random().toString(36).slice(2, 6);
     bubble.className = 'chat-bubble assistant';
-    bubble.innerHTML = '<div class="role-tag">assistant</div>';
+    bubble.innerHTML = '<div class="role-tag">assistant <span id="tokenBadge-' + bubbleId + '" style="font-size:0.65rem;background:rgba(99,102,241,0.12);color:var(--accent);padding:1px 6px;border-radius:3px;margin-left:6px"></span></div>';
     if (thinking || (tools && tools.length > 0)) {
         const stepsEl = document.createElement('div');
         stepsEl.className = 'steps-container';
@@ -320,6 +321,8 @@ function addAssistantBubble(text, thinking, tools) {
     renderMarkdown(contentEl, text);
     bubble.appendChild(contentEl);
     chatMessages.appendChild(bubble);
+    scrollChat();
+    return bubbleId;
 }
 
 function createStreamingBubble() {
@@ -439,7 +442,7 @@ async function sendMessage() {
                         try {
                             const u = JSON.parse(delta);
                             document.getElementById('tokenBadge-' + stream.bubbleId).textContent =
-                                '↑' + u.promptTokens + ' ↓' + u.completionTokens + ' tok';
+                                '↑' + u.promptTokens + ' ↓' + u.completionTokens + ' tokens';
                         } catch(e) {}
                     } else if (eventType === 'tool_use_start') {
                         toolCalls.push({ name: chunk.toolName || '', args: '' });
@@ -660,6 +663,19 @@ async function loadHooks() {
     }
 }
 
+async function countHistoryTokens(bubbleId, text) {
+    try {
+        const r = await fetch('/api/token/count', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({text})
+        });
+        const data = await r.json();
+        document.getElementById('tokenBadge-' + bubbleId).textContent =
+            '↓' + data.tokens + ' tokens';
+    } catch(e) {}
+}
+
 // ===================== Init =====================
 async function loadHistory() {
     const sid = localStorage.getItem('chatSessionId');
@@ -685,7 +701,8 @@ async function loadHistory() {
                 const tools = (msg.contentBlocks || [])
                     .filter(b => b.type === 'tool_use').map(b => ({ name: b.name, args: b.arguments || '' }));
                 if (text || thinking || tools.length > 0) {
-                    addAssistantBubble(text, thinking, tools);
+                    const bid = addAssistantBubble(text, thinking, tools);
+                    if (text) countHistoryTokens(bid, text);
                 }
             }
         });
