@@ -427,7 +427,7 @@ async function sendMessage() {
                     const chunk = JSON.parse(data);
                     const eventType = sseEvent || chunk.type || 'text';
                     const delta = chunk.delta || '';
-                    if (delta && eventType !== 'tool_use_start' && eventType !== 'tool_use_delta' && eventType !== 'thinking' && eventType !== 'session' && eventType !== 'usage') {
+                    if (delta && eventType !== 'tool_use_start' && eventType !== 'tool_use_delta' && eventType !== 'thinking' && eventType !== 'session' && eventType !== 'usage' && eventType !== 'intervention') {
                         accumulatedText += delta;
                         contentEl.textContent = accumulatedText;
                     }
