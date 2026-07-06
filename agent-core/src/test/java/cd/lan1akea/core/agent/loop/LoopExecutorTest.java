@@ -275,4 +275,124 @@ class LoopExecutorTest {
         assertEquals(Integer.valueOf(200), ctx.getGenerateOptions().getMaxTokens());
         assertEquals(ToolChoicePolicy.NONE, ctx.getGenerateOptions().getToolChoice());
     }
+
+    // ============================================================
+    // Observe 闭环：无工具场景验证 AFTER_ITERATION 触发
+    // ============================================================
+
+    @Test
+    void textOnly_shouldInvokeAfterIterationOnce() {
+        when(model.streamWithTools(any(), any(), any()))
+                .thenReturn(Flux.just(
+                        ChatStreamChunk.builder().delta("hello")
+                                .finishReason(FinishReason.STOP).build()));
+
+        LoopContext ctx = LoopContext.builder()
+                .agentName("test").messages(List.of(UserMessage.of("hi")))
+                .generateOptions(GenerateOptions.defaults()).stream(true).build();
+
+        StepVerifier.create(executor.runStream(ctx))
+                .expectNextMatches(c -> "hello".equals(c.getDelta()))
+                .verifyComplete();
+
+        // AFTER_ITERATION 通过 Observe 阶段触发
+        verify(hookDispatcher, atLeastOnce()).dispatch(
+                argThat(e -> e.getHookEventType() == HookEventType.AFTER_ITERATION),
+                any());
+        // iteration 由 Observe 递增
+        assertEquals(1, ctx.getIteration());
+        // complete 标记已设置（引擎评估无工具→markComplete）
+        assertTrue(ctx.isComplete());
+    }
+
+    // ============================================================
+    // Observe 闭环：有工具场景验证 Observe 被调用
+    // ============================================================
+
+    @Test
+    void withTools_shouldGoThroughObserve() {
+        when(model.streamWithTools(any(), any(), any()))
+                .thenReturn(Flux.just(
+                        ChatStreamChunk.builder().type(ChatStreamChunk.TYPE_TOOL_USE_START)
+                                .toolUseId("c1").toolName("greet").build(),
+                        ChatStreamChunk.builder().type(ChatStreamChunk.TYPE_TOOL_USE_DELTA)
+                                .toolUseId("c1").delta("{}").build(),
+                        ChatStreamChunk.builder().finishReason("tool_calls").build()))
+                .thenReturn(Flux.just(
+                        ChatStreamChunk.builder().delta("done")
+                                .finishReason(FinishReason.STOP).build()));
+
+        when(toolExecutor.execute(any()))
+                .thenReturn(Mono.just(ToolResult.success("c1", "ok")));
+
+        LoopContext ctx = LoopContext.builder()
+                .agentName("test").messages(List.of(UserMessage.of("hi")))
+                .generateOptions(GenerateOptions.defaults()).stream(true).build();
+
+        executor.runStream(ctx).collectList().block();
+
+        // AFTER_ITERATION 至少触发 2 次：Act 后 Observe，无工具 Reason 后 Observe
+        verify(hookDispatcher, atLeast(2)).dispatch(
+                argThat(e -> e.getHookEventType() == HookEventType.AFTER_ITERATION),
+                any());
+        assertEquals(2, ctx.getIteration());
+    }
+
+    // ============================================================
+    // Observe 闭环：iteration 由 Observe 递增
+    // ============================================================
+
+    @Test
+    void iterationShouldBeIncrementedByObserve() {
+        when(model.streamWithTools(any(), any(), any()))
+                .thenReturn(Flux.just(ChatStreamChunk.builder().delta("ok")
+                        .finishReason(FinishReason.STOP).build()));
+
+        LoopContext ctx = LoopContext.builder()
+                .agentName("test").messages(List.of(UserMessage.of("hi")))
+                .generateOptions(GenerateOptions.defaults()).stream(true).build();
+
+        assertEquals(0, ctx.getIteration());
+        executor.runStream(ctx).collectList().block();
+        assertEquals(1, ctx.getIteration());
+    }
+
+    // ============================================================
+    // Observe 闭环：complete 标记后停止
+    // ============================================================
+
+    @Test
+    void completeFlag_shouldStopLoop() {
+        when(model.streamWithTools(any(), any(), any()))
+                .thenReturn(Flux.just(ChatStreamChunk.builder().delta("first")
+                        .finishReason(FinishReason.STOP).build()));
+
+        LoopContext ctx = LoopContext.builder()
+                .agentName("test").messages(List.of(UserMessage.of("hi")))
+                .generateOptions(GenerateOptions.defaults()).stream(true).build();
+
+        executor.runStream(ctx).collectList().block();
+
+        // 模型只调用一次（complete 后停止，不再调用第二次）
+        verify(model, times(1)).streamWithTools(any(), any(), any());
+    }
+
+    // ============================================================
+    // 中断检测：中断后不调模型
+    // ============================================================
+
+    @Test
+    void interruptedMidLoop_shouldNotCallModelAfterObserve() {
+        LoopContext ctx = LoopContext.builder()
+                .agentName("test").messages(List.of(UserMessage.of("hi")))
+                .generateOptions(GenerateOptions.defaults()).stream(true).build();
+        ctx.interrupt();
+
+        StepVerifier.create(executor.runStream(ctx))
+                .expectNextMatches(c -> FinishReason.INTERRUPTED.equals(c.getFinishReason()))
+                .verifyComplete();
+
+        verify(model, never()).streamWithTools(any(), any(), any());
+    }
+
 }

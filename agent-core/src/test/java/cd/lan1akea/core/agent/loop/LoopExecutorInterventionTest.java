@@ -228,6 +228,39 @@ class LoopExecutorInterventionTest {
                 call -> call.getArgumentsMap().get("amount").equals(200)));
     }
 
+
+    // ===========================================================
+    // Observe 闭环：介入恢复后走 Observe 持久化
+    // ===========================================================
+
+    @Test
+    void resumeApproved_shouldGoThroughObserve() {
+        InterventionRequest req = InterventionRequest.builder()
+                .type(InterventionRequest.Type.TOOL_APPROVAL)
+                .sessionId("s1").requestId("r1").agentName("test")
+                .toolName("transfer").question("approve?").build();
+        req.approve("resolver", "ok");
+
+        when(interventionStore.getById("int_1")).thenReturn(req);
+        when(toolExecutor.execute(any())).thenReturn(Mono.just(
+                ToolResult.success("resume_int_1", "done")));
+        when(model.streamWithTools(any(), any(), any()))
+                .thenReturn(Flux.just(ChatStreamChunk.of("ok", FinishReason.STOP)));
+
+        LoopContext ctx = buildCtx("s1");
+        ctx.setInterventionId("int_1");
+        ctx.setInterventionType("TOOL_APPROVAL");
+        ctx.setPausedToolArgs("{\"amount\":100}");
+
+        executor.runStream(ctx).collectList().block();
+
+        // AFTER_ITERATION 被触发（介入恢复后走 Observe）
+        verify(hookDispatcher, atLeastOnce()).dispatch(
+                argThat(e -> e.getHookEventType() == HookEventType.AFTER_ITERATION),
+                any());
+        assertEquals(2, ctx.getIteration());
+    }
+
     // ===========================================================
     // helpers
     // ===========================================================
