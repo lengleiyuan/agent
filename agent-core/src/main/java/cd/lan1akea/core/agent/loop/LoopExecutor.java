@@ -29,11 +29,11 @@ import java.util.logging.Logger;
 
 /**
  * ReAct 循环执行器。
- * 以显式循环替代递归 flatMap，流式为 canonical。
+ * 以 executePhase 状态机中枢驱动四阶段循环，流式为 canonical。
  *
- * <p>流程: runStream(Guard) -> executeAndContinue(Reason)
- *       -> [no tools: STOP] [has tools: executeAndContinue(Act)]
- *       -> [Act: execute+collect -> runStream(Guard)]
+ * <p>流程: runStream(Guard) -> executePhase(Reason) -> executePhase(Act)
+ *       -> executePhase(Observe) -> executePhase(Guard -> ...)
+ * <p>完成信号由 LoopDecisionEngine 通过 ctx.isComplete() 检测并产生 Stop 决策。
  */
 public class LoopExecutor {
 
@@ -104,7 +104,7 @@ public class LoopExecutor {
             if (ctx.getIteration() >= ctx.getMaxIterations()) {
                 return dispatchSummarizeHook(ctx);
             }
-            return executeAndContinue(d.getNextPhase(), ctx);
+            return executePhase(d, ctx);
         });
     }
 
@@ -130,7 +130,7 @@ public class LoopExecutor {
                         return Flux.just(ChatStreamChunk.of(bypass.getTextContent(), FinishReason.STOP));
                     }
                     applySummarizeFallback(ctx);
-                    return executeAndContinue(Phase.reason(), ctx);
+                    return executePhase(Decision.continue_(Phase.reason()), ctx);
                 });
     }
 
@@ -238,30 +238,23 @@ public class LoopExecutor {
         return toolOrchestrator.executeDirect(callParam, ctx)
                 .flatMapMany(result -> {
                     ChatStreamChunk chunk = chunkFromToolResult(result);
-                    return Flux.just(chunk)
-                            .concatWith(Flux.defer(() -> {
-                                appendSingleToolResult(ctx, result.withCallId(callParam.getCallId()), callParam.getCallId());
-                                return dispatchAfterIteration(ctx)
-                                        .thenMany(Mono.delay(Duration.ofMillis(ctx.getBackoffMs())).flux())
-                                        .thenMany(Flux.<ChatStreamChunk>empty());
-                            }));
+                    appendSingleToolResult(ctx, result.withCallId(callParam.getCallId()), callParam.getCallId());
+                    return Flux.just(chunk);
                 })
-                .concatWith(Flux.defer(() -> runStream(ctx)));
+                .concatWith(Flux.defer(() -> executePhase(Decision.continue_(Phase.observe()), ctx)));
     }
 
     /**
      * 追加单个工具执行结果到上下文消息列表。
      *
      * <p>将工具执行结果以 TOOL 角色的消息添加到上下文中。
-     * 在追加之前先保存最后一次模型回复消息。
+     * assistant 消息已由 executeReason 统一追加。
      *
      * @param ctx    循环上下文
      * @param result 工具执行结果
      * @param callId 工具调用 ID
      */
     private void appendSingleToolResult(LoopContext ctx, ToolResult result, String callId) {
-        Msg lastMsg = ctx.getLastResponse() != null ? ctx.getLastResponse().getMessage() : null;
-        if (lastMsg != null) ctx.addMessage(lastMsg);
         ctx.addMessage(Msg.builder(MsgRole.TOOL)
                 .addToolResult(callId,
                         result.isSuccess() ? result.getContent()
@@ -271,38 +264,11 @@ public class LoopExecutor {
     }
 
     /**
-     * 根据阶段决策执行并继续 ReAct 循环。
+     * 执行推理阶段：调用模型获取回复。
      *
-     * <p>根据传入的阶段类型路由到对应的执行方法：
-     * <ul>
-     *   <li>Reason 阶段 — 调用模型获取回复</li>
-     *   <li>Act 阶段 — 执行工具调用</li>
-     *   <li>Observe 阶段 — 分发 after-iteration hook 后重新进入循环</li>
-     * </ul>
-     *
-     * @param phase 当前决策阶段
-     * @param ctx   循环上下文
-     * @return 流式输出 chunk 序列
-     */
-    private Flux<ChatStreamChunk> executeAndContinue(Phase phase, LoopContext ctx) {
-        if (phase.isReason()) {
-            return executeReason(ctx);
-        }
-        if (phase.isAct()) {
-            return executeAct(ctx, phase.getToolCalls());
-        }
-        if (phase.isObserve()) {
-            return dispatchAfterIteration(ctx)
-                    .thenMany(Flux.defer(() -> runStream(ctx)));
-        }
-        return Flux.empty();
-    }
-
-    /**
-     * 执行推理阶段：调用模型获取回复，检查是否有工具调用。
-     *
-     * <p>流式收集模型分块 → 组装 ChatResponse → 检查工具调用：
-     * 无工具则保存消息后终止，有工具则链式进入 Act 阶段。
+     * <p>流式收集模型分块 → 组装 ChatResponse → 设置 lastResponse 和 token。
+     * 将 assistant 消息（含 tool_use blocks）追加到 ctx。
+     * 不检查工具调用、不决定下一阶段 —— 由引擎 evaluator 负责。
      *
      * @param ctx 循环上下文
      * @return 模型推理的流式分块
@@ -319,32 +285,29 @@ public class LoopExecutor {
                     if (resp.getUsage() != null) {
                         ctx.addTokens(resp.getUsage().getTotalTokens());
                     }
-
-                    List<ToolUseBlock> tools = extractToolCalls(resp);
-                    if (tools.isEmpty()) {
-                        Msg lastMsg = resp.getMessage();
-                        if (lastMsg != null) ctx.addMessage(lastMsg);
-                        return dispatchAfterIteration(ctx).thenMany(Flux.empty());
+                    Msg assistantMsg = resp.getMessage();
+                    if (assistantMsg != null) {
+                        ctx.addMessage(assistantMsg);
                     }
-                    return executeAndContinue(Phase.act(tools), ctx);
+                    return Flux.empty();
                 }));
     }
 
     /**
      * 执行行动阶段：并行执行工具调用并收集结果。
      *
-     * <p>增加迭代计数并记录指标，通过 {@link ToolCallOrchestrator} 并行执行所有工具调用，
-     * 处理可能出现的异常，将结果追加到上下文后执行 after-iteration hook，
-     * 最后重新进入 {@link #runStream} 循环。
+     * <p>记录指标（iteration 此时尚未递增，使用 +1），执行工具，
+     * 只追加 tool_result 消息（assistant 消息已由 executeReason 追加），
+     * 应用 backoff。不递增 iteration、不分发 after-iteration hook、
+     * 不调用 runStream —— 由 executePhase 链式进入 Observe。
      *
      * @param ctx       循环上下文
      * @param toolCalls 待执行的工具调用列表
      * @return 流式输出 chunk 序列
      */
     private Flux<ChatStreamChunk> executeAct(LoopContext ctx, List<ToolUseBlock> toolCalls) {
-        ctx.setIteration(ctx.getIteration() + 1);
         metrics.recordIteration(ctx.getAgentName(), ctx.getSessionId(),
-                ctx.getIteration(), toolCalls.size());
+                ctx.getIteration() + 1, toolCalls.size());
 
         List<ToolResult> results = new java.util.concurrent.CopyOnWriteArrayList<>();
 
@@ -355,11 +318,66 @@ public class LoopExecutor {
                 .onErrorResume(e -> handleToolError(e, ctx, results))
                 .concatWith(Flux.defer(() -> {
                     appendToolResults(ctx, results);
-                    return dispatchAfterIteration(ctx)
-                            .thenMany(Mono.delay(Duration.ofMillis(ctx.getBackoffMs())).flux())
+                    return Mono.delay(Duration.ofMillis(ctx.getBackoffMs())).flux()
                             .thenMany(Flux.<ChatStreamChunk>empty());
-                }))
-                .concatWith(Flux.defer(() -> runStream(ctx)));
+                }));
+    }
+
+    /**
+     * 执行观察阶段：递增迭代并分发 after-iteration Hook。
+     *
+     * <p>每次迭代恰好调用一次，由 executePhase 链式进入。
+     * 触发 AFTER_ITERATION Hook → SessionPersistenceHook 持久化。
+     *
+     * @param ctx 循环上下文
+     * @return 完成信号
+     */
+    private Flux<ChatStreamChunk> executeObserve(LoopContext ctx) {
+        ctx.setIteration(ctx.getIteration() + 1);
+        return dispatchAfterIteration(ctx)
+                .thenMany(Flux.<ChatStreamChunk>empty());
+    }
+
+    /**
+     * 状态机路由中枢。
+     *
+     * <p>根据引擎决策执行对应阶段，阶段完成后回访引擎获取下一决策，
+     * 通过 concatWith + defer 实现订阅级递归（非调用栈递归）。
+     * Stop 时返回空 Flux 结束递归。
+     *
+     * <p>介入中断检测：Reason 阶段前检查 ctx.isInterrupted()，
+     * 中断时跳过模型调用但允许 Observe 完成持久化后再终止递归。
+     *
+     * @param decision 引擎决策
+     * @param ctx      循环上下文
+     * @return 流式输出 chunk 序列
+     */
+    private Flux<ChatStreamChunk> executePhase(Decision decision, LoopContext ctx) {
+        if (decision.isStop()) {
+            return Flux.empty();
+        }
+        Phase next = decision.getNextPhase();
+
+        // 中断时跳过推理阶段，避免不必要的模型调用
+        // Observe 不受影响，确保持久化在中断前完成
+        if (next.isReason() && ctx.isInterrupted()) {
+            return Flux.empty();
+        }
+
+        Flux<ChatStreamChunk> phaseFlux;
+        if (next.isReason()) {
+            phaseFlux = executeReason(ctx);
+        } else if (next.isAct()) {
+            phaseFlux = executeAct(ctx, next.getToolCalls());
+        } else if (next.isObserve()) {
+            phaseFlux = executeObserve(ctx);
+        } else {
+            phaseFlux = Flux.empty();
+        }
+        return phaseFlux.concatWith(Flux.defer(() -> {
+            Decision nextDecision = engine.evaluate(next, ctx);
+            return executePhase(nextDecision, ctx);
+        }));
     }
 
     /**
@@ -570,17 +588,13 @@ public class LoopExecutor {
     /**
      * 批量追加工具执行结果到上下文消息列表。
      *
-     * <p>将最后一次模型回复和所有工具执行结果以 TOOL 角色的消息添加到上下文中。
+     * <p>只追加 TOOL 角色的 tool result 消息。
+     * assistant 消息已由 executeReason 统一追加。
      *
      * @param ctx     循环上下文
      * @param results 工具执行结果列表
      */
     private void appendToolResults(LoopContext ctx, List<ToolResult> results) {
-        Msg lastMsg = ctx.getLastResponse() != null
-                ? ctx.getLastResponse().getMessage() : null;
-        if (lastMsg == null) return;
-        ctx.addMessage(lastMsg);
-
         for (ToolResult r : results) {
             String callId = r.getCallId();
             if (callId == null) continue;
@@ -613,18 +627,6 @@ public class LoopExecutor {
                     return Mono.empty();
                 })
                 .then();
-    }
-
-    /**
-     * 从模型回复中提取工具调用列表。
-     *
-     * @param response 模型回复
-     * @return 工具调用列表，空列表表示无工具调用
-     */
-    private List<ToolUseBlock> extractToolCalls(ChatResponse response) {
-        if (response == null || response.getMessage() == null) return List.of();
-        List<ToolUseBlock> blocks = response.getMessage().getToolUseBlocks();
-        return blocks != null ? blocks : List.of();
     }
 
     /**
