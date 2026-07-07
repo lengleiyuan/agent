@@ -118,6 +118,12 @@ public class LoopContext {
     /** @return 会话是否已完成 */
     public boolean isComplete() { return complete; }
 
+    /** 人工介入状态 */
+    private final InterventionState interventionState = new InterventionState();
+
+    /** @return 人工介入状态 */
+    public InterventionState getInterventionState() { return interventionState; }
+
 
     /**
      * 从 builder 创建 LoopContext。
@@ -316,6 +322,43 @@ public class LoopContext {
      * @return 新的 Builder
      */
     public static Builder builder() { return new Builder(); }
+
+    /**
+     * 人工介入状态。
+     * <p>三个字段始终一起读写，收拢为单一对象避免字段散落。
+     * 字段均为 volatile 以保证跨线程可见性（执行线程与介入 API 线程）。
+     */
+    public static class InterventionState {
+        /** 待解决的介入请求 ID（null 表示无待解决介入） */
+        private volatile String interventionId;
+        /** 介入类型名称（APPROVAL/CLARIFY） */
+        private volatile String interventionType;
+        /** 暂停时快照的工具参数 JSON */
+        private volatile String pausedToolArgs;
+
+        /** @return 待解决的介入请求 ID */
+        public String getInterventionId() { return interventionId; }
+        /** 设置待解决的介入请求 ID */
+        public void setInterventionId(String v) { this.interventionId = v; }
+        /** @return 介入类型名称 */
+        public String getInterventionType() { return interventionType; }
+        /** 设置介入类型名称 */
+        public void setInterventionType(String v) { this.interventionType = v; }
+        /** @return 暂停时快照的工具参数 JSON */
+        public String getPausedToolArgs() { return pausedToolArgs; }
+        /** 设置暂停时快照的工具参数 JSON */
+        public void setPausedToolArgs(String v) { this.pausedToolArgs = v; }
+
+        /** 清除所有介入状态 */
+        public void clear() {
+            this.interventionId = null;
+            this.interventionType = null;
+            this.pausedToolArgs = null;
+        }
+
+        /** @return 是否有待解决的介入 */
+        public boolean hasPending() { return interventionId != null; }
+    }
 
     /**
      * LoopContext 建造者。
