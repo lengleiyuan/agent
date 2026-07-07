@@ -116,12 +116,19 @@ public class RequestPipeline {
                                     loopCtx.getInterventionState().setInterventionType(lm.result.interventionType);
                                     loopCtx.getInterventionState().setPausedToolArgs(lm.result.pausedToolArgs);
                                 }
-                                activeRequests.put(loopCtx.getRequestId(), loopCtx);
-                                Flux<ChatStreamChunk> stream = loopExecutor.runStream(loopCtx)
-                                        .doFinally(s -> activeRequests.remove(loopCtx.getRequestId()));
-                                long timeout = execConfig.getTotalTimeoutMs();
-                                if (timeout > 0) stream = stream.timeout(Duration.ofMillis(timeout));
-                                return sessionGate.enqueueStream(loopCtx.getSessionId(), stream);
+                                return Flux.using(
+                                        () -> {
+                                            activeRequests.put(loopCtx.getRequestId(), loopCtx);
+                                            return loopCtx;
+                                        },
+                                        lc -> {
+                                            Flux<ChatStreamChunk> inner = loopExecutor.runStream(lc);
+                                            long timeout = execConfig.getTotalTimeoutMs();
+                                            if (timeout > 0) inner = inner.timeout(Duration.ofMillis(timeout));
+                                            return sessionGate.enqueueStream(lc.getSessionId(), inner);
+                                        },
+                                        lc -> activeRequests.remove(lc.getRequestId())
+                                );
                             })
                             .contextWrite(c -> writeContext(c, ctx)));
         });
@@ -153,12 +160,19 @@ public class RequestPipeline {
                                     loopCtx.getInterventionState().setInterventionType(lm.result.interventionType);
                                     loopCtx.getInterventionState().setPausedToolArgs(lm.result.pausedToolArgs);
                                 }
-                                activeRequests.put(loopCtx.getRequestId(), loopCtx);
-                                Mono<ChatResponse> exec = loopExecutor.run(loopCtx)
-                                        .doFinally(s -> activeRequests.remove(loopCtx.getRequestId()));
-                                long timeout = execConfig.getTotalTimeoutMs();
-                                if (timeout > 0) exec = exec.timeout(Duration.ofMillis(timeout));
-                                return sessionGate.enqueue(loopCtx.getSessionId(), exec);
+                                return Mono.using(
+                                        () -> {
+                                            activeRequests.put(loopCtx.getRequestId(), loopCtx);
+                                            return loopCtx;
+                                        },
+                                        lc -> {
+                                            Mono<ChatResponse> exec = loopExecutor.run(lc);
+                                            long timeout = execConfig.getTotalTimeoutMs();
+                                            if (timeout > 0) exec = exec.timeout(Duration.ofMillis(timeout));
+                                            return sessionGate.enqueue(lc.getSessionId(), exec);
+                                        },
+                                        lc -> activeRequests.remove(lc.getRequestId())
+                                );
                             })
                         .map(resp -> { e.setPayload(EventPayload.RESPONSE, resp); return e; }))
                     .map(e -> (ChatResponse) e.getPayload(EventPayload.RESPONSE))
