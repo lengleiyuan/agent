@@ -82,7 +82,7 @@ public class ModelCallPipeline {
      * @return 模型推理的流式分块
      */
     public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
-        HookContext hc = buildHookContext(ctx);
+        HookContext hc = ctx.toHookContext();
         ReasoningEvent pre = new ReasoningEvent(HookEventType.PRE_REASONING);
         pre.setMessages(ctx.getMessages());
 
@@ -214,13 +214,14 @@ public class ModelCallPipeline {
             }
         }
 
-        String finishReason = FinishReason.COMPLETED;
+        String finishReason = null;
         for (int i = chunks.size() - 1; i >= 0; i--) {
             if (chunks.get(i).getFinishReason() != null) {
                 finishReason = chunks.get(i).getFinishReason();
                 break;
             }
         }
+        if (finishReason == null) finishReason = FinishReason.COMPLETED;
 
         List<ContentBlock> blocks = new ArrayList<>();
     if (!text.isEmpty()) {
@@ -242,10 +243,6 @@ public class ModelCallPipeline {
      * @param ctx 循环上下文
      * @return 新的 Hook 上下文
      */
-    private HookContext buildHookContext(LoopContext ctx) {
-        return ctx.toHookContext();
-    }
-
     /**
      * 从消息创建流式分块（委托给 chunkFromText 处理 null 安全）。
      *

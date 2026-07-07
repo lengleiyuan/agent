@@ -129,7 +129,7 @@ public class LoopExecutor {
      * 未设置 bypass 时应用内置兜底：禁用工具
      */
     private Flux<ChatStreamChunk> dispatchSummarizeHook(LoopContext ctx) {
-        HookContext hc = buildHookContext(ctx);
+        HookContext hc = ctx.toHookContext();
         ReasoningEvent event = new ReasoningEvent(HookEventType.PRE_SUMMARIZE);
         event.setMessages(ctx.getMessages());
 
@@ -177,7 +177,8 @@ public class LoopExecutor {
      */
     private Flux<ChatStreamChunk> resolveAndContinue(LoopContext ctx, String callId,
                                                       Mono<ToolResult> execution) {
-        int insertAt = lastAssistantIndex(ctx) + 1;
+        int lastAssistant = lastAssistantIndex(ctx);
+        int insertAt = lastAssistant >= 0 ? lastAssistant + 1 : ctx.getMessages().size();
         return execution
                 .onErrorResume(e -> Mono.just(
                         ToolResult.failure(callId, "执行失败: " + e.getMessage())))
@@ -256,6 +257,7 @@ public class LoopExecutor {
      * @return 流式输出 chunk 序列
      */
     private Flux<ChatStreamChunk> executeAct(LoopContext ctx, List<ToolUseBlock> toolCalls) {
+        // iteration 在 executeObserve 中递增，此处 +1 记录即将进入的迭代号
         metrics.recordIteration(ctx.getAgentName(), ctx.getSessionId(),
                 ctx.getIteration() + 1, toolCalls.size());
 
@@ -400,7 +402,7 @@ public class LoopExecutor {
      */
     private Flux<ChatStreamChunk> handleInterruptStream(LoopContext ctx) {
         Msg feedback = ctx.getFeedbackMsg();
-        HookContext hc = buildHookContext(ctx);
+        HookContext hc = ctx.toHookContext();
         InterruptEvent ie = new InterruptEvent(
                 feedback != null ? feedback.getTextContent() : UI.INTERRUPT_EXTERNAL, null);
 
@@ -417,9 +419,9 @@ public class LoopExecutor {
                         ctx.clearInterrupt();
                         return runStream(ctx);
                     }
-                    String reason = ctx.getLastResponse() != null
-                            ? ctx.getLastResponse().getMessage().getTextContent()
-                            : UI.INTERRUPT_EXEC;
+                    Msg lastMsg = ctx.getLastResponse() != null
+                            ? ctx.getLastResponse().getMessage() : null;
+                    String reason = lastMsg != null ? lastMsg.getTextContent() : UI.INTERRUPT_EXEC;
                     return Flux.just(ChatStreamChunk.of(reason, FinishReason.INTERRUPTED));
                 });
     }
@@ -456,7 +458,7 @@ public class LoopExecutor {
      * @return 分发完成信号
      */
     private Mono<Void> dispatchAfterIteration(LoopContext ctx) {
-        HookContext hc = buildHookContext(ctx);
+        HookContext hc = ctx.toHookContext();
         HookEvent event = new HookEvent(HookEventType.AFTER_ITERATION);
         event.setPayload(EventPayload.LOOP_CONTEXT, ctx);
         return hookDispatcher.dispatch(event, hc)
@@ -474,10 +476,6 @@ public class LoopExecutor {
      * @param ctx 循环上下文
      * @return Hook 上下文
      */
-    private HookContext buildHookContext(LoopContext ctx) {
-        return ctx.toHookContext();
-    }
-
     /**
      * 从 {@link ChatResponse} 构建文本类型的输出 chunk。
      *
