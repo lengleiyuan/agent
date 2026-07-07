@@ -316,8 +316,8 @@ public class RequestPipeline {
      *
      * <p>根据 InterventionStore 中的当前状态：
      * <ul>
-     *   <li>PENDING / APPROVED / CLARIFIED / DENIED —— 保留介入信息，供 LoopExecutor 恢复</li>
-     *   <li>EXPIRED / null —— 清除介入标记，正常继续</li>
+     *   <li>PENDING / APPROVED / CLARIFIED / DENIED / EXPIRED —— 保留，供 LoopExecutor 恢复</li>
+     *   <li>null —— 清除介入标记（记录已从存储中丢失）</li>
      * </ul>
      *
      * @param checkpoint 含介入标记的检查点
@@ -327,7 +327,7 @@ public class RequestPipeline {
         String id = checkpoint.getPendingInterventionId();
         InterventionRequest req = interventionStore.getById(id);
 
-        if (req == null || req.getStatus() == InterventionRequest.Status.EXPIRED) {
+        if (req == null) {
             checkpoint.setPendingInterventionId(null);
             checkpoint.setInterventionType(null);
             checkpoint.setPausedToolArgsJson(null);

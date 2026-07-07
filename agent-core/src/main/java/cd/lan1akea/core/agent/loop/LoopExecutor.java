@@ -176,154 +176,113 @@ public class LoopExecutor {
         return -1;
     }
 
-    /** 取最后一条 assistant 消息的最后一个 tool_use id */
-    private String extractLastToolCallId(LoopContext ctx) {
+    /** 按 toolName 匹配取最后一条 assistant 中的 tool_use callId，无匹配时 fallback 最后一个 */
+    private String extractToolCallIdByName(LoopContext ctx, String toolName) {
         int idx = lastAssistantIndex(ctx);
         if (idx < 0) return null;
         List<ToolUseBlock> tools = ctx.getMessages().get(idx).getToolUseBlocks();
-        if (tools != null && !tools.isEmpty()) {
-            return tools.get(tools.size() - 1).getId();
+        if (tools == null || tools.isEmpty()) return null;
+        for (int i = tools.size() - 1; i >= 0; i--) {
+            if (tools.get(i).getName().equals(toolName)) return tools.get(i).getId();
         }
-        return null;
+        return tools.get(tools.size() - 1).getId();
     }
 
-    /** 在最后一条 assistant 消息之后插入 tool_result 以闭合 tool_use */
-    private void closeOriginalToolUse(LoopContext ctx, String toolName) {
-        String callId = extractLastToolCallId(ctx);
-        int insertAt = lastAssistantIndex(ctx);
-        if (callId != null && insertAt >= 0) {
-            ctx.getMessages().add(insertAt + 1, Msg.builder(MsgRole.TOOL)
-                .addToolResult(callId, "[已处理] " + toolName, false)
-                .build());
-        }
-    }
-
-    /**
-     * 从人工介入状态恢复执行。
-     *
-     * @param ctx 循环上下文
-     * @return 恢复后的流式 chunk 序列
-     */
-    private Flux<ChatStreamChunk> resumeFromIntervention(LoopContext ctx) {
-        String id = ctx.getInterventionId();
-        InterventionRequest req = interventionStore.getById(id);
-        if (req == null || req.getStatus() == InterventionRequest.Status.EXPIRED) {
-            ctx.setInterventionId(null);
-            ctx.setInterventionType(null);
-            return runStream(ctx); // 过期，继续正常执行
-        }
-        switch (req.getStatus()) {
-            case APPROVED:
-                closeOriginalToolUse(ctx, req.getToolName());
-                return resumeApprovedTool(ctx, req);
-            case CLARIFIED:
-                closeOriginalToolUse(ctx, req.getToolName());
-                return resumeClarifiedTool(ctx, req);
-            case DENIED: {
-                String deniedCallId = extractLastToolCallId(ctx);
-                int deniedInsertAt = lastAssistantIndex(ctx);
-                if (deniedCallId != null && deniedInsertAt >= 0) {
-                    ctx.getMessages().add(deniedInsertAt + 1, Msg.builder(MsgRole.TOOL)
-                        .addToolResult(deniedCallId,
-                            Intervention.MSG_DENIED + " — " + req.getToolName()
-                                    + (req.getResolution() != null && !req.getResolution().isBlank()
-                                            ? ": " + req.getResolution() : ""),
-                            true)
-                        .build());
-                }
-                ctx.setInterventionId(null);
-                ctx.setInterventionType(null);
-                return runStream(ctx);
-            }
-            case PENDING:
-                // 保持 intervention 字段不变，等待人工通过 API/审批页面处理。
-                // 不予继续循环 — 下次对话加载时根据最新状态决定恢复或再次等待。
-                return Flux.just(ChatStreamChunk.of(
-                        "[等待处理] " + req.getType() + " — " + req.getToolName() + ": "
-                                + (req.getQuestion() != null ? req.getQuestion() : ""),
-                        FinishReason.INTERRUPTED));
-            default:
-                return Flux.just(interventionChunk(id, Intervention.MSG_WAITING,
-                        req.getType().name(), req.getToolName()));
-        }
-    }
-
-/**
-     * 恢复已批准的介入：以原参数重新执行工具。
-     *
-     * <p>将暂停时保存的工具参数反序列化，构建 ToolCallContext 并标记为 approved，
-     * 通过 {@link ToolCallOrchestrator#executeDirect} 直接执行（跳过审批流程）。
-     *
-     * @param ctx 循环上下文
-     * @param req 已批准的介入请求（含原工具参数）
-     * @return 恢复后的流式 chunk 序列
-     */
-    private Flux<ChatStreamChunk> resumeApprovedTool(LoopContext ctx, InterventionRequest req) {
-        String argsJson = ctx.getPausedToolArgs();
-        Map<String, Object> args = argsJson != null
-                ? JsonUtils.safeParseMap(argsJson) : Map.of();
-        return resumeToolWithArgs(ctx, req, args);
-    }
-
-    /**
-     * 恢复已澄清的介入：以修正参数重新执行工具。
-     *
-     * <p>使用介入请求中保存的 {@code modifiedArgs} 构建 ToolCallContext，
-     * 以人工修正后的参数重新执行被暂停的工具。
-     *
-     * @param ctx 循环上下文
-     * @param req 已澄清的介入请求（含修正参数）
-     * @return 恢复后的流式 chunk 序列
-     */
-    private Flux<ChatStreamChunk> resumeClarifiedTool(LoopContext ctx, InterventionRequest req) {
-        Map<String, Object> modified = req.getModifiedArgs() != null
-                ? req.getModifiedArgs() : Map.of();
-        return resumeToolWithArgs(ctx, req, modified);
-    }
-
-    private Flux<ChatStreamChunk> resumeToolWithArgs(LoopContext ctx, InterventionRequest req,
-                                                      Map<String, Object> args) {
-        ToolCallContext callParam = ToolCallContext.builder()
-                .callId(Intervention.RESUME_CALL_PREFIX + req.getInterventionId())
-                .toolName(req.getToolName())
-                .arguments(args)
+    /** 用原 callId 执行工具（跳过审批检查） */
+    private Mono<ToolResult> executeResumeTool(LoopContext ctx, String toolName,
+                                                Map<String, Object> args, String callId) {
+        ToolCallContext param = ToolCallContext.builder()
+                .callId(callId)
+                .toolName(toolName)
+                .arguments(args != null ? args : Map.of())
                 .tenantId(ctx.getTenantId())
                 .userId(ctx.getUserId())
                 .sessionId(ctx.getSessionId())
                 .attributes(ctx.getAttributes())
                 .build();
-        callParam.setApproved(true);
-
-        ctx.setInterventionId(null);
-        ctx.setInterventionType(null);
-        ctx.setPausedToolArgs(null);
-
-        return toolOrchestrator.executeDirect(callParam, ctx)
-                .flatMapMany(result -> {
-                    ChatStreamChunk chunk = chunkFromToolResult(result);
-                    appendSingleToolResult(ctx, result.withCallId(callParam.getCallId()), callParam.getCallId());
-                    return Flux.just(chunk);
-                })
-                .concatWith(Flux.defer(() -> executePhase(Decision.continue_(Phase.observe()), ctx)));
+        param.setApproved(true);
+        return toolOrchestrator.executeDirect(param, ctx);
     }
 
     /**
-     * 追加单个工具执行结果到上下文消息列表。
-     *
-     * <p>将工具执行结果以 TOOL 角色的消息添加到上下文中。
-     * assistant 消息已由 executeReason 统一追加。
-     *
-     * @param ctx    循环上下文
-     * @param result 工具执行结果
-     * @param callId 工具调用 ID
+     * 统一出口：插入 tool_result → emit chunk → 清空介入 → Observe → LLM。
+     * 内置 onErrorResume 兜底执行失败，保证 tool_use 始终闭合。
      */
-    private void appendSingleToolResult(LoopContext ctx, ToolResult result, String callId) {
-        ctx.addMessage(Msg.builder(MsgRole.TOOL)
-                .addToolResult(callId,
-                        result.isSuccess() ? result.getContent()
-                                : UI.TOOL_ERROR_PREFIX + result.getErrorMessage(),
-                        !result.isSuccess())
-                .build());
+    private Flux<ChatStreamChunk> resolveAndContinue(LoopContext ctx, String callId,
+                                                      Mono<ToolResult> execution) {
+        int insertAt = lastAssistantIndex(ctx) + 1;
+        return execution
+                .onErrorResume(e -> Mono.just(
+                        ToolResult.failure(callId, "执行失败: " + e.getMessage())))
+                .flatMapMany(result -> {
+                    if (callId != null && insertAt > 0) {
+                        ctx.getMessages().add(insertAt, Msg.builder(MsgRole.TOOL)
+                                .addToolResult(callId,
+                                        result.isSuccess() ? result.getContent()
+                                                : result.getErrorMessage(),
+                                        !result.isSuccess())
+                                .build());
+                    }
+                    String displayText = result.isSuccess()
+                            ? result.getContent()
+                            : result.getErrorMessage();
+                    ctx.setInterventionId(null);
+                    ctx.setInterventionType(null);
+                    ctx.setPausedToolArgs(null);
+                    return Flux.just(ChatStreamChunk.builder()
+                            .delta(displayText).type(ChatStreamChunk.TYPE_TEXT).build())
+                            .concatWith(Flux.defer(() ->
+                                    executePhase(Decision.continue_(Phase.observe()), ctx)));
+                });
+    }
+
+    /**
+     * 从人工介入状态恢复执行。
+     */
+    private Flux<ChatStreamChunk> resumeFromIntervention(LoopContext ctx) {
+        String id = ctx.getInterventionId();
+        InterventionRequest req = interventionStore.getById(id);
+        if (req == null) {
+            ctx.setInterventionId(null);
+            ctx.setInterventionType(null);
+            return runStream(ctx);
+        }
+        String callId = extractToolCallIdByName(ctx, req.getToolName());
+        switch (req.getStatus()) {
+            case PENDING:
+                return Flux.just(ChatStreamChunk.of(
+                        "[等待处理] " + req.getType() + " — " + req.getToolName() + ": "
+                                + (req.getQuestion() != null ? req.getQuestion() : ""),
+                        FinishReason.INTERRUPTED));
+            case APPROVED: {
+                Map<String, Object> args = (req.getToolArgs() != null && !req.getToolArgs().isEmpty())
+                        ? req.getToolArgs()
+                        : (ctx.getPausedToolArgs() != null
+                                ? JsonUtils.safeParseMap(ctx.getPausedToolArgs()) : Map.of());
+                return resolveAndContinue(ctx, callId,
+                        executeResumeTool(ctx, req.getToolName(), args, callId));
+            }
+            case CLARIFIED: {
+                Map<String, Object> args = req.getModifiedArgs() != null
+                        ? req.getModifiedArgs() : Map.of();
+                return resolveAndContinue(ctx, callId,
+                        executeResumeTool(ctx, req.getToolName(), args, callId));
+            }
+            case DENIED: {
+                String msg = Intervention.MSG_DENIED + " — " + req.getToolName()
+                        + (req.getResolution() != null && !req.getResolution().isBlank()
+                                ? ": " + req.getResolution() : "");
+                return resolveAndContinue(ctx, callId,
+                        Mono.just(ToolResult.failure(callId, msg)));
+            }
+            case EXPIRED:
+                return resolveAndContinue(ctx, callId,
+                        Mono.just(ToolResult.failure(callId,
+                                Intervention.MSG_EXPIRED + " — " + req.getToolName())));
+            default:
+                return Flux.just(interventionChunk(id, Intervention.MSG_WAITING,
+                        req.getType().name(), req.getToolName()));
+        }
     }
 
     /**
