@@ -59,7 +59,7 @@ public class ToolCallOrchestrator {
      * @return 含 callId 的工具执行结果
      */
     public Mono<ToolResult> execute(ToolUseBlock tc, LoopContext ctx) {
-        HookContext hc = buildHookContext(ctx);
+        HookContext hc = ctx.toHookContext();
         ToolCallContext param = buildContext(tc, ctx);
         ToolCallEvent event = new ToolCallEvent(HookEventType.PRE_TOOL_CALL, param);
         event.setTool(toolRegistry.getForContext(
@@ -91,7 +91,7 @@ public class ToolCallOrchestrator {
      * @return 工具执行结果的 Mono
      */
     public Mono<ToolResult> executeDirect(ToolCallContext param, LoopContext ctx) {
-        HookContext hc = buildHookContext(ctx);
+        HookContext hc = ctx.toHookContext();
         ToolCallEvent event = new ToolCallEvent(HookEventType.PRE_TOOL_CALL, param);
         event.setTool(toolRegistry.getForContext(
                 ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId(), param.getToolName()));
@@ -192,7 +192,4 @@ public class ToolCallOrchestrator {
      * @param ctx 循环上下文
      * @return 新的 Hook 上下文
      */
-    private HookContext buildHookContext(LoopContext ctx) {
-        return ctx.toHookContext();
-    }
 }
