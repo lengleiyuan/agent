@@ -112,9 +112,9 @@ public class RequestPipeline {
                                 LoopContext loopCtx = LoopContextFactory.create(
                                         agentName, ctx, lm.messages, opts, execConfig, true);
                                 if (lm.result.interventionId != null) {
-                                    loopCtx.setInterventionId(lm.result.interventionId);
-                                    loopCtx.setInterventionType(lm.result.interventionType);
-                                    loopCtx.setPausedToolArgs(lm.result.pausedToolArgs);
+                                    loopCtx.getInterventionState().setInterventionId(lm.result.interventionId);
+                                    loopCtx.getInterventionState().setInterventionType(lm.result.interventionType);
+                                    loopCtx.getInterventionState().setPausedToolArgs(lm.result.pausedToolArgs);
                                 }
                                 activeRequests.put(loopCtx.getRequestId(), loopCtx);
                                 Flux<ChatStreamChunk> stream = loopExecutor.runStream(loopCtx)
@@ -149,9 +149,9 @@ public class RequestPipeline {
                                 LoopContext loopCtx = LoopContextFactory.create(
                                         agentName, ctx, lm.messages, resolveOptions(), execConfig, false);
                                 if (lm.result.interventionId != null) {
-                                    loopCtx.setInterventionId(lm.result.interventionId);
-                                    loopCtx.setInterventionType(lm.result.interventionType);
-                                    loopCtx.setPausedToolArgs(lm.result.pausedToolArgs);
+                                    loopCtx.getInterventionState().setInterventionId(lm.result.interventionId);
+                                    loopCtx.getInterventionState().setInterventionType(lm.result.interventionType);
+                                    loopCtx.getInterventionState().setPausedToolArgs(lm.result.pausedToolArgs);
                                 }
                                 activeRequests.put(loopCtx.getRequestId(), loopCtx);
                                 Mono<ChatResponse> exec = loopExecutor.run(loopCtx)

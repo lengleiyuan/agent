@@ -99,7 +99,7 @@ public class LoopExecutor {
     public Flux<ChatStreamChunk> runStream(LoopContext ctx) {
         return Flux.defer(() -> {
             // 检查是否有已解决的介入需要恢复
-            if (ctx.getInterventionId() != null && !ctx.isInterrupted()) {
+            if (ctx.getInterventionState().hasPending() && !ctx.isInterrupted()) {
                 return resumeFromIntervention(ctx);
             }
             if (ctx.isInterrupted()) {
@@ -227,9 +227,7 @@ public class LoopExecutor {
                     String displayText = result.isSuccess()
                             ? result.getContent()
                             : result.getErrorMessage();
-                    ctx.setInterventionId(null);
-                    ctx.setInterventionType(null);
-                    ctx.setPausedToolArgs(null);
+                    ctx.getInterventionState().clear();
                     return Flux.just(ChatStreamChunk.builder()
                             .delta(displayText).type(ChatStreamChunk.TYPE_TEXT).build())
                             .concatWith(Flux.defer(() ->
@@ -241,11 +239,10 @@ public class LoopExecutor {
      * 从人工介入状态恢复执行。
      */
     private Flux<ChatStreamChunk> resumeFromIntervention(LoopContext ctx) {
-        String id = ctx.getInterventionId();
+        String id = ctx.getInterventionState().getInterventionId();
         InterventionRequest req = interventionStore.getById(id);
         if (req == null) {
-            ctx.setInterventionId(null);
-            ctx.setInterventionType(null);
+            ctx.getInterventionState().clear();
             return runStream(ctx);
         }
         String callId = extractToolCallIdByName(ctx, req.getToolName());
@@ -258,8 +255,8 @@ public class LoopExecutor {
             case APPROVED: {
                 Map<String, Object> args = (req.getToolArgs() != null && !req.getToolArgs().isEmpty())
                         ? req.getToolArgs()
-                        : (ctx.getPausedToolArgs() != null
-                                ? JsonUtils.safeParseMap(ctx.getPausedToolArgs()) : Map.of());
+                        : (ctx.getInterventionState().getPausedToolArgs() != null
+                                ? JsonUtils.safeParseMap(ctx.getInterventionState().getPausedToolArgs()) : Map.of());
                 return resolveAndContinue(ctx, callId,
                         executeResumeTool(ctx, req.getToolName(), args, callId));
             }
@@ -465,10 +462,10 @@ public class LoopExecutor {
                 .build();
 
         String id = interventionStore.create(req);
-        ctx.setInterventionId(id);
-        ctx.setInterventionType(e.getType().name());
+        ctx.getInterventionState().setInterventionId(id);
+        ctx.getInterventionState().setInterventionType(e.getType().name());
         if (e.getCallParam() != null) {
-            ctx.setPausedToolArgs(JsonUtils.toCompactJson(e.getCallParam().getArgumentsMap()));
+            ctx.getInterventionState().setPausedToolArgs(JsonUtils.toCompactJson(e.getCallParam().getArgumentsMap()));
         }
         ctx.interrupt();
 

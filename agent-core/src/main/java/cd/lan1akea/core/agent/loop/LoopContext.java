@@ -85,27 +85,6 @@ public class LoopContext {
      */
     private final long backoffMs;
     /**
-     * 待解决的介入 ID（null 表示无待解决介入）。
-     * 当 {@link cd.lan1akea.core.exception.HumanInterventionException} 被捕获后，
-     * 对应的 {@link cd.lan1akea.core.intervention.InterventionRequest} 的 ID 会存储在此字段。
-     * 后续 {@link LoopExecutor#runStream(LoopContext)} 通过此字段判断是否需要恢复。
-     */
-    private volatile String interventionId;
-    /**
-     * 介入类型（APPROVAL/CLARIFY），用于恢复时判断逻辑。
-     * 保存 HumanInterventionException.Type 的名称，在 {@link LoopExecutor#resumeFromIntervention}
-     * 中不直接使用此字段判断（而是查询 InterventionRequest 的状态），
-     * 但在 {@link LoopExecutor#resumeApprovedTool} 和 {@link LoopExecutor#resumeClarifiedTool}
-     * 中用于清理上下文。
-     */
-    private volatile String interventionType;
-    /**
-     * 暂停时快照的工具参数 JSON（APPROVAL/CLARIFY 时有效）。
-     * 当介入被批准后，以这些参数重新执行工具调用。
-     * 当介入被澄清后，使用 {@link cd.lan1akea.core.intervention.InterventionRequest#getModifiedArgs()} 替代。
-     */
-    private volatile String pausedToolArgs;
-    /**
      * 会话是否已完成（无需继续推理）。
      * 由引擎在 REASON 阶段评估无工具调用时标记，
      * Guard 阶段检查此标记决定 Stop。
@@ -280,41 +259,6 @@ public class LoopContext {
                 userId, iteration, List.of(), attributes);
     }
 
-    /**
-     * @return 待解决的介入请求 ID（null 表示无待解决介入）
-     */
-    public String getInterventionId() { return interventionId; }
-
-    /**
-     * 设置待解决的介入请求 ID。
-     *
-     * @param v 介入请求 ID，null 表示清除
-     */
-    public void setInterventionId(String v) { this.interventionId = v; }
-
-    /**
-     * @return 介入类型名称（APPROVAL/CLARIFY）
-     */
-    public String getInterventionType() { return interventionType; }
-
-    /**
-     * 设置介入类型名称。
-     *
-     * @param v 介入类型名称
-     */
-    public void setInterventionType(String v) { this.interventionType = v; }
-
-    /**
-     * @return 暂停时快照的工具参数 JSON
-     */
-    public String getPausedToolArgs() { return pausedToolArgs; }
-
-    /**
-     * 设置暂停时快照的工具参数 JSON。
-     *
-     * @param v 工具参数 JSON
-     */
-    public void setPausedToolArgs(String v) { this.pausedToolArgs = v; }
 
     /**
      * 创建 Builder。

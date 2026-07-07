@@ -5,6 +5,7 @@ import cd.lan1akea.core.exception.HumanInterventionException;
 import cd.lan1akea.core.hook.*;
 import cd.lan1akea.core.intervention.InterventionRequest;
 import cd.lan1akea.core.intervention.InterventionStore;
+import cd.lan1akea.core.message.MsgRole;
 import cd.lan1akea.core.message.*;
 import cd.lan1akea.core.metrics.AgentMetrics;
 import cd.lan1akea.core.model.*;
@@ -91,7 +92,7 @@ class LoopExecutorInterventionTest {
         verify(interventionStore, times(1)).create(any());
         // 验证 ctx 已暂停
         assertTrue(ctx.isInterrupted());
-        assertEquals("int_001", ctx.getInterventionId());
+        assertEquals("int_001", ctx.getInterventionState().getInterventionId());
     }
 
     // ===========================================================
@@ -147,9 +148,10 @@ class LoopExecutorInterventionTest {
                 .thenReturn(Flux.just(ChatStreamChunk.of("ok", FinishReason.STOP)));
 
         LoopContext ctx = buildCtx("s1");
-        ctx.setInterventionId("int_1");
-        ctx.setInterventionType("TOOL_APPROVAL");
-        ctx.setPausedToolArgs("{\"amount\":100}");
+        ctx.getInterventionState().setInterventionId("int_1");
+        ctx.getInterventionState().setInterventionType("TOOL_APPROVAL");
+        ctx.getInterventionState().setPausedToolArgs("{\"amount\":100}");
+        addAssistantWithToolUse(ctx, "resume_int_1", "transfer");
 
         StepVerifier.create(executor.runStream(ctx).collectList())
                 .assertNext(chunks -> {
@@ -182,9 +184,10 @@ class LoopExecutorInterventionTest {
                 .thenReturn(Flux.just(ChatStreamChunk.of("ok", FinishReason.STOP)));
 
         LoopContext ctx = buildCtx("s1");
-        ctx.setInterventionId("int_2");
-        ctx.setInterventionType("TOOL_CLARIFY");
-        ctx.setPausedToolArgs("{\"amount\":100}");
+        ctx.getInterventionState().setInterventionId("int_2");
+        ctx.getInterventionState().setInterventionType("TOOL_CLARIFY");
+        ctx.getInterventionState().setPausedToolArgs("{\"amount\":100}");
+        addAssistantWithToolUse(ctx, "resume_int_2", "transfer");
 
         StepVerifier.create(executor.runStream(ctx).collectList())
                 .assertNext(chunks -> {
@@ -218,9 +221,10 @@ class LoopExecutorInterventionTest {
                 .thenReturn(Flux.just(ChatStreamChunk.of("ok", FinishReason.STOP)));
 
         LoopContext ctx = buildCtx("s1");
-        ctx.setInterventionId("int_1");
-        ctx.setInterventionType("TOOL_APPROVAL");
-        ctx.setPausedToolArgs("{\"amount\":100}");
+        ctx.getInterventionState().setInterventionId("int_1");
+        ctx.getInterventionState().setInterventionType("TOOL_APPROVAL");
+        ctx.getInterventionState().setPausedToolArgs("{\"amount\":100}");
+        addAssistantWithToolUse(ctx, "resume_int_1", "transfer");
 
         executor.runStream(ctx).collectList().block();
 
@@ -234,6 +238,12 @@ class LoopExecutorInterventionTest {
     // ===========================================================
     // helpers
     // ===========================================================
+
+    private void addAssistantWithToolUse(LoopContext ctx, String callId, String toolName) {
+        ctx.addMessage(Msg.builder(MsgRole.ASSISTANT)
+                .addToolUse(callId, toolName, "{}")
+                .build());
+    }
 
     private LoopContext buildCtx(String sessionId) {
         return LoopContext.builder()

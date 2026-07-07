@@ -87,9 +87,9 @@ public class SessionPersistenceHook implements Hook {
             Map.of(), ctx.getTotalTokens(), false, null,
             System.currentTimeMillis());
 
-        state.setPendingInterventionId(ctx.getInterventionId());
-        state.setInterventionType(ctx.getInterventionType());
-        state.setPausedToolArgsJson(ctx.getPausedToolArgs());
+        state.setPendingInterventionId(ctx.getInterventionState().getInterventionId());
+        state.setInterventionType(ctx.getInterventionState().getInterventionType());
+        state.setPausedToolArgsJson(ctx.getInterventionState().getPausedToolArgs());
 
         stateStore.saveCheckpoint(state).subscribe();
     }
