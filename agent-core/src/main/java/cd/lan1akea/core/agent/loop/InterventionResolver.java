@@ -108,7 +108,7 @@ public class InterventionResolver {
      * @param ctx 循环上下文
      * @return 恢复决策
      */
-    public ResolvedIntervention resolveForRecovery(LoopContext ctx) {
+public ResolvedIntervention resolveForRecovery(LoopContext ctx) {
         String id = ctx.getInterventionState().getInterventionId();
         if (id == null) return ResolvedIntervention.reEnter();
 
