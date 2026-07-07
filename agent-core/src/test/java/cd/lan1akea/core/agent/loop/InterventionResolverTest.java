@@ -43,8 +43,6 @@ class InterventionResolverTest {
         hookDispatcher = new HookDispatcher(new HookChain());
         toolOrchestrator = new ToolCallOrchestrator(
                 toolExecutor, toolRegistry, hookDispatcher, aroundHooks);
-        when(hookDispatcher.dispatch(any(), any())).thenReturn(Mono.just(HookResult.continue_()));
-
         resolver = new InterventionResolver(interventionStore, toolOrchestrator);
     }
 
