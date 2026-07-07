@@ -10,8 +10,6 @@ import cd.lan1akea.core.CoreConstants.Usage;
 import cd.lan1akea.core.exception.HookAbortException;
 import cd.lan1akea.core.exception.HumanInterventionException;
 import cd.lan1akea.core.hook.*;
-import cd.lan1akea.core.intervention.InterventionRequest;
-import cd.lan1akea.core.intervention.InterventionStore;
 import cd.lan1akea.core.message.*;
 import cd.lan1akea.core.metrics.AgentMetrics;
 import cd.lan1akea.core.model.*;
@@ -57,8 +55,8 @@ public class LoopExecutor {
     /** Agent 指标收集器，记录迭代次数等运行时数据 */
     private final AgentMetrics metrics;
 
-    /** 人工介入请求存储器 */
-    private final InterventionStore interventionStore;
+    /** 人工介入恢复处理器 */
+    private final InterventionResolver interventionResolver;
 
     /** Token 估算器，用于统计每次模型调用的实际 token 消耗 */
     private final TokenEstimator tokenEstimator;
@@ -66,25 +64,25 @@ public class LoopExecutor {
     /**
      * 构造 ReAct 循环执行器。
      *
-     * @param engine             循环决策引擎
-     * @param modelPipeline      模型调用管道
-     * @param toolOrchestrator   工具调用编排器
-     * @param hookDispatcher     Hook 分发器
-     * @param metrics            Agent 指标收集器
-     * @param interventionStore  介入请求存储器
-     * @param tokenEstimator     Token 估算器
+     * @param engine               循环决策引擎
+     * @param modelPipeline        模型调用管道
+     * @param toolOrchestrator     工具调用编排器
+     * @param hookDispatcher       Hook 分发器
+     * @param metrics              Agent 指标收集器
+     * @param tokenEstimator       Token 估算器
+     * @param interventionResolver 介入恢复处理器
      */
     public LoopExecutor(LoopDecisionEngine engine, ModelCallPipeline modelPipeline,
                          ToolCallOrchestrator toolOrchestrator, HookDispatcher hookDispatcher,
-                         AgentMetrics metrics, InterventionStore interventionStore,
-                         TokenEstimator tokenEstimator) {
+                         AgentMetrics metrics, TokenEstimator tokenEstimator,
+                         InterventionResolver interventionResolver) {
         this.engine = engine;
         this.modelPipeline = modelPipeline;
         this.toolOrchestrator = toolOrchestrator;
         this.hookDispatcher = hookDispatcher;
         this.metrics = metrics;
-        this.interventionStore = interventionStore;
         this.tokenEstimator = tokenEstimator;
+        this.interventionResolver = interventionResolver;
     }
 
     /**
@@ -100,7 +98,15 @@ public class LoopExecutor {
         return Flux.defer(() -> {
             // 检查是否有已解决的介入需要恢复
             if (ctx.getInterventionState().hasPending() && !ctx.isInterrupted()) {
-                return resumeFromIntervention(ctx);
+                InterventionResolver.ResolvedIntervention resolved =
+                        interventionResolver.resolveForRecovery(ctx);
+                switch (resolved.getAction()) {
+                    case RE_ENTER: return runStream(ctx);
+                    case RETURN_CHUNK: return Flux.just(resolved.getChunk());
+                    case EXECUTE_AND_CONTINUE:
+                        return resolveAndContinue(ctx, resolved.getCallId(), resolved.getExecution());
+                    default: return Flux.empty();
+                }
             }
             if (ctx.isInterrupted()) {
                 return handleInterruptStream(ctx);
@@ -154,19 +160,7 @@ public class LoopExecutor {
                 .build());
     }
 
-    /**
-     * 从人工介入状态恢复执行。
-     *
-     * <p>检查介入请求的当前状态并执行对应恢复策略：
-     * <ul>
-     *   <li>APPROVED — 以原参数重新执行被暂停的工具</li>
-     *   <li>CLARIFIED — 以修正参数重新执行被暂停的工具</li>
-     *   <li>DENIED — 向 Agent 注入拒绝消息后继续循环</li>
-     *   <li>EXPIRED — 清除介入状态，正常继续执行</li>
-     *   <li>PENDING — 返回等待中的干预 chunk</li>
-     * </ul>
-     *
-    /** 找到最后一条 assistant 消息的索引，-1 表示不存在 */
+    /** 找最后一条 assistant 消息的索引，-1 表示不存在 */
     private int lastAssistantIndex(LoopContext ctx) {
         List<Msg> msgs = ctx.getMessages();
         for (int i = msgs.size() - 1; i >= 0; i--) {
@@ -175,34 +169,6 @@ public class LoopExecutor {
             }
         }
         return -1;
-    }
-
-    /** 按 toolName 匹配取最后一条 assistant 中的 tool_use callId，无匹配时 fallback 最后一个 */
-    private String extractToolCallIdByName(LoopContext ctx, String toolName) {
-        int idx = lastAssistantIndex(ctx);
-        if (idx < 0) return null;
-        List<ToolUseBlock> tools = ctx.getMessages().get(idx).getToolUseBlocks();
-        if (tools == null || tools.isEmpty()) return null;
-        for (int i = tools.size() - 1; i >= 0; i--) {
-            if (tools.get(i).getName().equals(toolName)) return tools.get(i).getId();
-        }
-        return tools.get(tools.size() - 1).getId();
-    }
-
-    /** 用原 callId 执行工具（跳过审批检查） */
-    private Mono<ToolResult> executeResumeTool(LoopContext ctx, String toolName,
-                                                Map<String, Object> args, String callId) {
-        ToolCallContext param = ToolCallContext.builder()
-                .callId(callId)
-                .toolName(toolName)
-                .arguments(args != null ? args : Map.of())
-                .tenantId(ctx.getTenantId())
-                .userId(ctx.getUserId())
-                .sessionId(ctx.getSessionId())
-                .attributes(ctx.getAttributes())
-                .build();
-        param.setApproved(true);
-        return toolOrchestrator.executeDirect(param, ctx);
     }
 
     /**
@@ -235,53 +201,6 @@ public class LoopExecutor {
                 });
     }
 
-    /**
-     * 从人工介入状态恢复执行。
-     */
-    private Flux<ChatStreamChunk> resumeFromIntervention(LoopContext ctx) {
-        String id = ctx.getInterventionState().getInterventionId();
-        InterventionRequest req = interventionStore.getById(id);
-        if (req == null) {
-            ctx.getInterventionState().clear();
-            return runStream(ctx);
-        }
-        String callId = extractToolCallIdByName(ctx, req.getToolName());
-        switch (req.getStatus()) {
-            case PENDING:
-                return Flux.just(ChatStreamChunk.of(
-                        "[等待处理] " + req.getType() + " — " + req.getToolName() + ": "
-                                + (req.getQuestion() != null ? req.getQuestion() : ""),
-                        FinishReason.INTERRUPTED));
-            case APPROVED: {
-                Map<String, Object> args = (req.getToolArgs() != null && !req.getToolArgs().isEmpty())
-                        ? req.getToolArgs()
-                        : (ctx.getInterventionState().getPausedToolArgs() != null
-                                ? JsonUtils.safeParseMap(ctx.getInterventionState().getPausedToolArgs()) : Map.of());
-                return resolveAndContinue(ctx, callId,
-                        executeResumeTool(ctx, req.getToolName(), args, callId));
-            }
-            case CLARIFIED: {
-                Map<String, Object> args = req.getModifiedArgs() != null
-                        ? req.getModifiedArgs() : Map.of();
-                return resolveAndContinue(ctx, callId,
-                        executeResumeTool(ctx, req.getToolName(), args, callId));
-            }
-            case DENIED: {
-                String msg = Intervention.MSG_DENIED + " — " + req.getToolName()
-                        + (req.getResolution() != null && !req.getResolution().isBlank()
-                                ? ": " + req.getResolution() : "");
-                return resolveAndContinue(ctx, callId,
-                        Mono.just(ToolResult.failure(callId, msg)));
-            }
-            case EXPIRED:
-                return resolveAndContinue(ctx, callId,
-                        Mono.just(ToolResult.failure(callId,
-                                Intervention.MSG_EXPIRED + " — " + req.getToolName())));
-            default:
-                return Flux.just(interventionChunk(id, Intervention.MSG_WAITING,
-                        req.getType().name(), req.getToolName()));
-        }
-    }
 
     /**
      * 执行推理阶段：调用模型获取回复。
@@ -429,75 +348,12 @@ public class LoopExecutor {
                                                    List<ToolResult> results) {
         if (e instanceof HumanInterventionException hie) {
             if (!hie.isResumable()) return Flux.error(e);
-            return handleIntervention(hie, ctx);
+            return Flux.just(interventionResolver.createIntervention(hie, ctx));
         }
         // Other errors: add failure result and continue
         ToolResult failure = ToolResult.failure(UI.TOOL_EXEC_ERROR + e.getMessage());
         results.add(failure);
         return Flux.just(chunkFromToolResult(failure));
-    }
-
-    /**
-     * 处理人工介入异常，创建介入请求并暂停循环。
-     *
-     * <p>将 {@link HumanInterventionException} 转换为 {@link InterventionRequest} 并持久化，
-     * 设置上下文的中断状态，返回包含介入信息的 chunk 给前端。
-     *
-     * @param e   HumanInterventionException 实例
-     * @param ctx 循环上下文
-     * @return 包含介入信息的 chunk 序列
-     */
-    private Flux<ChatStreamChunk> handleIntervention(HumanInterventionException e, LoopContext ctx) {
-        InterventionRequest req = InterventionRequest.builder()
-                .type(toInterventionType(e.getType()))
-                .sessionId(ctx.getSessionId())
-                .requestId(ctx.getRequestId())
-                .tenantId(ctx.getTenantId())
-                .agentName(ctx.getAgentName())
-                .toolName(e.getToolName())
-                .question(e.getReason())
-                .toolArgs(e.getCallParam() != null ? e.getCallParam().getArgumentsMap() : null)
-                .recentMessages(truncateMessages(ctx.getMessages()))
-                .ttlMinutes(e.getTtlMinutes())
-                .build();
-
-        String id = interventionStore.create(req);
-        ctx.getInterventionState().setInterventionId(id);
-        ctx.getInterventionState().setInterventionType(e.getType().name());
-        if (e.getCallParam() != null) {
-            ctx.getInterventionState().setPausedToolArgs(JsonUtils.toCompactJson(e.getCallParam().getArgumentsMap()));
-        }
-        ctx.interrupt();
-
-        return Flux.just(interventionChunk(id, e.getReason(), e.getType().name(), e.getToolName()));
-    }
-
-    /**
-     * 将 {@link HumanInterventionException.Type} 转换为 {@link InterventionRequest.Type}。
-     *
-     * @param t 人工介入异常类型
-     * @return 对应的介入请求类型
-     */
-    private static InterventionRequest.Type toInterventionType(HumanInterventionException.Type t) {
-        switch (t) {
-            case TOOL_APPROVAL: return InterventionRequest.Type.TOOL_APPROVAL;
-            case TOOL_CLARIFY: return InterventionRequest.Type.TOOL_CLARIFY;
-            default: return InterventionRequest.Type.TOOL_APPROVAL;
-        }
-    }
-
-    /**
-     * 截断消息列表至最近的 {@value Intervention#RECENT_MSG_LIMIT} 条。
-     *
-     * <p>在创建介入请求时使用，仅保存最近的上下文消息以减小持久化开销。
-     *
-     * @param messages 原始消息列表
-     * @return 截断后的消息列表
-     */
-    private List<Msg> truncateMessages(List<Msg> messages) {
-        int size = messages.size();
-        int from = Math.max(0, size - Intervention.RECENT_MSG_LIMIT);
-        return new ArrayList<>(messages.subList(from, size));
     }
 
     /**
@@ -512,35 +368,6 @@ public class LoopExecutor {
                 : UI.TOOL_ERROR_PREFIX + result.getErrorMessage();
         return ChatStreamChunk.builder()
                 .delta(content).type(ChatStreamChunk.TYPE_TEXT).build();
-    }
-
-    /**
-     * 构建一个干预信号 chunk，通知前端需要人工介入。
-     *
-     * <p>该 chunk 包含介入 ID、问题描述、介入类型和工具名称，
-     * 并设置 chunk 类型为 {@value Intervention#CHUNK_TYPE}，
-     * payload type 为 {@value Intervention#PAYLOAD_TYPE}，
-     * finish_reason 为 {@value Intervention#FINISH_REASON} 以标记流式结束。
-     *
-     * @param id               介入记录 ID
-     * @param question         审批问题描述
-     * @param interventionType 介入类型名称
-     * @param toolName         工具名称
-     * @return 干预信号 chunk
-     */
-    private ChatStreamChunk interventionChunk(String id, String question,
-                                               String interventionType, String toolName) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put(EventPayload.TYPE, Intervention.PAYLOAD_TYPE);
-        payload.put(EventPayload.INTERVENTION_ID, id);
-        payload.put(EventPayload.QUESTION, question);
-        payload.put(EventPayload.INTERVENTION_TYPE, interventionType);
-        payload.put(EventPayload.TOOL_NAME, toolName);
-        return ChatStreamChunk.builder()
-                .delta(JsonUtils.toCompactJson(payload))
-                .type(Intervention.CHUNK_TYPE)
-                .finishReason(Intervention.FINISH_REASON)
-                .build();
     }
 
     /**

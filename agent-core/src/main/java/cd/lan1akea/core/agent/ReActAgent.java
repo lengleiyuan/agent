@@ -112,9 +112,11 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
         InterventionStore interventionStore = config.getInterventionStore() != null
                 ? config.getInterventionStore()
                 : new InMemoryInterventionStore();
+        InterventionResolver interventionResolver = new InterventionResolver(
+                interventionStore, toolOrch);
         this.loopExecutor = new LoopExecutor(
-                engine, modelPipeline, toolOrch, hookDispatcher, metrics, interventionStore,
-                contextWindow.getEstimator());
+                engine, modelPipeline, toolOrch, hookDispatcher, metrics,
+                contextWindow.getEstimator(), interventionResolver);
         this.pipeline = new RequestPipeline(
                 loopExecutor, stateStore, aroundHookChain,
                 config.getExecutionConfig(), name, systemMessage, interventionStore);

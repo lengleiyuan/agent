@@ -50,8 +50,10 @@ class LoopExecutorInterventionTest {
         ToolCallOrchestrator orchestrator = new ToolCallOrchestrator(
                 toolExecutor, toolRegistry, hookDispatcher, aroundHooks);
 
+        InterventionResolver interventionResolver =
+                new InterventionResolver(interventionStore, orchestrator);
         executor = new LoopExecutor(engine, modelPipeline, orchestrator, hookDispatcher,
-                AgentMetrics.NOOP, interventionStore, new Cl100kTokenEstimator());
+                AgentMetrics.NOOP, new Cl100kTokenEstimator(), interventionResolver);
     }
 
     // ===========================================================

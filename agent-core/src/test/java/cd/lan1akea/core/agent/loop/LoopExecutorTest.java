@@ -44,9 +44,11 @@ class LoopExecutorTest {
         ToolCallOrchestrator orchestrator = new ToolCallOrchestrator(
                 toolExecutor, toolRegistry, hookDispatcher, aroundHooks);
 
+        cd.lan1akea.core.intervention.InMemoryInterventionStore store =
+                new cd.lan1akea.core.intervention.InMemoryInterventionStore();
+        InterventionResolver resolver = new InterventionResolver(store, orchestrator);
         executor = new LoopExecutor(engine, modelPipeline, orchestrator, hookDispatcher,
-                AgentMetrics.NOOP, new cd.lan1akea.core.intervention.InMemoryInterventionStore(),
-                new Cl100kTokenEstimator());
+                AgentMetrics.NOOP, new Cl100kTokenEstimator(), resolver);
     }
 
     // ============================================================
