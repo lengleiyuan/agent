@@ -49,7 +49,7 @@ public class AgentState {
      */
     private String pendingInterventionId;
     /**
-     * 介入类型（APPROVAL/CLARIFY/PAUSE）
+     * 介入类型（APPROVAL/CLARIFY）
      */
     private String interventionType;
     /**
@@ -178,7 +178,7 @@ public class AgentState {
      */
     public void setPendingInterventionId(String v) { this.pendingInterventionId = v; }
     /**
-     * @return 介入类型（APPROVAL/CLARIFY/PAUSE）
+     * @return 介入类型（APPROVAL/CLARIFY）
      */
     public String getInterventionType() { return interventionType; }
     /**

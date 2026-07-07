@@ -28,19 +28,4 @@ class HumanInterventionExceptionTest {
         assertTrue(e.isResumable());
     }
 
-    @Test
-    void pause_shouldBeBusinessType() {
-        HumanInterventionException e = HumanInterventionException.pause("需要确认");
-        assertEquals(HumanInterventionException.Type.BUSINESS_PAUSE, e.getType());
-        assertTrue(e.isResumable());
-        assertNull(e.getCallParam());
-        assertNull(e.getToolName());
-    }
-
-    @Test
-    void abort_shouldNotBeResumable() {
-        HumanInterventionException e = HumanInterventionException.abort("违规内容");
-        assertFalse(e.isResumable());
-        assertEquals(HumanInterventionException.Type.BUSINESS_PAUSE, e.getType());
-    }
 }

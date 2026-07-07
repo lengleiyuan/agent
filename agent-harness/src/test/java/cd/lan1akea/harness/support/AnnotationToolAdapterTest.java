@@ -487,4 +487,60 @@ class AnnotationToolAdapterTest {
         // core ToolCallContext 不应出现在 schema
         assertFalse(tool.getParameters().getParametersSchema().toString().contains("ctx"));
     }
+
+    // ========================================================================
+    // @ToolParam 约束 — enum / minValue / maxValue → JSON Schema
+    // ========================================================================
+
+    static class ConstrainedParamsTool {
+        @ToolFunction(name = "constrained", description = "带约束参数的工具")
+        public ToolResult run(
+                @ToolParam(name = "channel", required = true,
+                        description = "通知渠道", enumValues = {"email", "sms", "push"}) String channel,
+                @ToolParam(name = "amount", required = true,
+                        description = "金额", minValue = 1, maxValue = 1000000) double amount) {
+            return ToolResult.success(channel + ":" + (long) amount);
+        }
+    }
+
+    @Test
+    void enumConstraints_shouldAppearInSchema() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.addAdapter(new AnnotationToolAdapter());
+        List<Tool> tools = registry.registerTool(new ConstrainedParamsTool());
+        Tool tool = tools.get(0);
+
+        String schema = tool.getParameters().getParametersSchema().toString();
+        assertTrue(schema.contains("email"), "should contain enum values: " + schema);
+        assertTrue(schema.contains("sms"));
+        assertTrue(schema.contains("push"));
+    }
+
+    @Test
+    void minMaxConstraints_shouldAppearInSchema() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.addAdapter(new AnnotationToolAdapter());
+        List<Tool> tools = registry.registerTool(new ConstrainedParamsTool());
+        Tool tool = tools.get(0);
+
+        String schema = tool.getParameters().getParametersSchema().toString();
+        assertTrue(schema.contains("minimum") && schema.contains("1"),
+                "should contain minimum: " + schema);
+        assertTrue(schema.contains("maximum") && schema.contains("1000000"),
+                "should contain maximum: " + schema);
+    }
+
+    @Test
+    void unsetConstraints_shouldNotAppearInSchema() {
+        // MethodLevelPartialConfig 没有 enum/min/max，schema 里不应出现
+        ToolRegistry registry = new ToolRegistry();
+        registry.addAdapter(new AnnotationToolAdapter());
+        List<Tool> tools = registry.registerTool(new MethodLevelPartialConfig());
+        Tool tool = tools.get(0);
+
+        String schema = tool.getParameters().getParametersSchema().toString();
+        assertFalse(schema.contains("\"minimum\""), "should not contain minimum: " + schema);
+        assertFalse(schema.contains("\"maximum\""), "should not contain maximum: " + schema);
+        assertFalse(schema.contains("\"enum\""), "should not contain enum: " + schema);
+    }
 }

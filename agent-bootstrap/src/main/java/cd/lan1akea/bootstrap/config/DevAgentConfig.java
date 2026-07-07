@@ -1,12 +1,11 @@
 package cd.lan1akea.bootstrap.config;
 
 import cd.lan1akea.bootstrap.tool.DeleteFileTool;
+import cd.lan1akea.bootstrap.tool.SendNotificationTool;
 import cd.lan1akea.bootstrap.tool.TransferTool;
 import cd.lan1akea.core.intervention.InterventionStore;
 import cd.lan1akea.core.intervention.InMemoryInterventionStore;
 import cd.lan1akea.core.formatter.OpenAiMessageFormatter;
-import cd.lan1akea.core.tool.builtin.ListInterventionsTool;
-import cd.lan1akea.core.tool.builtin.ResolveInterventionTool;
 import cd.lan1akea.core.hook.impl.AuditHook;
 import cd.lan1akea.core.hook.impl.ContentFilterHook;
 import cd.lan1akea.core.hook.impl.SessionPersistenceHook;
@@ -254,8 +253,7 @@ public class DevAgentConfig {
             .tool(new CalculatorTool())
             .tool(new TransferTool())
             .tool(new DeleteFileTool())
-            .tool(new ListInterventionsTool(interventionStore))
-            .tool(new ResolveInterventionTool(interventionStore))
+            .tool(new SendNotificationTool())
             .hook(new ContentFilterHook())
             .hook(new AuditHook("DevAudit"))
             .hook(new SessionPersistenceHook(stateStore))

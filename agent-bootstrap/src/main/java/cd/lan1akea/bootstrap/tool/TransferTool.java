@@ -13,8 +13,8 @@ public class TransferTool extends ToolBase {
     private static final long MAX_AUTO_AMOUNT = 10000;
 
     public TransferTool() {
-        declareStringParam("target", "收款账户", true);
-        declareNumberParam("amount", "转账金额", true);
+        declareStringParam("target", "收款账户名称", true);
+        declareRangedNumberParam("amount", "转账金额（最小1元）", true, 1.0, null);
     }
 
     @Override
@@ -35,7 +35,7 @@ public class TransferTool extends ToolBase {
         if (!params.isApproved() && amount != null && amount.longValue() > MAX_AUTO_AMOUNT) {
             throw HumanInterventionException.approval("transfer",
                 "转账金额 " + amount + " 超过 " + MAX_AUTO_AMOUNT + " 上限，是否继续？",
-                params);
+                params).withTtlMinutes(2);
         }
 
         return Mono.just(ToolResult.success(

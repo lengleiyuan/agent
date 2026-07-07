@@ -6,35 +6,22 @@ package cd.lan1akea.core.tool;
  */
 public class ToolParam {
 
-    /**
-     * 参数名称
-     */
+    /** 参数名称 */
     private final String name;
-
-    /**
-     * 参数类型（string、number、boolean、object、array）
-     */
+    /** 参数类型（string、number、boolean、object、array） */
     private final String type;
-
-    /**
-     * 参数描述
-     */
+    /** 参数描述 */
     private final String description;
-
-    /**
-     * 是否必需
-     */
+    /** 是否必需 */
     private final boolean required;
-
-    /**
-     * 默认值
-     */
+    /** 默认值 */
     private final Object defaultValue;
-
-    /**
-     * 枚举可选值（仅当类型为 string 时有效）
-     */
+    /** 枚举可选值 */
     private final String[] enumValues;
+    /** 最小值（number 类型），null 表示无限制 */
+    private final Double minValue;
+    /** 最大值（number 类型），null 表示无限制 */
+    private final Double maxValue;
 
     private ToolParam(Builder builder) {
         this.name = builder.name;
@@ -43,95 +30,45 @@ public class ToolParam {
         this.required = builder.required;
         this.defaultValue = builder.defaultValue;
         this.enumValues = builder.enumValues;
+        this.minValue = builder.minValue;
+        this.maxValue = builder.maxValue;
     }
 
-    /**
-     * @return 参数名称
-     */
     public String getName() { return name; }
-    /**
-     * @return 参数类型
-     */
     public String getType() { return type; }
-    /**
-     * @return 参数描述
-     */
     public String getDescription() { return description; }
-    /**
-     * @return 是否必需
-     */
     public boolean isRequired() { return required; }
-    /**
-     * @return 默认值
-     */
     public Object getDefaultValue() { return defaultValue; }
-    /**
-     * @return 枚举可选值
-     */
     public String[] getEnumValues() { return enumValues; }
+    public Double getMinValue() { return minValue; }
+    public Double getMaxValue() { return maxValue; }
 
-    /**
-     * 创建参数构建器。
-     *
-     * @param name 参数名称
-     * @param type 参数类型
-     * @return 构建器
-     */
     public static Builder builder(String name, String type) {
         return new Builder(name, type);
     }
 
     public static class Builder {
-        /**
-         * 参数名称
-         */
         private final String name;
-        /**
-         * 参数类型
-         */
         private final String type;
-        /**
-         * 参数描述
-         */
         private String description;
-        /**
-         * 是否必需
-         */
         private boolean required;
-        /**
-         * 默认值
-         */
         private Object defaultValue;
-        /**
-         * 枚举可选值
-         */
         private String[] enumValues;
+        private Double minValue;
+        private Double maxValue;
 
         Builder(String name, String type) {
             this.name = name;
             this.type = type;
         }
 
-        /**
-         * @param description 参数描述
-         */
         public Builder description(String description) { this.description = description; return this; }
-        /**
-         * @param required 是否必需
-         */
         public Builder required(boolean required) { this.required = required; return this; }
-        /**
-         * @param defaultValue 默认值
-         */
         public Builder defaultValue(Object defaultValue) { this.defaultValue = defaultValue; return this; }
-        /**
-         * @param enumValues 枚举可选值
-         */
         public Builder enumValues(String... enumValues) { this.enumValues = enumValues; return this; }
+        public Builder minValue(double v) { this.minValue = v; return this; }
+        public Builder maxValue(double v) { this.maxValue = v; return this; }
 
-        /**
-         * @return 构建的 ToolParam 实例
-         */
         public ToolParam build() { return new ToolParam(this); }
     }
 }

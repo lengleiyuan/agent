@@ -71,11 +71,7 @@ public abstract class ToolBase implements Tool {
     }
 
     /**
-     * 快速声明字符串参数。
-     *
-     * @param name        参数名称
-     * @param description 参数描述
-     * @param required    是否必需
+     * 声明字符串参数。
      */
     protected void declareStringParam(String name, String description, boolean required) {
         declareParam(ToolParam.builder(name, JsonSchema.TYPE_STRING)
@@ -83,15 +79,32 @@ public abstract class ToolBase implements Tool {
     }
 
     /**
-     * 快速声明数字参数。
-     *
-     * @param name        参数名称
-     * @param description 参数描述
-     * @param required    是否必需
+     * 声明带枚举约束的字符串参数。
+     */
+    protected void declareEnumStringParam(String name, String description, boolean required,
+                                           String... allowedValues) {
+        declareParam(ToolParam.builder(name, JsonSchema.TYPE_STRING)
+            .description(description).required(required).enumValues(allowedValues).build());
+    }
+
+    /**
+     * 声明数字参数。
      */
     protected void declareNumberParam(String name, String description, boolean required) {
         declareParam(ToolParam.builder(name, JsonSchema.TYPE_NUMBER)
             .description(description).required(required).build());
+    }
+
+    /**
+     * 声明带范围的数字参数。
+     */
+    protected void declareRangedNumberParam(String name, String description, boolean required,
+                                             Double min, Double max) {
+        ToolParam.Builder b = ToolParam.builder(name, JsonSchema.TYPE_NUMBER)
+            .description(description).required(required);
+        if (min != null) b.minValue(min);
+        if (max != null) b.maxValue(max);
+        declareParam(b.build());
     }
 
     /**
@@ -131,7 +144,13 @@ public abstract class ToolBase implements Tool {
                 propDef.put(JsonSchema.DEFAULT, param.getDefaultValue());
             }
             if (param.getEnumValues() != null && param.getEnumValues().length > 0) {
-                propDef.put(JsonSchema.ENUM, param.getEnumValues());
+                propDef.put(JsonSchema.ENUM, java.util.Arrays.asList(param.getEnumValues()));
+            }
+            if (param.getMinValue() != null) {
+                propDef.put("minimum", param.getMinValue());
+            }
+            if (param.getMaxValue() != null) {
+                propDef.put("maximum", param.getMaxValue());
             }
             properties.put(param.getName(), propDef);
 

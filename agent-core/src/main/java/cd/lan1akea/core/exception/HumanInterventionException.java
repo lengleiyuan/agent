@@ -10,7 +10,6 @@ import cd.lan1akea.core.tool.ToolCallContext;
  * <ul>
  *   <li>TOOL_APPROVAL — 工具调用前需要人工审批</li>
  *   <li>TOOL_CLARIFY — 工具参数需要人工澄清/修正</li>
- *   <li>BUSINESS_PAUSE — 业务流程需要人工干预后继续</li>
  * </ul>
  */
 public class HumanInterventionException extends RuntimeException {
@@ -22,9 +21,7 @@ public class HumanInterventionException extends RuntimeException {
         /** 工具审批：人工 approve/deny 后原参数重放 */
         TOOL_APPROVAL,
         /** 工具澄清：人工修正参数后重放 */
-        TOOL_CLARIFY,
-        /** 业务暂停：人工注入反馈消息续跑 */
-        BUSINESS_PAUSE
+        TOOL_CLARIFY
     }
 
     /** 介入类型 */
@@ -37,15 +34,11 @@ public class HumanInterventionException extends RuntimeException {
     private final String toolName;
     /** 调用参数上下文（TOOL_APPROVAL/TOOL_CLARIFY 时携带原参数） */
     private final ToolCallContext callParam;
+    /** 审批 TTL（分钟），-1 表示使用默认值 */
+    private int ttlMinutes = -1;
 
     /**
      * 构造人工介入异常。
-     *
-     * @param type      介入类型
-     * @param reason    暂停原因
-     * @param resumable 是否可恢复
-     * @param toolName  工具名称
-     * @param callParam 调用参数
      */
     private HumanInterventionException(Type type, String reason, boolean resumable,
                                         String toolName, ToolCallContext callParam) {
@@ -56,6 +49,15 @@ public class HumanInterventionException extends RuntimeException {
         this.toolName = toolName;
         this.callParam = callParam;
     }
+
+    /** 设置审批过期时间（分钟），工具按风险等级自行决定 */
+    public HumanInterventionException withTtlMinutes(int minutes) {
+        this.ttlMinutes = Math.max(0, minutes);
+        return this;
+    }
+
+    /** @return 审批 TTL（分钟），-1 表示使用默认值 */
+    public int getTtlMinutes() { return ttlMinutes; }
 
     /**
      * 创建工具审批介入。人工 approve/deny 后可恢复。
@@ -81,26 +83,6 @@ public class HumanInterventionException extends RuntimeException {
     public static HumanInterventionException clarify(String toolName, String question,
                                                       ToolCallContext callParam) {
         return new HumanInterventionException(Type.TOOL_CLARIFY, question, true, toolName, callParam);
-    }
-
-    /**
-     * 创建业务暂停介入。人工注入反馈后可恢复。
-     *
-     * @param reason 暂停原因
-     * @return HumanInterventionException 实例
-     */
-    public static HumanInterventionException pause(String reason) {
-        return new HumanInterventionException(Type.BUSINESS_PAUSE, reason, true, null, null);
-    }
-
-    /**
-     * 创建不可恢复的中止。无法继续执行。
-     *
-     * @param reason 中止原因
-     * @return HumanInterventionException 实例
-     */
-    public static HumanInterventionException abort(String reason) {
-        return new HumanInterventionException(Type.BUSINESS_PAUSE, reason, false, null, null);
     }
 
     /**

@@ -60,14 +60,14 @@ class InterventionRequestTest {
     @Test
     void isExpired_zeroTtl_shouldBeExpired() {
         InterventionRequest req = InterventionRequest.builder()
-                .sessionId("s1").type(InterventionRequest.Type.BUSINESS_PAUSE).ttlMinutes(0).build();
+                .sessionId("s1").type(InterventionRequest.Type.TOOL_CLARIFY).ttlMinutes(0).build();
         assertTrue(req.isExpired());
     }
 
     @Test
     void isExpired_positiveTtl_shouldNotBeExpired() {
         InterventionRequest req = InterventionRequest.builder()
-                .sessionId("s1").type(InterventionRequest.Type.BUSINESS_PAUSE).ttlMinutes(60).build();
+                .sessionId("s1").type(InterventionRequest.Type.TOOL_CLARIFY).ttlMinutes(60).build();
         assertFalse(req.isExpired());
     }
 
@@ -75,7 +75,7 @@ class InterventionRequestTest {
     void recentMessages_shouldBeStored() {
         UserMessage msg = UserMessage.of("hello");
         InterventionRequest req = InterventionRequest.builder()
-                .sessionId("s1").type(InterventionRequest.Type.BUSINESS_PAUSE)
+                .sessionId("s1").type(InterventionRequest.Type.TOOL_CLARIFY)
                 .recentMessages(List.of(msg)).build();
         assertEquals(1, req.getRecentMessages().size());
     }

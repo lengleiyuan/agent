@@ -377,4 +377,52 @@ class ToolRegistryTest {
             return Mono.just(ToolResult.success("ok"));
         }
     }
+
+    // ========================================================================
+    // ToolBase 参数约束 → JSON Schema
+    // ========================================================================
+
+    static class ConstrainedTool extends ToolBase {
+        ConstrainedTool() {
+            declareEnumStringParam("channel", "渠道", true, "email", "sms", "push");
+            declareRangedNumberParam("amount", "金额", true, 1.0, 1000000.0);
+            declareStringParam("target", "目标", true);
+            declareNumberParam("count", "数量", false);
+        }
+
+        @Override public String getName() { return "constrained"; }
+        @Override public String getDescription() { return "带约束的工具"; }
+
+        @Override public Mono<ToolResult> execute(ToolCallContext params) {
+            validateParams(params);
+            return Mono.just(ToolResult.success("ok"));
+        }
+    }
+
+    @Test
+    void constrainedTool_enumShouldAppearInSchema() {
+        ConstrainedTool tool = new ConstrainedTool();
+        String schema = tool.getParameters().getParametersSchema().toString();
+        assertTrue(schema.contains("email"), "should contain enum: " + schema);
+        assertTrue(schema.contains("sms"));
+        assertTrue(schema.contains("push"));
+    }
+
+    @Test
+    void constrainedTool_minMaxShouldAppearInSchema() {
+        ConstrainedTool tool = new ConstrainedTool();
+        String schema = tool.getParameters().getParametersSchema().toString();
+        assertTrue(schema.contains("minimum") && schema.contains("1"),
+                "should contain minimum: " + schema);
+        assertTrue(schema.contains("maximum") && schema.contains("1000000"),
+                "should contain maximum: " + schema);
+    }
+
+    @Test
+    void constrainedTool_unconstrainedShouldNotAppearInSchema() {
+        ConstrainedTool tool = new ConstrainedTool();
+        String schema = tool.getParameters().getParametersSchema().toString();
+        assertFalse(schema.contains("\"enum\":") && !schema.contains("channel"),
+                "unconstrained params should not have enum/min/max");
+    }
 }

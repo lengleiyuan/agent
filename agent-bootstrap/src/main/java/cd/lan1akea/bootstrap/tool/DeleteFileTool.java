@@ -31,7 +31,7 @@ public class DeleteFileTool extends ToolBase {
         if (!params.isApproved()) {
             throw HumanInterventionException.approval("delete_file",
                 "确认删除文件 " + path + "？此操作不可逆！",
-                params);
+                params).withTtlMinutes(10);
         }
 
         return Mono.just(ToolResult.success("文件已删除: " + path + " [模拟]"));

@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.logging.Logger;
 
 /**
@@ -342,7 +343,7 @@ public class LoopExecutor {
         metrics.recordIteration(ctx.getAgentName(), ctx.getSessionId(),
                 ctx.getIteration() + 1, toolCalls.size());
 
-        List<ToolResult> results = new java.util.concurrent.CopyOnWriteArrayList<>();
+        List<ToolResult> results = new CopyOnWriteArrayList<>();
 
         return Flux.fromIterable(toolCalls)
                 .flatMap(tc -> toolOrchestrator.execute(tc, ctx)
@@ -460,6 +461,7 @@ public class LoopExecutor {
                 .question(e.getReason())
                 .toolArgs(e.getCallParam() != null ? e.getCallParam().getArgumentsMap() : null)
                 .recentMessages(truncateMessages(ctx.getMessages()))
+                .ttlMinutes(e.getTtlMinutes())
                 .build();
 
         String id = interventionStore.create(req);
@@ -483,7 +485,7 @@ public class LoopExecutor {
         switch (t) {
             case TOOL_APPROVAL: return InterventionRequest.Type.TOOL_APPROVAL;
             case TOOL_CLARIFY: return InterventionRequest.Type.TOOL_CLARIFY;
-            default: return InterventionRequest.Type.BUSINESS_PAUSE;
+            default: return InterventionRequest.Type.TOOL_APPROVAL;
         }
     }
 

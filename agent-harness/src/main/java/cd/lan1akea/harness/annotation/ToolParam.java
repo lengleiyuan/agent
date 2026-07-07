@@ -30,4 +30,19 @@ public @interface ToolParam {
      * 默认值
      */
     String defaultValue() default "";
+
+    /**
+     * 枚举可选值（仅 string 类型有效）
+     */
+    String[] enumValues() default {};
+
+    /**
+     * 最小值（仅 number 类型有效）
+     */
+    double minValue() default Double.NaN;
+
+    /**
+     * 最大值（仅 number 类型有效）
+     */
+    double maxValue() default Double.NaN;
 }

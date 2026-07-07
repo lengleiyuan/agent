@@ -38,11 +38,13 @@
         .btn-deny { background:#ef4444; color:#fff; }
         .btn-detail { background:var(--surface-2); color:var(--text); border:1px solid var(--border); }
         .comment-input { flex:1; padding:8px 12px; background:var(--surface-2); color:var(--text); border:1px solid var(--border); border-radius:6px; font-size:0.85rem; }
+        .arg-edit { background:var(--surface-2); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:2px 6px; width:100%; font-size:0.85rem; }
         .status-badge { font-size:0.75rem; padding:2px 8px; border-radius:4px; }
         .status-APPROVED { background:rgba(34,197,94,0.15); color:#22c55e; }
         .status-DENIED { background:rgba(239,68,68,0.15); color:#ef4444; }
         .status-EXPIRED { background:rgba(148,163,184,0.15); color:var(--text-muted); }
         .status-PENDING { background:rgba(245,158,11,0.15); color:#f59e0b; }
+        .status-CLARIFIED { background:rgba(99,102,241,0.15); color:#818cf8; }
         .empty { text-align:center; padding:60px; color:var(--text-muted); }
         ::-webkit-scrollbar { width:5px; }
         ::-webkit-scrollbar-thumb { background:var(--border); border-radius:10px; }
@@ -90,8 +92,12 @@ function render() {
     }
 
     document.getElementById('list').innerHTML = filtered.map(a => {
+        const isClarify = a.type === 'TOOL_CLARIFY';
         const args = a.toolArgs ? Object.entries(a.toolArgs).map(([k,v]) =>
-            `<tr><td>${esc(k)}</td><td>${esc(String(v))}</td></tr>`).join('') : '';
+            isClarify
+                ? `<tr><td>${esc(k)}</td><td><input class="arg-edit" data-key="${esc(k)}" data-iid="${esc(a.interventionId)}" value="${esc(String(v))}"></td></tr>`
+                : `<tr><td>${esc(k)}</td><td>${esc(String(v))}</td></tr>`
+        ).join('') : '';
         const msgs = a.recentMessages ? a.recentMessages.map(m => {
             const role = (m.role||'').toLowerCase();
             const cls = role === 'user' ? 'c-user' : role === 'assistant' ? 'c-asst' : 'c-tool';
@@ -102,12 +108,14 @@ function render() {
         const isPending = a.status === 'PENDING';
         const time = a.createdAt ? new Date(a.createdAt).toLocaleString() : '—';
         const expiresIn = a.expiresAt ? Math.max(0, Math.ceil((a.expiresAt - Date.now())/60000)) : 0;
+        const typeLabel = isClarify ? 'CLARIFY (可编辑参数)' : 'APPROVAL (批准/拒绝)';
 
         return `<div class="card">
             <div class="card-header">
                 <div>
                     <span class="risk risk-${a.riskLevel || 'MEDIUM'}">${a.riskLevel || 'MEDIUM'}</span>
                     <strong style="margin-left:8px">${esc(a.toolName)}</strong>
+                    <span style="font-size:0.7rem;color:var(--text-muted);margin-left:6px">${typeLabel}</span>
                 </div>
                 <div style="font-size:0.75rem;color:var(--text-muted);text-align:right">
                     <div>${time}</div>
@@ -122,17 +130,40 @@ function render() {
                 <div style="margin-top:8px;font-size:0.8rem">
                     <span class="status-badge status-${a.status}">${a.status}</span>
                     <span style="margin-left:8px;color:var(--text-muted)">审批人: ${esc(a.resolverId||'—')} ${a.resolution ? '| 备注: '+esc(a.resolution) : ''}</span>
+                    ${a.modifiedArgs ? `<div style="margin-top:2px;color:var(--text-muted)">修正参数: ${esc(JSON.stringify(a.modifiedArgs))}</div>` : ''}
                     ${a.resolvedAt ? `<span style="margin-left:8px;color:var(--text-muted)">${new Date(a.resolvedAt).toLocaleString()}</span>` : ''}
                 </div>
             ` : `
                 <div class="actions">
                     <input class="comment-input" placeholder="审批备注（可选）" id="comment-${a.interventionId}">
-                    <button class="btn-approve" onclick="resolve('${a.interventionId}','approve')">批准</button>
+                    <button class="btn-approve" onclick="resolveClarify('${a.interventionId}')">${isClarify ? '修正后发送' : '批准'}</button>
                     <button class="btn-deny" onclick="resolve('${a.interventionId}','deny')">拒绝</button>
                 </div>
             `}
         </div>`;
     }).join('');
+}
+
+function collectModifiedArgs(interventionId) {
+    const args = {};
+    document.querySelectorAll(`.arg-edit[data-iid="${interventionId}"]`).forEach(input => {
+        args[input.dataset.key] = input.value;
+    });
+    return Object.keys(args).length > 0 ? args : null;
+}
+
+async function resolveClarify(id) {
+    const modifiedArgs = collectModifiedArgs(id);
+    const comment = document.getElementById('comment-' + id)?.value || '';
+    const action = modifiedArgs ? 'clarify' : 'approve';
+    try {
+        await fetch('/api/interventions/' + id + '/resolve', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ action, comment, modifiedArgs })
+        });
+        load();
+    } catch(e) { alert('操作失败: ' + e.message); }
 }
 
 async function resolve(id, action) {
@@ -150,7 +181,7 @@ async function resolve(id, action) {
 function esc(s) { if (!s) return ''; return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 load();
-setInterval(load, 10000); // 10秒轮询
+setInterval(load, 10000);
 </script>
 </body>
 </html>

@@ -53,7 +53,7 @@ class InMemoryInterventionStoreTest {
     @Test
     void getAllPending_shouldOnlyReturnPending() {
         String id1 = store.create(buildRequest("s1", InterventionRequest.Type.TOOL_APPROVAL));
-        String id2 = store.create(buildRequest("s2", InterventionRequest.Type.BUSINESS_PAUSE));
+        String id2 = store.create(buildRequest("s2", InterventionRequest.Type.TOOL_CLARIFY));
         store.approve(id2, "u", "ok");
         assertEquals(1, store.getAllPending().size());
         assertEquals(id1, store.getAllPending().get(0).getInterventionId());
@@ -70,7 +70,7 @@ class InMemoryInterventionStoreTest {
     @Test
     void cleanupExpired_shouldMarkExpired() {
         InterventionRequest req = InterventionRequest.builder()
-                .sessionId("s1").type(InterventionRequest.Type.BUSINESS_PAUSE)
+                .sessionId("s1").type(InterventionRequest.Type.TOOL_CLARIFY)
                 .ttlMinutes(0).build(); // expired immediately
         store.create(req);
         store.cleanupExpired();
@@ -81,7 +81,7 @@ class InMemoryInterventionStoreTest {
     @Test
     void getAll_shouldReturnAll() {
         store.create(buildRequest("s1", InterventionRequest.Type.TOOL_APPROVAL));
-        store.create(buildRequest("s2", InterventionRequest.Type.BUSINESS_PAUSE));
+        store.create(buildRequest("s2", InterventionRequest.Type.TOOL_CLARIFY));
         assertEquals(2, store.getAll().size());
     }
 

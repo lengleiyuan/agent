@@ -25,9 +25,7 @@ public class InterventionRequest {
         /** 工具调用需要人工审批 */
         TOOL_APPROVAL,
         /** 工具参数需要人工澄清/修正 */
-        TOOL_CLARIFY,
-        /** 业务流程需要人工干预后继续 */
-        BUSINESS_PAUSE
+        TOOL_CLARIFY
     }
 
     /**
@@ -43,7 +41,7 @@ public class InterventionRequest {
         /** 已澄清 */
         CLARIFIED,
         /** 已过期 */
-        EXPIRED
+    EXPIRED
     }
 
     /** 介入记录唯一 ID */

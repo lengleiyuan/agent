@@ -92,7 +92,7 @@ public class LoopContext {
      */
     private volatile String interventionId;
     /**
-     * 介入类型（APPROVAL/CLARIFY/PAUSE），用于恢复时判断逻辑。
+     * 介入类型（APPROVAL/CLARIFY），用于恢复时判断逻辑。
      * 保存 HumanInterventionException.Type 的名称，在 {@link LoopExecutor#resumeFromIntervention}
      * 中不直接使用此字段判断（而是查询 InterventionRequest 的状态），
      * 但在 {@link LoopExecutor#resumeApprovedTool} 和 {@link LoopExecutor#resumeClarifiedTool}
@@ -287,7 +287,7 @@ public class LoopContext {
     public void setInterventionId(String v) { this.interventionId = v; }
 
     /**
-     * @return 介入类型名称（APPROVAL/CLARIFY/PAUSE）
+     * @return 介入类型名称（APPROVAL/CLARIFY）
      */
     public String getInterventionType() { return interventionType; }
 

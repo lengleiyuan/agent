@@ -189,6 +189,9 @@ public class AnnotationToolAdapter implements ToolAdapter {
                 meta.description = !tp.description().isEmpty() ? tp.description() : meta.name;
                 meta.required = tp.required();
                 meta.defaultValue = tp.defaultValue();
+                meta.enumValues = tp.enumValues().length > 0 ? tp.enumValues() : null;
+                meta.minValue = Double.isNaN(tp.minValue()) ? null : tp.minValue();
+                meta.maxValue = Double.isNaN(tp.maxValue()) ? null : tp.maxValue();
             } else {
                 meta.name = param.getName();
                 meta.description = param.getName();
@@ -217,6 +220,15 @@ public class AnnotationToolAdapter implements ToolAdapter {
             prop.put("description", p.description);
             if (p.defaultValue != null && !p.defaultValue.isEmpty()) {
                 prop.put("default", p.defaultValue);
+            }
+            if (p.enumValues != null && p.enumValues.length > 0) {
+                prop.put("enum", java.util.Arrays.asList(p.enumValues));
+            }
+            if (p.minValue != null) {
+                prop.put("minimum", p.minValue);
+            }
+            if (p.maxValue != null) {
+                prop.put("maximum", p.maxValue);
             }
             properties.put(p.name, prop);
             if (p.required) required.add(p.name);
@@ -316,6 +328,9 @@ public class AnnotationToolAdapter implements ToolAdapter {
          * 复杂类型的完整 JSON Schema；为 null 表示使用 type 生成简单 schema。
          */
         Map<String, Object> schema;
+        String[] enumValues;
+        Double minValue;
+        Double maxValue;
     }
 
     /**
