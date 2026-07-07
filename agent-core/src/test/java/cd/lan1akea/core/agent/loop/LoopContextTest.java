@@ -78,4 +78,34 @@ class LoopContextTest {
                 .generateOptions(GenerateOptions.defaults()).build();
         assertFalse(ctx.isComplete());
     }
+
+    @Test
+    void builder_nullMessages_shouldDefaultToEmptyList() {
+        LoopContext ctx = LoopContext.builder()
+                .agentName("a")
+                .messages(null)
+                .generateOptions(GenerateOptions.defaults())
+                .build();
+        assertNotNull(ctx.getMessages());
+        assertTrue(ctx.getMessages().isEmpty());
+    }
+
+    @Test
+    void builder_nullGenerateOptions_shouldDefaultToDefaults() {
+        LoopContext ctx = LoopContext.builder()
+                .agentName("a")
+                .messages(List.of())
+                .generateOptions(null)
+                .build();
+        assertNotNull(ctx.getGenerateOptions());
+    }
+
+    @Test
+    void builder_noMessages_shouldNotThrow() {
+        LoopContext ctx = LoopContext.builder()
+                .agentName("a")
+                .build();
+        assertNotNull(ctx.getMessages());
+        assertNotNull(ctx.getGenerateOptions());
+    }
 }

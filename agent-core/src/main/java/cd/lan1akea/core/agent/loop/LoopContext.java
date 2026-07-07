@@ -119,8 +119,10 @@ public class LoopContext {
         this.attributes = builder.attributes != null
             ? Collections.unmodifiableMap(new HashMap<>(builder.attributes))
             : Collections.emptyMap();
-        this.messages = new ArrayList<>(builder.messages);
-        this.generateOptions = builder.generateOptions;
+        this.messages = builder.messages != null
+                ? new ArrayList<>(builder.messages) : new ArrayList<>();
+        this.generateOptions = builder.generateOptions != null
+                ? builder.generateOptions : GenerateOptions.defaults();
         this.maxIterations = builder.maxIterations;
         this.stream = builder.stream;
         this.backoffMs = builder.backoffMs;
