@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.logging.Logger;
 
 /**
  * 会话持久化 Hook。
@@ -27,6 +28,8 @@ import java.util.Set;
  * 执行检查点写入 {@link AgentStateStore}。
  */
 public class SessionPersistenceHook implements Hook {
+
+    private static final Logger log = Logger.getLogger(SessionPersistenceHook.class.getName());
 
     private final AgentStateStore stateStore;
 
@@ -78,7 +81,10 @@ public class SessionPersistenceHook implements Hook {
             userMsgs, assistantMsgs, toolMsgs,
             new ArrayList<>(ctx.getMessages()));
 
-        stateStore.addTurn(new SessionId(sessionId), turn).subscribe();
+        stateStore.addTurn(new SessionId(sessionId), turn)
+                .doOnError(e -> log.warning("持久化Turn失败[session=" + sessionId + "]: " + e.getMessage()))
+                .onErrorComplete()
+                .subscribe();
     }
 
     private void saveCheckpoint(LoopContext ctx, String sessionId) {
@@ -91,6 +97,9 @@ public class SessionPersistenceHook implements Hook {
         state.setInterventionType(ctx.getInterventionState().getInterventionType());
         state.setPausedToolArgsJson(ctx.getInterventionState().getPausedToolArgs());
 
-        stateStore.saveCheckpoint(state).subscribe();
+        stateStore.saveCheckpoint(state)
+                .doOnError(e -> log.warning("持久化Checkpoint失败[session=" + sessionId + "]: " + e.getMessage()))
+                .onErrorComplete()
+                .subscribe();
     }
 }
