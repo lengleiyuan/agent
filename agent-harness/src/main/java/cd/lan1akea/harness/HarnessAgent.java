@@ -2,6 +2,7 @@ package cd.lan1akea.harness;
 
 import cd.lan1akea.core.agent.ReActAgent;
 import cd.lan1akea.core.agent.CallableAgent;
+import cd.lan1akea.core.agent.loop.SessionGate;
 import cd.lan1akea.core.agent.StreamableAgent;
 import cd.lan1akea.core.agent.config.AgentConfig;
 import cd.lan1akea.core.agent.config.AgentExecutionConfig;
@@ -291,6 +292,8 @@ public class HarnessAgent implements StreamableAgent, CallableAgent {
          * 指标收集器（可选，默认 NOOP）。
          */
         private AgentMetrics metrics;
+        /** 会话门控（可选，默认 LocalSessionGate） */
+        private SessionGate sessionGate;
         /**
          * 是否启用熔断。
          */
@@ -451,6 +454,12 @@ public class HarnessAgent implements StreamableAgent, CallableAgent {
         }
 
         /**
+         * 设置会话门控实现（可选，默认 LocalSessionGate）。
+         * 多实例部署时使用 RedisSessionGate 保证会话级串行化。
+         */
+        public Builder sessionGate(SessionGate v) { this.sessionGate = v; return this; }
+
+        /**
          * 构建 HarnessAgent，组装所有组件并初始化。
          */
         public HarnessAgent build() {
@@ -526,6 +535,7 @@ public class HarnessAgent implements StreamableAgent, CallableAgent {
                 .stateStore(effectiveStore)
                 .executionConfig(execConfig)
                 .interventionStore(interventionStore)
+                .sessionGate(sessionGate)
                 .build();
 
             ReActAgent agent = new ReActAgent(agentConfig);
