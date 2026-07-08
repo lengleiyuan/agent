@@ -83,7 +83,7 @@ public class RequestPipeline {
         this.agentName = agentName;
         this.systemMessage = systemMessage;
         this.activeRequests = new ConcurrentHashMap<>();
-        this.sessionGate = new SessionGate();
+        this.sessionGate = new LocalSessionGate();
         this.interventionStore = interventionStore;
     }
 
@@ -254,6 +254,10 @@ public class RequestPipeline {
         /** 暂停时快照的工具参数 JSON */
         final String pausedToolArgs;
 
+        public SessionLoadResult(List<Msg> messages) {
+            this(messages, null, null, null);
+        }
+
         SessionLoadResult(List<Msg> messages, String interventionId,
                           String interventionType, String pausedToolArgs) {
             this.messages = messages;
@@ -288,7 +292,7 @@ public class RequestPipeline {
     private Mono<SessionLoadResult> loadSessionAndHistory(RuntimeContext ctx, List<Msg> messages) {
         String sessionId = ctx.getSessionId();
         if (sessionId == null || stateStore == null)
-            return Mono.just(new SessionLoadResult(messages, null, null, null));
+            return Mono.just(new SessionLoadResult(messages));
 
         SessionId sid = new SessionId(sessionId);
         String tenantId = ctx.getTenantId() != null ? ctx.getTenantId() : Defaults.TENANT;
@@ -315,14 +319,14 @@ public class RequestPipeline {
                                         checkpoint.getPausedToolArgsJson()));
                             }
                             return loadHistory(sessionId, messages).map(
-                                    msgs -> new SessionLoadResult(msgs, null, null, null));
+                                    SessionLoadResult::new);
                         })
                         .switchIfEmpty(loadHistory(sessionId, messages).map(
-                                msgs -> new SessionLoadResult(msgs, null, null, null))))
+                                SessionLoadResult::new)))
                 .switchIfEmpty(
                         stateStore.create(new Session(sid, tenantId, agentName,
                                         SessionState.ACTIVE, null, null, null))
-                                .then(Mono.just(new SessionLoadResult(messages, null, null, null))));
+                                .then(Mono.just(new SessionLoadResult(messages))));
     }
 
     /**

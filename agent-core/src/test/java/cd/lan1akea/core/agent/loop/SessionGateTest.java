@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class SessionGateTest {
 
-    private final SessionGate gate = new SessionGate();
+    private final SessionGate gate = new LocalSessionGate();
 
     @Test
     void nullSession_shouldExecuteImmediately() {
