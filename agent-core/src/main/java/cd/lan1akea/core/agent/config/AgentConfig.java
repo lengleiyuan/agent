@@ -3,6 +3,7 @@ package cd.lan1akea.core.agent.config;
 import cd.lan1akea.core.hook.AroundHookChain;
 import cd.lan1akea.core.hook.HookChain;
 import cd.lan1akea.core.intervention.InterventionStore;
+import cd.lan1akea.core.agent.loop.SessionGate;
 import cd.lan1akea.core.model.ChatModel;
 import cd.lan1akea.core.state.AgentStateStore;
 import cd.lan1akea.core.tool.ToolRegistry;
@@ -45,6 +46,8 @@ public class AgentConfig {
      * 介入存储。
      */
     private final InterventionStore interventionStore;
+    /** 会话门控（可选，默认 LocalSessionGate） */
+    private final SessionGate sessionGate;
 
     /**
      * 使用 Builder 构造 AgentConfig。
@@ -61,6 +64,7 @@ public class AgentConfig {
         this.executionConfig = builder.executionConfig != null
             ? builder.executionConfig : AgentExecutionConfig.defaults();
         this.interventionStore = builder.interventionStore;
+        this.sessionGate = builder.sessionGate;
     }
 
     /**
@@ -95,6 +99,8 @@ public class AgentConfig {
      * @return 介入存储
      */
     public InterventionStore getInterventionStore() { return interventionStore; }
+    /** @return 会话门控 */
+    public SessionGate getSessionGate() { return sessionGate; }
 
     /**
      * 创建 Builder。
@@ -117,6 +123,8 @@ public class AgentConfig {
         private AgentExecutionConfig executionConfig;
         /** 介入存储。 */
         private InterventionStore interventionStore;
+        /** 会话门控（可选，默认 LocalSessionGate） */
+        private SessionGate sessionGate;
 
         /**
          * 设置 Agent 名称。
@@ -147,6 +155,8 @@ public class AgentConfig {
          */
         public Builder executionConfig(AgentExecutionConfig executionConfig) { this.executionConfig = executionConfig; return this; }
         public Builder interventionStore(InterventionStore v) { this.interventionStore = v; return this; }
+        /** 设置会话门控（可选，默认 LocalSessionGate） */
+        public Builder sessionGate(SessionGate v) { this.sessionGate = v; return this; }
 
         /**
          * 构建 AgentConfig。
