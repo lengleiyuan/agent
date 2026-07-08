@@ -75,7 +75,7 @@ public class RequestPipeline {
     public RequestPipeline(LoopExecutor loopExecutor, AgentStateStore stateStore,
                             AroundHookChain aroundHookChain, AgentExecutionConfig execConfig,
                             String agentName, String systemMessage,
-                            InterventionStore interventionStore) {
+                            InterventionStore interventionStore, SessionGate sessionGate) {
         this.loopExecutor = loopExecutor;
         this.stateStore = stateStore;
         this.aroundHookChain = aroundHookChain;
@@ -83,7 +83,7 @@ public class RequestPipeline {
         this.agentName = agentName;
         this.systemMessage = systemMessage;
         this.activeRequests = new ConcurrentHashMap<>();
-        this.sessionGate = new LocalSessionGate();
+        this.sessionGate = sessionGate;
         this.interventionStore = interventionStore;
     }
 
