@@ -203,19 +203,21 @@ public class RequestPipeline {
     }
 
     /**
-     * 对 Flux 执行体应用总超时和会话门控串行化。
+     * 对 Flux 执行体应用会话门控串行化和总超时。
      *
-     * <p>先根据 execConfig.totalTimeoutMs 设置超时，
-     * 再通过 sessionGate.enqueueStream 保证同一 session 的 FIFO 执行。
+     * <p>先通过 sessionGate.enqueueStream 排队，
+     * 再对排队 + 执行的全程应用 execConfig.totalTimeoutMs 超时。
+     * 这样锁获取等待也受业务超时控制，而非由 gate 自行决定。
      *
      * @param lc    循环上下文（含 sessionId）
      * @param inner 原始执行体
      * @return 包装后的 Flux
      */
     private Flux<ChatStreamChunk> withTimeoutAndGate(LoopContext lc, Flux<ChatStreamChunk> inner) {
+        Flux<ChatStreamChunk> gated = sessionGate.enqueueStream(lc.getSessionId(), inner);
         long timeout = execConfig.getTotalTimeoutMs();
-        if (timeout > 0) inner = inner.timeout(Duration.ofMillis(timeout));
-        return sessionGate.enqueueStream(lc.getSessionId(), inner);
+        if (timeout > 0) gated = gated.timeout(Duration.ofMillis(timeout));
+        return gated;
     }
 
     /**

@@ -15,19 +15,20 @@ import java.util.concurrent.TimeUnit;
 /**
  * Redis 分布式锁实现。
  * 基于 SET NX PX + 看门狗续期，支持多实例部署时同一 session 串行化。
+ *
+ * <p>锁获取不设内部超时——持续重试直到拿到锁。
+ * 超时控制由调用方通过外层 timeout 操作符统一负责（如 execConfig.totalTimeoutMs）。
  */
 public class RedisSessionGate implements SessionGate {
 
     private static final String LOCK_KEY_PREFIX = "agent:session:gate:";
     private static final long DEFAULT_LOCK_TTL_MS = 30_000;
     private static final long DEFAULT_RETRY_INTERVAL_MS = 100;
-    private static final long DEFAULT_ACQUIRE_TIMEOUT_MS = 30_000;
 
     private final RedisClient redisClient;
     private final String agentName;
     private final long lockTtlMs;
     private final long retryIntervalMs;
-    private final long acquireTimeoutMs;
     private final ScheduledExecutorService watchdog;
 
     /**
@@ -36,16 +37,15 @@ public class RedisSessionGate implements SessionGate {
     private final ConcurrentHashMap<String, ScheduledFuture<?>> renewals = new ConcurrentHashMap<>();
 
     public RedisSessionGate(RedisClient redisClient, String agentName) {
-        this(redisClient, agentName, DEFAULT_LOCK_TTL_MS, DEFAULT_RETRY_INTERVAL_MS, DEFAULT_ACQUIRE_TIMEOUT_MS);
+        this(redisClient, agentName, DEFAULT_LOCK_TTL_MS, DEFAULT_RETRY_INTERVAL_MS);
     }
 
     public RedisSessionGate(RedisClient redisClient, String agentName,
-                             long lockTtlMs, long retryIntervalMs, long acquireTimeoutMs) {
+                             long lockTtlMs, long retryIntervalMs) {
         this.redisClient = redisClient;
         this.agentName = agentName;
         this.lockTtlMs = lockTtlMs;
         this.retryIntervalMs = retryIntervalMs;
-        this.acquireTimeoutMs = acquireTimeoutMs;
         this.watchdog = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "redis-session-gate-watchdog");
             t.setDaemon(true);
@@ -83,7 +83,9 @@ public class RedisSessionGate implements SessionGate {
                 }));
     }
 
-    /** 关闭看门狗线程池 */
+    /**
+     * 关闭看门狗线程池。
+     */
     public void shutdown() {
         watchdog.shutdownNow();
     }
@@ -92,7 +94,12 @@ public class RedisSessionGate implements SessionGate {
         return LOCK_KEY_PREFIX + agentName + ":" + sessionId;
     }
 
-    /** 循环尝试 SET NX PX，超时后抛 SessionGateException */
+    /**
+     * 循环尝试 SET NX PX 获取锁，不设内部超时。
+     *
+     * <p>持续重试直到拿到锁或该订阅被外部取消（由外层 timeout 触发）。
+     * Redis 不可达时映射为 SessionGateException。
+     */
     private Mono<Void> acquireLock(String lockKey, String lockValue) {
         return Mono.defer(() ->
                 redisClient.set(lockKey, lockValue, "NX", "PX", lockTtlMs)
@@ -103,17 +110,12 @@ public class RedisSessionGate implements SessionGate {
                             return Mono.delay(Duration.ofMillis(retryIntervalMs))
                                     .then(Mono.defer(() -> acquireLock(lockKey, lockValue)));
                         })
-        ).timeout(Duration.ofMillis(acquireTimeoutMs))
-         .onErrorMap(e -> {
-             if (e instanceof java.util.concurrent.TimeoutException) {
-                 return new SessionGateException(
-                         "Failed to acquire lock for session after " + acquireTimeoutMs + "ms: " + lockKey, e);
-             }
-             return new SessionGateException("Lock acquire error: " + lockKey, e);
-         });
+        ).onErrorMap(e -> new SessionGateException("Lock acquire error: " + lockKey, e));
     }
 
-    /** 启动看门狗续期 */
+    /**
+     * 启动看门狗续期。
+     */
     private ScheduledFuture<?> startRenewal(String lockKey, String lockValue) {
         long intervalMs = lockTtlMs / 3;
         ScheduledFuture<?> future = watchdog.scheduleAtFixedRate(
@@ -123,7 +125,9 @@ public class RedisSessionGate implements SessionGate {
         return future;
     }
 
-    /** 取消续期任务 */
+    /**
+     * 取消续期任务。
+     */
     private void cancelRenewal(String lockKey, ScheduledFuture<?> future) {
         renewals.remove(lockKey);
         if (future != null) {
@@ -131,7 +135,9 @@ public class RedisSessionGate implements SessionGate {
         }
     }
 
-    /** 释放锁：DEL lockKey */
+    /**
+     * 释放锁：DEL lockKey。
+     */
     private void releaseLock(String lockKey, String lockValue) {
         redisClient.del(lockKey, lockValue);
     }
@@ -152,12 +158,12 @@ public class RedisSessionGate implements SessionGate {
         Mono<String> set(String key, String value, String nx, String px, long ttlMs);
 
         /**
-         * 续期：PEXPIRE key ttlMs。仅当 key 存在且 value 匹配时续期。
+         * 续期：PEXPIRE key ttlMs。
          */
         void pexpire(String key, long ttlMs, String expectedValue);
 
         /**
-         * 释放锁：DEL key。仅当 value 匹配时删除。
+         * 释放锁：DEL key。
          */
         void del(String key, String expectedValue);
     }
