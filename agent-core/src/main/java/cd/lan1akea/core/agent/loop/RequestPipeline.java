@@ -100,36 +100,9 @@ public class RequestPipeline {
     public Flux<ChatStreamChunk> executeStream(List<Msg> messages, RuntimeContext rtCtx) {
         return Flux.deferContextual(ctxView -> {
             RuntimeContext ctx = resolveContext(ctxView, rtCtx);
-            HookContext callHc = HookContext.from(ctx, 0);
-            GenerateOptions opts = resolveOptions();
-
-            return aroundHookChain.aroundCallStream(new HookEvent(null), callHc,
-                    e -> loadSessionAndHistory(ctx, messages)
-                            .flatMapMany(result -> injectSystemMessage(result.messages)
-                                    .flatMapMany(Flux::just)
-                                    .map(m -> new LoadAndMessages(m, result)))
-                            .concatMap(lm -> {
-                                LoopContext loopCtx = LoopContextFactory.create(
-                                        agentName, ctx, lm.messages, opts, execConfig, true);
-                                if (lm.result.interventionId != null) {
-                                    loopCtx.getInterventionState().setInterventionId(lm.result.interventionId);
-                                    loopCtx.getInterventionState().setInterventionType(lm.result.interventionType);
-                                    loopCtx.getInterventionState().setPausedToolArgs(lm.result.pausedToolArgs);
-                                }
-                                return Flux.using(
-                                        () -> {
-                                            activeRequests.put(loopCtx.getRequestId(), loopCtx);
-                                            return loopCtx;
-                                        },
-                                        lc -> {
-                                            Flux<ChatStreamChunk> inner = loopExecutor.runStream(lc);
-                                            long timeout = execConfig.getTotalTimeoutMs();
-                                            if (timeout > 0) inner = inner.timeout(Duration.ofMillis(timeout));
-                                            return sessionGate.enqueueStream(lc.getSessionId(), inner);
-                                        },
-                                        lc -> activeRequests.remove(lc.getRequestId())
-                                );
-                            })
+            return aroundHookChain.aroundCallStream(new HookEvent(null), HookContext.from(ctx, 0),
+                    e -> prepareMessages(ctx, messages)
+                            .flatMapMany(this::executeAsStream)
                             .contextWrite(c -> writeContext(c, ctx)));
         });
     }
@@ -137,47 +110,112 @@ public class RequestPipeline {
     /**
      * 非流式执行 —— 从流式派生。
      *
-     * <p>流水线与 executeStream 相同，最终通过 collectList + assembleResponseFromChunks
-     * 将流式分块组装为单个 ChatResponse。
+     * <p>直接调用 {@link #executeStream}，通过 collectList 收集全部分块后
+     * 调用 {@link ModelCallPipeline#assembleResponseFromChunks} 组装为单个 ChatResponse。
      *
      * @param messages 用户消息列表
      * @param rtCtx    运行时上下文
      * @return 聊天响应
      */
     public Mono<ChatResponse> execute(List<Msg> messages, RuntimeContext rtCtx) {
-        return Mono.deferContextual(ctxView -> {
-            final RuntimeContext ctx = resolveContext(ctxView, rtCtx);
-            HookContext callHc = HookContext.from(ctx, 0);
-            return aroundHookChain.aroundCall(new HookEvent(null), callHc,
-                    e -> loadSessionAndHistory(ctx, messages)
-                            .flatMap(result -> injectSystemMessage(result.messages)
-                                    .map(m -> new LoadAndMessages(m, result)))
-                            .flatMap(lm -> {
-                                LoopContext loopCtx = LoopContextFactory.create(
-                                        agentName, ctx, lm.messages, resolveOptions(), execConfig, false);
-                                if (lm.result.interventionId != null) {
-                                    loopCtx.getInterventionState().setInterventionId(lm.result.interventionId);
-                                    loopCtx.getInterventionState().setInterventionType(lm.result.interventionType);
-                                    loopCtx.getInterventionState().setPausedToolArgs(lm.result.pausedToolArgs);
-                                }
-                                return Mono.using(
-                                        () -> {
-                                            activeRequests.put(loopCtx.getRequestId(), loopCtx);
-                                            return loopCtx;
-                                        },
-                                        lc -> {
-                                            Mono<ChatResponse> exec = loopExecutor.run(lc);
-                                            long timeout = execConfig.getTotalTimeoutMs();
-                                            if (timeout > 0) exec = exec.timeout(Duration.ofMillis(timeout));
-                                            return sessionGate.enqueue(lc.getSessionId(), exec);
-                                        },
-                                        lc -> activeRequests.remove(lc.getRequestId())
-                                );
-                            })
-                        .map(resp -> { e.setPayload(EventPayload.RESPONSE, resp); return e; }))
-                    .map(e -> (ChatResponse) e.getPayload(EventPayload.RESPONSE))
-                    .contextWrite(c -> writeContext(c, ctx));
-        });
+        return executeStream(messages, rtCtx)
+                .collectList()
+                .map(ModelCallPipeline::assembleResponseFromChunks);
+    }
+
+    /**
+     * 加载会话状态和历史消息，注入系统提示，合并为 LoadAndMessages。
+     *
+     * <p>串联 loadSessionAndHistory → injectSystemMessage 两个步骤，
+     * 产出一个携带完整消息列表、介入恢复数据和运行时上下文的聚合对象。
+     *
+     * @param ctx      运行时上下文
+     * @param messages 当前请求消息
+     * @return 聚合后的 LoadAndMessages
+     */
+    private Mono<LoadAndMessages> prepareMessages(RuntimeContext ctx, List<Msg> messages) {
+        return loadSessionAndHistory(ctx, messages)
+                .flatMap(result -> injectSystemMessage(result.messages)
+                        .map(m -> new LoadAndMessages(m, result, ctx)));
+    }
+
+    /**
+     * 创建 LoopContext → 应用介入状态 → 以 Flux.using 执行流式循环。
+     *
+     * <p>LoopContext 通过 {@link LoopContextFactory#create} 构建，stream 标志为 true。
+     * 执行前通过 {@link #trackActive} 注册到活跃请求表，
+     * 执行后通过 {@link #untrackActive} 清理，保证异常/取消场景也能正确移除。
+     *
+     * @param lm 包含消息列表、会话加载结果和运行时上下文的聚合对象
+     * @return 流式响应分块 Flux
+     */
+    private Flux<ChatStreamChunk> executeAsStream(LoadAndMessages lm) {
+        LoopContext loopCtx = LoopContextFactory.create(
+                agentName, lm.ctx, lm.messages, resolveOptions(), execConfig, true);
+        applyInterventionState(lm.result, loopCtx);
+        return Flux.using(
+                () -> trackActive(loopCtx),
+                lc -> withTimeoutAndGate(lc, loopExecutor.runStream(lc)),
+                this::untrackActive);
+    }
+
+    /**
+     * 将 SessionLoadResult 中的介入恢复数据应用到 LoopContext。
+     *
+     * <p>仅在 interventionId 非 null 时写入三个字段：
+     * interventionId、interventionType、pausedToolArgs。
+     * 供 LoopExecutor 在 runStream 入口检测并恢复暂停的执行。
+     *
+     * @param result   会话加载结果（含介入标记）
+     * @param loopCtx  待写入的循环上下文
+     */
+    private void applyInterventionState(SessionLoadResult result, LoopContext loopCtx) {
+        if (result.interventionId != null) {
+            loopCtx.getInterventionState().setInterventionId(result.interventionId);
+            loopCtx.getInterventionState().setInterventionType(result.interventionType);
+            loopCtx.getInterventionState().setPausedToolArgs(result.pausedToolArgs);
+        }
+    }
+
+    /**
+     * 注册活跃请求到 ConcurrentHashMap，返回 LoopContext 供 Flux.using / Mono.using 使用。
+     *
+     * <p>以 requestId 为 key，支持外部中断（interrupt / interruptBySession）
+     * 通过查找此表定位目标 LoopContext。
+     *
+     * @param lc 循环上下文
+     * @return 原值透传
+     */
+    private LoopContext trackActive(LoopContext lc) {
+        activeRequests.put(lc.getRequestId(), lc);
+        return lc;
+    }
+
+    /**
+     * 从活跃请求表中移除，与 {@link #trackActive} 配对。
+     *
+     * <p>作为 Flux.using / Mono.using 的清理回调，确保异常/取消路径也能正确清理。
+     *
+     * @param lc 循环上下文
+     */
+    private void untrackActive(LoopContext lc) {
+        activeRequests.remove(lc.getRequestId());
+    }
+
+    /**
+     * 对 Flux 执行体应用总超时和会话门控串行化。
+     *
+     * <p>先根据 execConfig.totalTimeoutMs 设置超时，
+     * 再通过 sessionGate.enqueueStream 保证同一 session 的 FIFO 执行。
+     *
+     * @param lc    循环上下文（含 sessionId）
+     * @param inner 原始执行体
+     * @return 包装后的 Flux
+     */
+    private Flux<ChatStreamChunk> withTimeoutAndGate(LoopContext lc, Flux<ChatStreamChunk> inner) {
+        long timeout = execConfig.getTotalTimeoutMs();
+        if (timeout > 0) inner = inner.timeout(Duration.ofMillis(timeout));
+        return sessionGate.enqueueStream(lc.getSessionId(), inner);
     }
 
     /**
@@ -202,11 +240,28 @@ public class RequestPipeline {
         }
     }
 
-    /** @return 是否有活跃请求 */
+    /**
+     * 判断当前是否有正在执行的请求。
+     *
+     * @return true 表示有活跃请求
+     */
     public boolean isRunning() { return !activeRequests.isEmpty(); }
-    /** @return 当前活跃请求映射 */
+
+    /**
+     * 获取当前活跃请求映射表。
+     *
+     * <p>供 ReActAgent 遍历并进行中断操作。
+     * key 为 requestId，value 为 LoopContext。
+     *
+     * @return 活跃请求映射（不可变视图由调用方自行处理）
+     */
     public ConcurrentHashMap<String, LoopContext> getActiveRequests() { return activeRequests; }
-    /** 清空所有活跃请求 */
+
+    /**
+     * 关闭管线，清空所有活跃请求记录。
+     *
+     * <p>不等待执行中的请求完成。Agent shutdown 时调用。
+     */
     public void shutdown() { activeRequests.clear(); }
 
     /**
@@ -273,8 +328,9 @@ public class RequestPipeline {
     private static class LoadAndMessages {
         final List<Msg> messages;
         final SessionLoadResult result;
-        LoadAndMessages(List<Msg> messages, SessionLoadResult result) {
-            this.messages = messages; this.result = result;
+        final RuntimeContext ctx;
+        LoadAndMessages(List<Msg> messages, SessionLoadResult result, RuntimeContext ctx) {
+            this.messages = messages; this.result = result; this.ctx = ctx;
         }
     }
 
@@ -299,34 +355,57 @@ public class RequestPipeline {
 
         return stateStore.findById(sid)
                 .flatMap(session -> stateStore.loadLatestCheckpoint(sessionId)
-                        .flatMap(checkpoint -> {
-                            if (checkpoint.isShutdownInterrupted()) {
-                                checkpoint.setShutdownInterrupted(false);
-                                return stateStore.saveCheckpoint(checkpoint).thenReturn(checkpoint);
-                            }
-                            if (checkpoint.getPendingInterventionId() != null) {
-                                return handlePendingIntervention(checkpoint);
-                            }
-                            return Mono.just(checkpoint);
-                        })
-                        .flatMap(checkpoint -> {
-                            List<Msg> restored = checkpoint.getMessages();
-                            if (restored != null && !restored.isEmpty()) {
-                                restored.addAll(messages);
-                                return Mono.just(new SessionLoadResult(restored,
-                                        checkpoint.getPendingInterventionId(),
-                                        checkpoint.getInterventionType(),
-                                        checkpoint.getPausedToolArgsJson()));
-                            }
-                            return loadHistory(sessionId, messages).map(
-                                    SessionLoadResult::new);
-                        })
-                        .switchIfEmpty(loadHistory(sessionId, messages).map(
-                                SessionLoadResult::new)))
+                        .flatMap(this::resolveCheckpoint)
+                        .flatMap(cp -> restoreFromCheckpoint(cp, messages, sessionId))
+                        .switchIfEmpty(loadHistory(sessionId, messages).map(SessionLoadResult::new)))
                 .switchIfEmpty(
-                        stateStore.create(new Session(sid, tenantId, agentName,
-                                        SessionState.ACTIVE, null, null, null))
+                        stateStore.create(new Session(sid, tenantId, agentName, SessionState.ACTIVE))
                                 .then(Mono.just(new SessionLoadResult(messages))));
+    }
+
+    /**
+     * 处理检查点中的异常状态：shutdown 中断标记和待解决介入。
+     *
+     * <p>shutdown 中断：清除标记后保存，防止下次请求再次触发。
+     * 待解决介入：委托 {@link #handlePendingIntervention} 查询当前状态。
+     * 正常状态：原样透传。
+     *
+     * @param checkpoint 原始检查点
+     * @return 规范化后的检查点
+     */
+    private Mono<AgentState> resolveCheckpoint(AgentState checkpoint) {
+        if (checkpoint.isShutdownInterrupted()) {
+            checkpoint.setShutdownInterrupted(false);
+            return stateStore.saveCheckpoint(checkpoint).thenReturn(checkpoint);
+        }
+        if (checkpoint.getPendingInterventionId() != null) {
+            return handlePendingIntervention(checkpoint);
+        }
+        return Mono.just(checkpoint);
+    }
+
+    /**
+     * 从检查点恢复消息列表，构建 SessionLoadResult。
+     *
+     * <p>检查点中有完整消息 → 拼接新消息 → 附带介入恢复标记。
+     * 检查点中无消息 → 回退到 loadHistory。
+     *
+     * @param checkpoint 规范化后的检查点
+     * @param messages   当前请求消息
+     * @param sessionId  会话标识
+     * @return 会话加载结果
+     */
+    private Mono<SessionLoadResult> restoreFromCheckpoint(AgentState checkpoint,
+                                                           List<Msg> messages, String sessionId) {
+        List<Msg> restored = checkpoint.getMessages();
+        if (restored != null && !restored.isEmpty()) {
+            restored.addAll(messages);
+            return Mono.just(new SessionLoadResult(restored,
+                    checkpoint.getPendingInterventionId(),
+                    checkpoint.getInterventionType(),
+                    checkpoint.getPausedToolArgsJson()));
+        }
+        return loadHistory(sessionId, messages).map(SessionLoadResult::new);
     }
 
     /**
@@ -352,8 +431,6 @@ public class RequestPipeline {
             return Mono.just(checkpoint);
         }
 
-        // PENDING / APPROVED / CLARIFIED — 保留介入字段，
-        // 由 LoopExecutor.runStream → resumeFromIntervention 决定如何处理
         return Mono.just(checkpoint);
     }
 

@@ -186,10 +186,4 @@ public class ToolCallOrchestrator {
         return hookDispatcher.dispatch(post, hc).thenReturn(result);
     }
 
-    /**
-     * 从循环上下文构建 Hook 上下文。
-     *
-     * @param ctx 循环上下文
-     * @return 新的 Hook 上下文
-     */
 }

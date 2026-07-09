@@ -66,6 +66,19 @@ public class Session {
     }
 
     /**
+     * 创建会话。
+     *
+     * @param id        会话标识
+     * @param tenantId  租户 ID
+     * @param agentName Agent 名称
+     * @param state     初始状态（null 默认 ACTIVE）
+     */
+    public Session(SessionId id, String tenantId, String agentName,
+                   SessionState state) {
+       this(id, tenantId, agentName, state, null, null, null);
+    }
+
+    /**
      * 添加对话轮次并更新时间戳。
      *
      * @param turn 待添加的对话轮次

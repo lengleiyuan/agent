@@ -49,21 +49,15 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
     final String name;
     /** Agent 配置 */
     final AgentConfig config;
-    /** 循环执行器，驱动 ReAct 循环 */
-    final LoopExecutor loopExecutor;
     /** 请求管线，封装预处理流水线 */
     final RequestPipeline pipeline;
-    /** Hook 链 */
-    final HookChain hookChain;
     /** Hook 分发器 */
     final HookDispatcher hookDispatcher;
-    /** AroundHook 链，对请求/推理/工具调用的洋葱包裹 */
-    final AroundHookChain aroundHookChain;
 
     /** 状态存储（可选） */
-    AgentStateStore stateStore;
+    final AgentStateStore stateStore;
     /** 上下文窗口配置 */
-    ModelContextWindow contextWindow;
+    final ModelContextWindow contextWindow;
     /** Hook 记录器（可选，用于审计/回放） */
     HookRecorder hookRecorder;
     /** 指标收集器（可选，默认 NOOP） */
@@ -94,10 +88,10 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
                 ? config.getToolRegistry() : new ToolRegistry();
         ToolExecutor toolExecutor = new ToolExecutor(toolRegistry);
 
-        this.hookChain = config.getHookChain() != null
+        HookChain hookChain = config.getHookChain() != null
                 ? config.getHookChain() : new HookChain();
-        this.hookDispatcher = new HookDispatcher(this.hookChain);
-        this.aroundHookChain = config.getAroundHookChain() != null
+        this.hookDispatcher = new HookDispatcher(hookChain);
+        AroundHookChain aroundHookChain = config.getAroundHookChain() != null
                 ? config.getAroundHookChain() : new AroundHookChain();
 
         this.stateStore = config.getStateStore();
@@ -114,7 +108,7 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
                 : new InMemoryInterventionStore();
         InterventionResolver interventionResolver = new InterventionResolver(
                 interventionStore, toolOrch);
-        this.loopExecutor = new LoopExecutor(
+        LoopExecutor loopExecutor = new LoopExecutor(
                 engine, modelPipeline, toolOrch, hookDispatcher, metrics,
                 contextWindow.getEstimator(), interventionResolver);
         SessionGate sessionGate = config.getSessionGate() != null
@@ -278,7 +272,7 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
     /** @return 工具注册表 */
     public ToolRegistry getToolRegistry() { return config.getToolRegistry(); }
     /** @return Hook 链 */
-    public HookChain getHookChain() { return hookChain; }
+    public HookChain getHookChain() { return hookDispatcher.getHookChain(); }
     /** @return 状态存储 */
     public AgentStateStore getStateStore() { return stateStore; }
     /** @return 上下文窗口 */
@@ -292,8 +286,6 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
     /** @return 是否有活跃请求 */
     public boolean isRunning() { return pipeline.isRunning(); }
 
-    /** 设置状态存储 */
-    public void setStateStore(AgentStateStore v) { this.stateStore = v; }
     /** 设置系统提示消息 */
     public void setSystemMessage(String msg) { this.systemMessage = msg; }
     /** 设置 Hook 记录器 */
