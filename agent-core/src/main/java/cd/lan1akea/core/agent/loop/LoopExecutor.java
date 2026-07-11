@@ -95,18 +95,18 @@ public class LoopExecutor {
                 return handleInterruptStream(ctx);
             }
             if (ctx.isComplete()) {
-                return finalizeStream(ctx);
+                return Flux.empty();
             }
             if (ctx.getIteration() >= ctx.getMaxIterations()) {
                 return summarizeThenReason(ctx);
             }
-            return getChatStreamChunkPublisher(ctx);
+            return reasonThenActOrObserve(ctx);
         });
     }
 
 
 
-    private Flux<ChatStreamChunk> getChatStreamChunkPublisher(LoopContext ctx) {
+    private Flux<ChatStreamChunk> reasonThenActOrObserve(LoopContext ctx) {
         return executeReason(ctx).concatWith(Flux.defer(() -> {
             List<ToolUseBlock> tools = extractToolCalls(ctx);
             if (tools != null && !tools.isEmpty()) {
@@ -147,7 +147,7 @@ public class LoopExecutor {
                             .maxTokens(opts.getMaxTokens())
                             .toolChoice(ToolChoicePolicy.NONE)
                             .build());
-                    return getChatStreamChunkPublisher(ctx);
+                    return reasonThenActOrObserve(ctx);
                 });
     }
 
@@ -386,16 +386,6 @@ public class LoopExecutor {
             return resp.getMessage().getToolUseBlocks();
         }
         return null;
-    }
-
-    /**
-     * 完成终止：executeReason 已流式输出全部内容，此处仅终止递归。
-     *
-     * @param ctx 循环上下文
-     * @return 空 Flux（内容已由 executeReason 产出）
-     */
-    private Flux<ChatStreamChunk> finalizeStream(LoopContext ctx) {
-        return Flux.empty();
     }
 
     /**
