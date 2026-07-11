@@ -68,7 +68,7 @@ public class ToolCallOrchestrator {
 
         return dispatchPreHook(event, hc)
                 .switchIfEmpty(
-                        executeWithApproval(param, event, hc, ctx)
+                        executeWithApproval(param, event, hc)
                                 .flatMap(result -> dispatchPostHook(param, result, hc)))
                 .map(r -> r.withCallId(param.getCallId()));
     }
@@ -98,7 +98,7 @@ public class ToolCallOrchestrator {
         event.setTool(toolRegistry.getForContext(
                 ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId(), param.getToolName()));
 
-        return executeWithApproval(param, event, hc, ctx)
+        return executeWithApproval(param, event, hc)
                 .flatMap(result -> dispatchPostHook(param, result, hc))
                 .map(r -> r.withCallId(param.getCallId()));
     }
@@ -159,11 +159,10 @@ public class ToolCallOrchestrator {
      * @param param 工具调用上下文
      * @param event 工具调用事件
      * @param hc    Hook 上下文
-     * @param ctx   循环上下文
      * @return 工具执行结果
      */
-    private Mono<ToolResult> executeWithApproval(ToolCallContext param, HookEvent event,
-                                                   HookContext hc, LoopContext ctx) {
+private Mono<ToolResult> executeWithApproval(ToolCallContext param, HookEvent event,
+                                                   HookContext hc) {
         return aroundHookChain.aroundToolCall(event, hc,
                         (HookEvent e) -> toolExecutor.execute(param)
                                 .map(result -> {

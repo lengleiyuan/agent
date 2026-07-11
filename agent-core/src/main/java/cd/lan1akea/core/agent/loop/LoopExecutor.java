@@ -454,21 +454,13 @@ public class LoopExecutor {
     }
 
     /**
-     * 完成流：构建 stop chunk 并返回。
+     * 完成终止：executeReason 已流式输出全部内容，此处仅终止递归。
      *
      * @param ctx 循环上下文
-     * @return stop chunk Flux
+     * @return 空 Flux（内容已由 executeReason 产出）
      */
     private Flux<ChatStreamChunk> finalizeStream(LoopContext ctx) {
-        ChatResponse lastResp = ctx.getLastResponse();
-        if (lastResp != null && lastResp.getMessage() != null) {
-            return Flux.just(ChatStreamChunk.builder()
-                    .delta(lastResp.getMessage().getTextContent())
-                    .finishReason(lastResp.getFinishReason() != null
-                            ? lastResp.getFinishReason() : FinishReason.STOP)
-                    .build());
-        }
-        return Flux.just(ChatStreamChunk.of("", FinishReason.STOP));
+        return Flux.empty();
     }
 
     /**
