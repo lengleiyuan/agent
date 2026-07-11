@@ -169,7 +169,7 @@ public class LoopExecutor {
         int insertAt = lastAssistant >= 0 ? lastAssistant + 1 : ctx.getMessages().size();
         return execution
                 .onErrorResume(e -> Mono.just(
-                        ToolResult.failure(callId, "执行失败: " + e.getMessage())))
+                        ToolResult.failure(callId, UI.TOOL_EXEC_FAILED + e.getMessage())))
                 .flatMapMany(result -> {
                     if (callId != null && insertAt > 0) {
                         ctx.getMessages().add(insertAt, Msg.builder(MsgRole.TOOL)

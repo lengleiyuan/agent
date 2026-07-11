@@ -249,13 +249,7 @@ public class ModelCallPipeline {
     }
 
     /**
-     * 从循环上下文构建 Hook 上下文。
-     *
-     * @param ctx 循环上下文
-     * @return 新的 Hook 上下文
-     */
-    /**
-     * 从消息创建流式分块（委托给 chunkFromText 处理 null 安全）。
+     * 从消息创建流式分块。
      *
      * @param msg          消息
      * @param finishReason 完成原因

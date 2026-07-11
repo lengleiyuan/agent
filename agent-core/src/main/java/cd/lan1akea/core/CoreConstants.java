@@ -150,6 +150,8 @@ public static final class RuntimeCtx {
         public static final String TOOL_PARAM_INVALID = "参数校验失败: ";
         /** 工具执行异常 */
         public static final String TOOL_EXEC_ERROR = "工具执行异常: ";
+        /** 工具执行失败 */
+        public static final String TOOL_EXEC_FAILED = "执行失败: ";
         /** 工具执行超时 */
         public static final String TOOL_TIMEOUT = "工具执行超时 (";
         /** 工具执行超时后缀 */
