@@ -1,23 +1,12 @@
 package cd.lan1akea.core.agent.loop;
 
-import cd.lan1akea.core.CoreConstants.EventPayload;
 import cd.lan1akea.core.CoreConstants.FinishReason;
-import cd.lan1akea.core.CoreConstants.HookSource;
-import cd.lan1akea.core.CoreConstants.UI;
-import cd.lan1akea.core.exception.HookAbortException;
-import cd.lan1akea.core.hook.AroundHookChain;
-import cd.lan1akea.core.hook.HookContext;
-import cd.lan1akea.core.hook.HookDispatcher;
-import cd.lan1akea.core.hook.HookEvent;
-import cd.lan1akea.core.hook.HookEventType;
-
+import cd.lan1akea.core.hook.HookPipeline;
 import cd.lan1akea.core.message.AssistantMessage;
 import cd.lan1akea.core.message.ContentBlock;
 import cd.lan1akea.core.message.Msg;
-import cd.lan1akea.core.message.MsgRole;
 import cd.lan1akea.core.message.TextBlock;
 import cd.lan1akea.core.message.ToolUseBlock;
-import cd.lan1akea.core.metrics.AgentMetrics;
 import cd.lan1akea.core.model.ChatModel;
 import cd.lan1akea.core.model.ChatResponse;
 import cd.lan1akea.core.model.ChatStreamChunk;
@@ -35,84 +24,53 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 推理 Hook 管线。
+ * 模型调用管线。
  *
- * <p>将模型调用和 Hook 分发组合为可复用的管线：
- * PRE_REASONING → PRE_MODEL → [aroundHook] model.stream → POST_MODEL → POST_REASONING
+ * <p>负责与 LLM 交互并获取回复。Hook 编排全部委托给 {@link HookPipeline}，
+ * 本类仅持有模型、工具 Schema 和指标收集器，专注模型调用本身。
  *
  * <p>流式为 canonical 实现，非流式通过 collectList + assembleResponseFromChunks 派生。
- * 支持 KB 旁路（PreReasoningHook 设置 bypassMessage）、中断和异常处理。
  */
 public class ModelCallPipeline {
 
     /** 聊天模型，执行实际的 LLM 调用 */
     private final ChatModel model;
-    /** Hook 分发器，在推理各阶段触发回调 */
-    private final HookDispatcher hookDispatcher;
+    /** Hook 管线门面，封装全部 Hook 分发 */
+    private final HookPipeline hookPipeline;
     /** 工具注册表，获取当前上下文可用的工具 Schema */
     private final ToolRegistry toolRegistry;
-    /** AroundHook 链，以洋葱模式包裹模型调用 */
-    private final AroundHookChain aroundHookChain;
-    /** 指标收集器，记录 LLM 调用延迟 */
-    private final AgentMetrics metrics;
 
     /**
-     * 构建推理管线。
+     * 构建模型调用管线。
      *
-     * @param model           聊天模型
-     * @param hookDispatcher  Hook 分发器
-     * @param toolRegistry    工具注册表
-     * @param aroundHookChain AroundHook 链
-     * @param metrics         指标收集器
+     * @param model        聊天模型
+     * @param hookPipeline Hook 管线门面
+     * @param toolRegistry 工具注册表
      */
-    public ModelCallPipeline(ChatModel model, HookDispatcher hookDispatcher,
-                              ToolRegistry toolRegistry, AroundHookChain aroundHookChain,
-                              AgentMetrics metrics) {
+    public ModelCallPipeline(ChatModel model, HookPipeline hookPipeline,
+                              ToolRegistry toolRegistry) {
         this.model = model;
-        this.hookDispatcher = hookDispatcher;
+        this.hookPipeline = hookPipeline;
         this.toolRegistry = toolRegistry;
-        this.aroundHookChain = aroundHookChain;
-        this.metrics = metrics;
     }
 
     /**
      * 流式推理 —— canonical 实现。
      *
-     * <p>依次分发 PRE_REASONING Hook → 调用模型 → 流式返回分块。
-     * 支持三种提前终止路径：abort（终止）、interrupt（中断）、KB bypass（旁路模型）。
+     * <p>委托 {@link HookPipeline#aroundReasoning} 处理全部 Hook 编排
+     * （PRE_REASONING  → aroundHook  → POST_REASONING），
+     * 本方法只提供核心模型调用逻辑。
      *
      * @param ctx 循环上下文，包含消息列表和生成选项
      * @return 模型推理的流式分块
      */
     public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
-        HookContext hc = ctx.toHookContext();
-        HookEvent pre = new HookEvent(HookEventType.PRE_REASONING);
-        pre.setMessages(ctx.getMessages());
+        List<ToolSchema> schemas = toolRegistry.getSchemas(
+                ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId());
 
-        return hookDispatcher.dispatch(pre, hc)
-                .flatMapMany(r -> {
-                    if (r.isAbort()) {
-                        return Flux.error(new HookAbortException(HookSource.HOOK, r.getAbortReason()));
-                    }
-                    if (r.isInterrupt()) {
-                        Msg irMsg = Msg.builder(MsgRole.ASSISTANT)
-                                .addText(UI.INTERRUPT_PREFIX + r.getInterruptReason()
-                                        + UI.INTERRUPT_SUFFIX)
-                                .putMetadata(EventPayload.INTERRUPT_ID,
-                                        r.getInterruptReason())
-                                .build();
-                        ChatResponse ir = new ChatResponse(irMsg, new ChatUsage(0, 0),
-                                FinishReason.INTERRUPTED, "");
-                        return Flux.just(ChatStreamChunk.of(
-                                ir.getMessage().getTextContent(),
-                                FinishReason.INTERRUPTED));
-                    }
-                    if (pre.getBypassMessage() != null) {
-                        String text = pre.getBypassMessage().getTextContent();
-                        return Flux.just(ChatStreamChunk.of(text != null ? text : "", FinishReason.STOP));
-                    }
-                    return callModelStream(ctx, hc, pre);
-                });
+        return hookPipeline.aroundReasoning(ctx,
+                event -> model.streamWithTools(
+                        ctx.getMessages(), schemas, ctx.getGenerateOptions()));
     }
 
     /**
@@ -127,53 +85,6 @@ public class ModelCallPipeline {
         return executeStream(ctx).collectList().map(ModelCallPipeline::assembleResponseFromChunks);
     }
 
-    /**
-     * 执行实际的模型调用，包裹在 Hook 管线中。
-     *
-     * <p>流程：PRE_MODEL_CALL Hook → aroundHook 洋葱包裹 → model.streamWithTools → 记录延迟指标
-     * → POST_MODEL_CALL Hook → POST_REASONING Hook
-     *
-     * @param ctx  循环上下文
-     * @param hc   Hook 上下文
-     * @param pre  预推理事件（传递给 aroundHook）
-     * @return 模型流式输出的分块序列
-     */
-    private Flux<ChatStreamChunk> callModelStream(LoopContext ctx, HookContext hc, HookEvent pre) {
-        List<ToolSchema> schemas = toolRegistry.getSchemas(
-                ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId());
-
-        HookEvent preModel = new HookEvent(HookEventType.PRE_MODEL_CALL);
-        return hookDispatcher.dispatchAndExecuteStream(preModel, hc,
-                e -> aroundHookChain.aroundReasoningStream(pre, hc,
-                        ev -> {
-                            final long start = System.currentTimeMillis();
-                            return model.streamWithTools(
-                                    ctx.getMessages(), schemas, ctx.getGenerateOptions())
-                                    .doOnNext(chunk -> {
-                                        if (chunk.getFinishReason() != null) {
-                                            long latency = System.currentTimeMillis() - start;
-                                            metrics.recordLlmCall(
-                                                    model.getModelName(), model.getProvider(),
-                                                    latency, 0, 0, true, null);
-                                        }
-                                    });
-                        }),
-                HookEventType.POST_MODEL_CALL)
-                .concatWith(firePostReasoningHook(hc));
-    }
-
-    /**
-     * 触发 POST_REASONING Hook。
-     *
-     * <p>fire-and-forget 模式：Hook 结果不影响主流程，仅用于日志/审计。
-     *
-     * @param hc Hook 上下文
-     * @return 空 Flux（不发射元素）
-     */
-    private Flux<ChatStreamChunk> firePostReasoningHook(HookContext hc) {
-        return hookDispatcher.dispatch(new HookEvent(HookEventType.POST_REASONING), hc)
-                .then(Mono.<ChatStreamChunk>empty()).flux();
-    }
 
     /**
      * 从流式分块列表组装单个 ChatResponse。
@@ -218,7 +129,7 @@ public class ModelCallPipeline {
         if (finishReason == null) finishReason = FinishReason.COMPLETED;
 
         List<ContentBlock> blocks = new ArrayList<>();
-    if (!text.isEmpty()) {
+        if (!text.isEmpty()) {
             blocks.add(new TextBlock(text.toString()));
         }
         for (Map.Entry<String, String> e : toolArgs.entrySet()) {
@@ -229,16 +140,5 @@ public class ModelCallPipeline {
 
         Msg msg = new AssistantMessage(blocks, null);
         return new ChatResponse(msg, new ChatUsage(0, 0), finishReason, null);
-    }
-
-    /**
-     * 从消息创建流式分块。
-     *
-     * @param msg          消息
-     * @param finishReason 完成原因
-     * @return 流式分块
-     */
-    private static ChatStreamChunk chunkFromMessage(Msg msg, String finishReason) {
-        return ChatStreamChunk.of(msg.getTextContent(), finishReason);
     }
 }

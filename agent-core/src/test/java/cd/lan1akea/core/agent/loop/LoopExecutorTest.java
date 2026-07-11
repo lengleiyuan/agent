@@ -38,16 +38,17 @@ class LoopExecutorTest {
         hookDispatcher = spy(new HookDispatcher(new HookChain()));
         doReturn(Mono.just(HookResult.continue_())).when(hookDispatcher).dispatch(any(), any());
 
+        HookPipeline hookPipeline = new HookPipeline(hookDispatcher, aroundHooks);
         ModelCallPipeline modelPipeline = new ModelCallPipeline(
-                model, hookDispatcher, toolRegistry, aroundHooks, AgentMetrics.NOOP);
+                model, hookPipeline, toolRegistry);
         ToolCallOrchestrator orchestrator = new ToolCallOrchestrator(
-                toolExecutor, toolRegistry, hookDispatcher, aroundHooks);
+                toolExecutor, toolRegistry, hookPipeline);
 
         cd.lan1akea.core.intervention.InMemoryInterventionStore store =
                 new cd.lan1akea.core.intervention.InMemoryInterventionStore();
         InterventionResolver resolver = new InterventionResolver(store, orchestrator);
-        executor = new LoopExecutor(modelPipeline, orchestrator, hookDispatcher,
-                AgentMetrics.NOOP, new Cl100kTokenEstimator(), resolver);
+        executor = new LoopExecutor(modelPipeline, orchestrator, hookPipeline,
+                new Cl100kTokenEstimator(), resolver);
     }
 
     // ============================================================

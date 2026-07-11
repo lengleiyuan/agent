@@ -11,6 +11,8 @@ import cd.lan1akea.core.hook.recorder.HookRecorder;
 import cd.lan1akea.core.intervention.InMemoryInterventionStore;
 import cd.lan1akea.core.intervention.InterventionStore;
 import cd.lan1akea.core.message.Msg;
+import cd.lan1akea.core.hook.HookPipeline;
+import cd.lan1akea.core.hook.impl.AgentMetricsHook;
 import cd.lan1akea.core.metrics.AgentMetrics;
 import cd.lan1akea.core.model.*;
 import cd.lan1akea.core.state.AgentStateStore;
@@ -90,30 +92,35 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
 
         HookChain hookChain = config.getHookChain() != null
                 ? config.getHookChain() : new HookChain();
+        hookChain.register(new AgentMetricsHook("AgentMetrics", metrics,
+                model.getModelName(), model.getProvider()));
         this.hookDispatcher = new HookDispatcher(hookChain);
-        AroundHookChain aroundHookChain = config.getAroundHookChain() != null
+        AroundHookChain aroundChain = config.getAroundHookChain() != null
                 ? config.getAroundHookChain() : new AroundHookChain();
+        aroundChain.register(new AgentMetricsHook("AgentMetrics", metrics,
+                model.getModelName(), model.getProvider()));
+        HookPipeline hookPipeline = new HookPipeline(hookDispatcher, aroundChain);
 
         this.stateStore = config.getStateStore();
         int maxInput = model.getMaxInputTokens();
         this.contextWindow = new ModelContextWindow(model.getModelName(), maxInput, maxInput / 2);
 
         ToolCallOrchestrator toolOrch = new ToolCallOrchestrator(
-                toolExecutor, toolRegistry, hookDispatcher, aroundHookChain);
+                toolExecutor, toolRegistry, hookPipeline);
         ModelCallPipeline modelPipeline = new ModelCallPipeline(
-                model, hookDispatcher, toolRegistry, aroundHookChain, metrics);
+                model, hookPipeline, toolRegistry);
         InterventionStore interventionStore = config.getInterventionStore() != null
                 ? config.getInterventionStore()
                 : new InMemoryInterventionStore();
         InterventionResolver interventionResolver = new InterventionResolver(
                 interventionStore, toolOrch);
         LoopExecutor loopExecutor = new LoopExecutor(
-                modelPipeline, toolOrch, hookDispatcher, metrics,
+                modelPipeline, toolOrch, hookPipeline,
                 contextWindow.getEstimator(), interventionResolver);
         SessionGate sessionGate = config.getSessionGate() != null
                 ? config.getSessionGate() : new LocalSessionGate();
         this.pipeline = new RequestPipeline(
-                loopExecutor, stateStore, aroundHookChain,
+                loopExecutor, stateStore, hookPipeline,
                 config.getExecutionConfig(), name, systemMessage, interventionStore, sessionGate);
     }
 

@@ -2,58 +2,33 @@ package cd.lan1akea.core.hook;
 
 /**
  * Hook 事件类型枚举。
- * 覆盖 Agent 执行生命周期的所有可干预点。
+ *
+ * <p>覆盖 Agent 执行生命周期的所有可干预点，从 10 个精简为 8 个：
+ * PRE_MODEL_CALL / POST_MODEL_CALL 无订阅者，已删除。
  */
 public enum HookEventType {
 
-    /**
-     * LLM 推理前（ContextCompression/MemoryEnrichment）
-     */
+    /** LLM 推理前（ContextCompression / MemoryEnrichment / KB bypass） */
     PRE_REASONING,
 
-    /**
-     * LLM 推理后（ContentFilter）
-     */
+    /** LLM 推理后（ContentFilter） */
     POST_REASONING,
 
-    /**
-     * 模型 API 调用前（Token 计费/缓存）
-     */
-    PRE_MODEL_CALL,
-
-    /**
-     * 模型 API 调用后
-     */
-    POST_MODEL_CALL,
-
-    /**
-     * 单工具调用前（Audit/RateLimit/Permission/ToolAccess）
-     */
+    /** 工具调用前（Audit / RateLimit / Permission / ToolAccess） */
     PRE_TOOL_CALL,
 
-    /**
-     * 单工具调用后（Audit）
-     */
+    /** 工具调用后（Audit） */
     POST_TOOL_CALL,
 
-    /**
-     * 错误时
-     */
+    /** 错误时 */
     ON_ERROR,
 
-    /**
-     * 人工干预
-     */
+    /** 人工干预 */
     ON_INTERRUPT,
 
-    /**
-     * 单次 ReAct 迭代后（持久化、检查点等系统级 Hook）
-     */
+    /** 单次 ReAct 迭代后（SessionPersistence） */
     AFTER_ITERATION,
 
-    /**
-     * 达到最大迭代次数，进入总结阶段前。
-     * Hook 可注入自定义提示词或设置 bypassMessage 跳过模型总结。
-     */
+    /** 达到最大迭代，进入总结阶段前（可注入提示词或设置 bypassMessage） */
     PRE_SUMMARIZE
 }

@@ -124,9 +124,9 @@ class HookChainTest {
         assertTrue(hook.wasExecuted());
 
         hook.reset();
-        // PRE_MODEL_CALL should NOT match
-        HookResult r3 = chain.fire(HookEventType.PRE_MODEL_CALL,
-            new HookEvent(HookEventType.PRE_MODEL_CALL),
+        // AFTER_ITERATION should NOT match (hook only subscribes to PRE_TOOL / POST_TOOL)
+        HookResult r3 = chain.fire(HookEventType.AFTER_ITERATION,
+            new HookEvent(HookEventType.AFTER_ITERATION),
             new HookContext("test", null, null, null, 0, null, null)).block();
         assertTrue(r3.isContinue());
         assertFalse(hook.wasExecuted());

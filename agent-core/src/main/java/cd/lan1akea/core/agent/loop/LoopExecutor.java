@@ -17,6 +17,7 @@ import cd.lan1akea.core.model.*;
 import cd.lan1akea.core.tool.*;
 import cd.lan1akea.core.util.JsonUtils;
 
+import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -46,11 +47,8 @@ public class LoopExecutor {
     /** 工具调用编排器，负责工具的执行与结果收集 */
     private final ToolCallOrchestrator toolOrchestrator;
 
-    /** Hook 分发器，用于在循环各阶段触发回调 */
-    private final HookDispatcher hookDispatcher;
-
-    /** Agent 指标收集器，记录迭代次数等运行时数据 */
-    private final AgentMetrics metrics;
+    /** Hook 管线门面，统一管理所有 Hook 分发 */
+    private final HookPipeline hookPipeline;
 
     /** 人工介入恢复处理器 */
     private final InterventionResolver interventionResolver;
@@ -63,19 +61,17 @@ public class LoopExecutor {
      *
      * @param modelPipeline        模型调用管道
      * @param toolOrchestrator     工具调用编排器
-     * @param hookDispatcher       Hook 分发器
-     * @param metrics              Agent 指标收集器
+     * @param hookPipeline         Hook 管线门面
      * @param tokenEstimator       Token 估算器
      * @param interventionResolver 介入恢复处理器
      */
     public LoopExecutor(ModelCallPipeline modelPipeline,
-                         ToolCallOrchestrator toolOrchestrator, HookDispatcher hookDispatcher,
-                         AgentMetrics metrics, TokenEstimator tokenEstimator,
+                         ToolCallOrchestrator toolOrchestrator, HookPipeline hookPipeline,
+                         TokenEstimator tokenEstimator,
                          InterventionResolver interventionResolver) {
         this.modelPipeline = modelPipeline;
         this.toolOrchestrator = toolOrchestrator;
-        this.hookDispatcher = hookDispatcher;
-        this.metrics = metrics;
+        this.hookPipeline = hookPipeline;
         this.tokenEstimator = tokenEstimator;
         this.interventionResolver = interventionResolver;
     }
@@ -92,7 +88,8 @@ public class LoopExecutor {
     public Flux<ChatStreamChunk> runStream(LoopContext ctx) {
         return Flux.defer(() -> {
             if (ctx.getInterventionState().hasPending() && !ctx.isInterrupted()) {
-                return resolveInterventionEntry(ctx);
+                return interventionResolver.recover(ctx, () -> executeObserve(ctx))
+                        .switchIfEmpty(Flux.defer(() -> runStream(ctx)));
             }
             if (ctx.isInterrupted()) {
                 return handleInterruptStream(ctx);
@@ -103,15 +100,21 @@ public class LoopExecutor {
             if (ctx.getIteration() >= ctx.getMaxIterations()) {
                 return summarizeThenReason(ctx);
             }
-            return executeReason(ctx).concatWith(Flux.defer(() -> {
-                List<ToolUseBlock> tools = extractToolCalls(ctx);
-                if (tools != null && !tools.isEmpty()) {
-                    return executeAct(ctx, tools).concatWith(executeObserve(ctx));
-                }
-                ctx.markComplete();
-                return executeObserve(ctx);
-            }));
+            return getChatStreamChunkPublisher(ctx);
         });
+    }
+
+
+
+    private Flux<ChatStreamChunk> getChatStreamChunkPublisher(LoopContext ctx) {
+        return executeReason(ctx).concatWith(Flux.defer(() -> {
+            List<ToolUseBlock> tools = extractToolCalls(ctx);
+            if (tools != null && !tools.isEmpty()) {
+                return executeAct(ctx, tools).concatWith(executeObserve(ctx));
+            }
+            ctx.markComplete();
+            return executeObserve(ctx);
+        }));
     }
 
     /**
@@ -121,11 +124,11 @@ public class LoopExecutor {
      * @return 总结轮次的流式 chunk 序列
      */
     private Flux<ChatStreamChunk> summarizeThenReason(LoopContext ctx) {
-        HookContext hc = ctx.toHookContext();
         HookEvent event = new HookEvent(HookEventType.PRE_SUMMARIZE);
         event.setMessages(ctx.getMessages());
+        HookContext hc = ctx.toHookContext();
 
-        return hookDispatcher.dispatch(event, hc)
+        return hookPipeline.dispatch(event, hc)
                 .flatMapMany(r -> {
                     if (r.isAbort()) {
                         return Flux.error(new HookAbortException(HookSource.HOOK, r.getAbortReason()));
@@ -144,51 +147,9 @@ public class LoopExecutor {
                             .maxTokens(opts.getMaxTokens())
                             .toolChoice(ToolChoicePolicy.NONE)
                             .build());
-                    return executeReason(ctx);
+                    return getChatStreamChunkPublisher(ctx);
                 });
     }
-
-    /** 找最后一条 assistant 消息的索引，-1 表示不存在 */
-    private int lastAssistantIndex(LoopContext ctx) {
-        List<Msg> msgs = ctx.getMessages();
-        for (int i = msgs.size() - 1; i >= 0; i--) {
-            if (msgs.get(i).getRole() == MsgRole.ASSISTANT) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    /**
-     * 统一出口：插入 tool_result → emit chunk → 清空介入 → Observe → LLM。
-     * 内置 onErrorResume 兜底执行失败，保证 tool_use 始终闭合。
-     */
-    private Flux<ChatStreamChunk> resolveAndContinue(LoopContext ctx, String callId,
-                                                      Mono<ToolResult> execution) {
-        int lastAssistant = lastAssistantIndex(ctx);
-        int insertAt = lastAssistant >= 0 ? lastAssistant + 1 : ctx.getMessages().size();
-        return execution
-                .onErrorResume(e -> Mono.just(
-                        ToolResult.failure(callId, UI.TOOL_EXEC_FAILED + e.getMessage())))
-                .flatMapMany(result -> {
-                    if (callId != null && insertAt > 0) {
-                        ctx.getMessages().add(insertAt, Msg.builder(MsgRole.TOOL)
-                                .addToolResult(callId,
-                                        result.isSuccess() ? result.getContent()
-                                                : result.getErrorMessage(),
-                                        !result.isSuccess())
-                                .build());
-                    }
-                    String displayText = result.isSuccess()
-                            ? result.getContent()
-                            : result.getErrorMessage();
-                    ctx.getInterventionState().clear();
-                    return Flux.just(ChatStreamChunk.builder()
-                            .delta(displayText).type(ChatStreamChunk.TYPE_TEXT).build())
-                            .concatWith(Flux.defer(() -> executeObserve(ctx)));
-                });
-    }
-
 
     /**
      * 执行推理阶段：调用模型获取回复。
@@ -244,10 +205,6 @@ public class LoopExecutor {
      * @return 流式输出 chunk 序列
      */
     private Flux<ChatStreamChunk> executeAct(LoopContext ctx, List<ToolUseBlock> toolCalls) {
-        // iteration 在 executeObserve 中递增，此处 +1 记录即将进入的迭代号
-        metrics.recordIteration(ctx.getAgentName(), ctx.getSessionId(),
-                ctx.getIteration() + 1, toolCalls.size());
-
         List<ToolResult> results = new CopyOnWriteArrayList<>();
 
         return Flux.fromIterable(toolCalls)
@@ -346,11 +303,11 @@ public class LoopExecutor {
      */
     private Flux<ChatStreamChunk> handleInterruptStream(LoopContext ctx) {
         Msg feedback = ctx.getFeedbackMsg();
-        HookContext hc = ctx.toHookContext();
         HookEvent ie = HookEvent.interrupt(
                 feedback != null ? feedback.getTextContent() : UI.INTERRUPT_EXTERNAL, null);
+        HookContext hc = ctx.toHookContext();
 
-        return hookDispatcher.dispatch(ie, hc)
+        return hookPipeline.dispatch(ie, hc)
                 .flatMapMany(r -> {
                     if (r.isAbort()) {
                         return Flux.just(ChatStreamChunk.of(
@@ -405,38 +362,16 @@ public class LoopExecutor {
      * @return 分发完成信号
      */
     private Mono<Void> dispatchAfterIteration(LoopContext ctx) {
-        HookContext hc = ctx.toHookContext();
         HookEvent event = new HookEvent(HookEventType.AFTER_ITERATION);
         event.setPayload(EventPayload.LOOP_CONTEXT, ctx);
-        return hookDispatcher.dispatch(event, hc)
+        HookContext hc = ctx.toHookContext();
+        return hookPipeline.dispatch(event, hc)
                 .onErrorResume(e -> {
                     log.warning(Logs.AFTER_ITERATION_FAILED
                             + ctx.getRequestId() + Logs.ERR_DETAIL + e.getMessage());
                     return Mono.empty();
                 })
                 .then();
-    }
-
-    /**
-     * 介入恢复入口，委托给 InterventionResolver 后根据 Action 路由。
-     *
-     * @param ctx 循环上下文
-     * @return 恢复后的流式 chunk 序列
-     */
-    private Flux<ChatStreamChunk> resolveInterventionEntry(LoopContext ctx) {
-        InterventionResolver.ResolvedIntervention resolved =
-                interventionResolver.resolveForRecovery(ctx);
-        switch (resolved.getAction()) {
-            case RE_ENTER:
-                ctx.getInterventionState().clear();
-                return runStream(ctx);
-            case RETURN_CHUNK:
-                return Flux.just(resolved.getChunk());
-            case EXECUTE_AND_CONTINUE:
-                return resolveAndContinue(ctx, resolved.getCallId(), resolved.getExecution());
-            default:
-                return Flux.empty();
-        }
     }
 
     /**

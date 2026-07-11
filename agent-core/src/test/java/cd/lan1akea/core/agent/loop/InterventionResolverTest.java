@@ -41,8 +41,9 @@ class InterventionResolverTest {
         toolRegistry = new ToolRegistry();
         aroundHooks = new AroundHookChain();
         hookDispatcher = new HookDispatcher(new HookChain());
+        HookPipeline hookPipeline = new HookPipeline(hookDispatcher, aroundHooks);
         toolOrchestrator = new ToolCallOrchestrator(
-                toolExecutor, toolRegistry, hookDispatcher, aroundHooks);
+                toolExecutor, toolRegistry, hookPipeline);
         resolver = new InterventionResolver(interventionStore, toolOrchestrator);
     }
 

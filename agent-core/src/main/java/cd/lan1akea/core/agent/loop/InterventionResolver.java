@@ -3,6 +3,7 @@ package cd.lan1akea.core.agent.loop;
 import cd.lan1akea.core.CoreConstants.EventPayload;
 import cd.lan1akea.core.CoreConstants.FinishReason;
 import cd.lan1akea.core.CoreConstants.Intervention;
+import cd.lan1akea.core.CoreConstants.UI;
 import cd.lan1akea.core.exception.HumanInterventionException;
 import cd.lan1akea.core.intervention.InterventionRequest;
 import cd.lan1akea.core.intervention.InterventionStore;
@@ -14,18 +15,23 @@ import cd.lan1akea.core.tool.ToolCallContext;
 import cd.lan1akea.core.tool.ToolResult;
 import cd.lan1akea.core.util.JsonUtils;
 
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /**
- * 人工介入恢复处理器。
- * <p>将介入请求的创建和恢复逻辑从 LoopExecutor 提取到独立组件。
- * 通过 ResolvedIntervention 实现决策-执行分离，
- * 避免直接返回 Flux 而依赖 LoopExecutor 的私有状态机入口。
+ * 人工介入处理器。
+ *
+ * <p>负责：
+ * <ul>
+ *   <li>创建介入请求（从 {@link HumanInterventionException} 暂停循环）</li>
+ *   <li>恢复介入（查询状态、执行工具、插入 tool_result、回到循环）</li>
+ * </ul>
  */
 public class InterventionResolver {
 
@@ -35,8 +41,23 @@ public class InterventionResolver {
     private final ToolCallOrchestrator toolOrchestrator;
 
     /**
+     * 构造介入处理器。
+     *
+     * @param interventionStore 介入请求存储器
+     * @param toolOrchestrator  工具调用编排器
+     */
+    public InterventionResolver(InterventionStore interventionStore,
+                                 ToolCallOrchestrator toolOrchestrator) {
+        this.interventionStore = interventionStore;
+        this.toolOrchestrator = toolOrchestrator;
+    }
+
+    // ============================================================
+    // 介入恢复
+    // ============================================================
+
+    /**
      * 介入恢复决策结果。
-     * <p>将 resumeFromIntervention 的 6 条分支归为 3 种 Action。
      */
     public static class ResolvedIntervention {
 
@@ -46,7 +67,7 @@ public class InterventionResolver {
             RE_ENTER,
             /** 返回介入等待 chunk，终止当前流 */
             RETURN_CHUNK,
-            /** 执行工具（或失败结果），continue 到 Observe */
+            /** 执行工具并继续到 Observe */
             EXECUTE_AND_CONTINUE
         }
 
@@ -90,25 +111,43 @@ public class InterventionResolver {
     }
 
     /**
-     * 构造介入恢复处理器。
+     * 完整介入恢复流程。
      *
-     * @param interventionStore 介入请求存储器
-     * @param toolOrchestrator  工具调用编排器
+     * <p>委托 {@link #resolveForRecovery} 获取决策，按 Action 分流：
+     * <ul>
+     *   <li>RE_ENTER — 清状态，返回空 Flux（调用方通过 switchIfEmpty 重入循环）</li>
+     *   <li>RETURN_CHUNK — 返回介入等待 chunk</li>
+     *   <li>EXECUTE_AND_CONTINUE — 执行工具 → 插入 tool_result → 清状态 → 交给 observe</li>
+     * </ul>
+     *
+     * @param ctx     循环上下文
+     * @param observe 观察阶段回调（EXECUTE_AND_CONTINUE 后进入 observe）
+     * @return 恢复流式 chunk
      */
-    public InterventionResolver(InterventionStore interventionStore,
-                                 ToolCallOrchestrator toolOrchestrator) {
-        this.interventionStore = interventionStore;
-        this.toolOrchestrator = toolOrchestrator;
+    public Flux<ChatStreamChunk> recover(LoopContext ctx,
+                                          Supplier<Flux<ChatStreamChunk>> observe) {
+        ResolvedIntervention resolved = resolveForRecovery(ctx);
+        switch (resolved.getAction()) {
+            case RE_ENTER:
+                ctx.getInterventionState().clear();
+                return Flux.empty();
+            case RETURN_CHUNK:
+                return Flux.just(resolved.getChunk());
+            case EXECUTE_AND_CONTINUE:
+                return executeAndInsert(ctx, resolved.getCallId(), resolved.getExecution())
+                        .concatWith(Flux.defer(observe));
+            default:
+                return Flux.empty();
+        }
     }
 
     /**
-     * 从人工介入状态恢复执行。
-     * <p>查询介入请求状态并决定恢复策略。callId 为 null 时防御性清除后 RE_ENTER。
+     * 从人工介入状态查询恢复策略。
      *
      * @param ctx 循环上下文
      * @return 恢复决策
      */
-public ResolvedIntervention resolveForRecovery(LoopContext ctx) {
+    public ResolvedIntervention resolveForRecovery(LoopContext ctx) {
         String id = ctx.getInterventionState().getInterventionId();
         if (id == null) return ResolvedIntervention.reEnter();
 
@@ -148,9 +187,16 @@ public ResolvedIntervention resolveForRecovery(LoopContext ctx) {
         }
     }
 
+    // ============================================================
+    // 介入创建
+    // ============================================================
+
     /**
      * 从 HumanInterventionException 创建介入请求并中断循环。
-     * <p>副作用：持久化请求、设置 ctx 介入状态、调用 ctx.interrupt()。
+     *
+     * @param e   介入异常
+     * @param ctx 循环上下文
+     * @return 介入信号 chunk
      */
     public ChatStreamChunk createIntervention(HumanInterventionException e, LoopContext ctx) {
         InterventionRequest req = buildRequest(e, ctx);
@@ -167,9 +213,57 @@ public ResolvedIntervention resolveForRecovery(LoopContext ctx) {
         return buildSignalChunk(id, e.getReason(), e.getType().name(), e.getToolName());
     }
 
+    // ============================================================
+    // 工具执行 + tool_result 插入
+    // ============================================================
+
+    /**
+     * 执行恢复工具并插入 tool_result 消息。
+     * 内置 onErrorResume 兜底执行失败，保证 tool_use 始终闭合。
+     */
+    private Flux<ChatStreamChunk> executeAndInsert(LoopContext ctx, String callId,
+                                                    Mono<ToolResult> execution) {
+        int insertAt = insertPosition(ctx);
+        return execution
+                .onErrorResume(e -> Mono.just(
+                        ToolResult.failure(callId, UI.TOOL_EXEC_FAILED + e.getMessage())))
+                .flatMapMany(result -> {
+                    if (callId != null) {
+                        ctx.getMessages().add(insertAt, Msg.builder(MsgRole.TOOL)
+                                .addToolResult(callId,
+                                        result.isSuccess() ? result.getContent()
+                                                : result.getErrorMessage(),
+                                        !result.isSuccess())
+                                .build());
+                    }
+                    String displayText = result.isSuccess()
+                            ? result.getContent()
+                            : result.getErrorMessage();
+                    ctx.getInterventionState().clear();
+                    return Flux.just(ChatStreamChunk.builder()
+                            .delta(displayText).type(ChatStreamChunk.TYPE_TEXT).build());
+                });
+    }
+
+    /**
+     * 计算 tool_result 插入位置（最后一条 assistant 消息之后）。
+     */
+    private int insertPosition(LoopContext ctx) {
+        List<Msg> msgs = ctx.getMessages();
+        for (int i = msgs.size() - 1; i >= 0; i--) {
+            if (msgs.get(i).getRole() == MsgRole.ASSISTANT) {
+                return i + 1;
+            }
+        }
+        return msgs.size();
+    }
+
+    // ============================================================
+    // recovery helpers
+    // ============================================================
+
     /**
      * 按工具名查找最后一条 assistant 消息中对应 tool_use 的 callId。
-     * 无匹配时回退到最后一个 tool_use 的 callId。
      */
     public String findToolCallId(LoopContext ctx, String toolName) {
         int idx = lastAssistantIndex(ctx);
@@ -183,7 +277,7 @@ public ResolvedIntervention resolveForRecovery(LoopContext ctx) {
     }
 
     /**
-     * 构建介入信号 chunk，通知前端需要人工介入。
+     * 构建介入信号 chunk。
      */
     public ChatStreamChunk buildSignalChunk(String id, String question,
                                              String interventionType, String toolName) {

@@ -44,8 +44,8 @@ public class RequestPipeline {
     private final LoopExecutor loopExecutor;
     /** 状态存储，用于会话/检查点持久化 */
     private final AgentStateStore stateStore;
-    /** AroundHook 链，以洋葱模式包裹整个请求 */
-    private final AroundHookChain aroundHookChain;
+    /** Hook 管线门面 */
+    private final HookPipeline hookPipeline;
     /** 执行配置（超时、温度等） */
     private final AgentExecutionConfig execConfig;
     /** Agent 名称 */
@@ -64,19 +64,19 @@ public class RequestPipeline {
      *
      * @param loopExecutor      循环执行器
      * @param stateStore        状态存储
-     * @param aroundHookChain   AroundHook 链
+     * @param hookPipeline      Hook 管线门面
      * @param execConfig        执行配置
      * @param agentName         Agent 名称
      * @param systemMessage     系统提示消息
      * @param interventionStore 介入存储
      */
     public RequestPipeline(LoopExecutor loopExecutor, AgentStateStore stateStore,
-                            AroundHookChain aroundHookChain, AgentExecutionConfig execConfig,
+                            HookPipeline hookPipeline, AgentExecutionConfig execConfig,
                             String agentName, String systemMessage,
                             InterventionStore interventionStore, SessionGate sessionGate) {
         this.loopExecutor = loopExecutor;
         this.stateStore = stateStore;
-        this.aroundHookChain = aroundHookChain;
+        this.hookPipeline = hookPipeline;
         this.execConfig = execConfig;
         this.agentName = agentName;
         this.systemMessage = systemMessage;
@@ -98,7 +98,7 @@ public class RequestPipeline {
     public Flux<ChatStreamChunk> executeStream(List<Msg> messages, RuntimeContext rtCtx) {
         return Flux.deferContextual(ctxView -> {
             RuntimeContext ctx = resolveContext(ctxView, rtCtx);
-            return aroundHookChain.aroundCallStream(new HookEvent(null), HookContext.from(ctx, 0),
+            return hookPipeline.aroundCall(ctx,
                     e -> prepareAndExecute(ctx, messages)
                             .contextWrite(c -> writeContext(c, ctx)));
         });
