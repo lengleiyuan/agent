@@ -71,7 +71,7 @@ public static final class RuntimeCtx {
         public static final String TOOL_NAME = "toolName";
         /** 中断消息 metadata key（buildInterruptedResponse） */
         public static final String INTERRUPT_ID = "interruptId";
-        /** 消息列表（Reasoning events） */
+        /** 消息列表（HookEvent payload） */
         public static final String MESSAGES = "messages";
         /** 绕过模型调用的直接回复消息 */
         public static final String BYPASS_MESSAGE = "bypassMessage";

@@ -80,7 +80,6 @@ public class ContextCompressionHook implements Hook {
     public Mono<HookResult> onEvent(HookEvent event, HookContext context) {
         if (event.getMessages() == null) return Mono.just(HookResult.continue_());
         List<Msg> messages = event.getMessages();
-        if (messages == null) return Mono.just(HookResult.continue_());
 
         int estimatedTokens = contextWindow.estimateTokens(messages);
 

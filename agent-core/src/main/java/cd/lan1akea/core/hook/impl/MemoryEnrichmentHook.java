@@ -79,7 +79,7 @@ public class MemoryEnrichmentHook implements Hook {
             return Mono.just(HookResult.continue_());
 
         List<Msg> messages = event.getMessages();
-        if (messages == null || messages.isEmpty()) return Mono.just(HookResult.continue_());
+        if (messages.isEmpty()) return Mono.just(HookResult.continue_());
 
         // 取最后一条用户消息作为检索查询
         String query = "";
