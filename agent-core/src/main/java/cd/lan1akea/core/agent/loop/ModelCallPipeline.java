@@ -142,41 +142,24 @@ public class ModelCallPipeline {
         List<ToolSchema> schemas = toolRegistry.getSchemas(
                 ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId());
 
-        return hookDispatcher.dispatch(new HookEvent(HookEventType.PRE_MODEL_CALL), hc)
-                .flatMapMany(mr -> {
-                    if (mr.isAbort()) {
-                        return Flux.error(new HookAbortException(HookSource.MODEL, mr.getAbortReason()));
-                    }
-                    return aroundHookChain.aroundReasoningStream(pre, hc,
-                            e -> {
-                                final long start = System.currentTimeMillis();
-                                return model.streamWithTools(
-                                        ctx.getMessages(), schemas, ctx.getGenerateOptions())
-                                        .doOnNext(chunk -> {
-                                            if (chunk.getFinishReason() != null) {
-                                                long latency = System.currentTimeMillis() - start;
-                                                metrics.recordLlmCall(
-                                                        model.getModelName(), model.getProvider(),
-                                                        latency, 0, 0, true, null);
-                                            }
-                                        });
-                            });
-                })
-                .concatWith(firePostModelHook(hc))
+        HookEvent preModel = new HookEvent(HookEventType.PRE_MODEL_CALL);
+        return hookDispatcher.dispatchAndExecuteStream(preModel, hc,
+                e -> aroundHookChain.aroundReasoningStream(pre, hc,
+                        ev -> {
+                            final long start = System.currentTimeMillis();
+                            return model.streamWithTools(
+                                    ctx.getMessages(), schemas, ctx.getGenerateOptions())
+                                    .doOnNext(chunk -> {
+                                        if (chunk.getFinishReason() != null) {
+                                            long latency = System.currentTimeMillis() - start;
+                                            metrics.recordLlmCall(
+                                                    model.getModelName(), model.getProvider(),
+                                                    latency, 0, 0, true, null);
+                                        }
+                                    });
+                        }),
+                HookEventType.POST_MODEL_CALL)
                 .concatWith(firePostReasoningHook(hc));
-    }
-
-    /**
-     * 触发 POST_MODEL_CALL Hook。
-     *
-     * <p>fire-and-forget 模式：Hook 结果不影响主流程，仅用于日志/审计。
-     *
-     * @param hc Hook 上下文
-     * @return 空 Flux（不发射元素）
-     */
-    private Flux<ChatStreamChunk> firePostModelHook(HookContext hc) {
-        return hookDispatcher.dispatch(new HookEvent(HookEventType.POST_MODEL_CALL), hc)
-                .then(Mono.<ChatStreamChunk>empty()).flux();
     }
 
     /**
