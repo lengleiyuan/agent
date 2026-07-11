@@ -70,7 +70,7 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
     /**
      * 使用指定配置创建 ReActAgent。
      *
-     * <p>构造函数中组装全部内部组件：LoopDecisionEngine、ToolCallOrchestrator、
+     * <p>构造函数中组装全部内部组件：ToolCallOrchestrator、
      * ModelCallPipeline、LoopExecutor、RequestPipeline。InterventionStore 若未配置则默认内存实现。
      *
      * @param config Agent 配置，必须包含 ChatModel
@@ -98,7 +98,6 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
         int maxInput = model.getMaxInputTokens();
         this.contextWindow = new ModelContextWindow(model.getModelName(), maxInput, maxInput / 2);
 
-        LoopDecisionEngine engine = new LoopDecisionEngine();
         ToolCallOrchestrator toolOrch = new ToolCallOrchestrator(
                 toolExecutor, toolRegistry, hookDispatcher, aroundHookChain);
         ModelCallPipeline modelPipeline = new ModelCallPipeline(
@@ -109,7 +108,7 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
         InterventionResolver interventionResolver = new InterventionResolver(
                 interventionStore, toolOrch);
         LoopExecutor loopExecutor = new LoopExecutor(
-                engine, modelPipeline, toolOrch, hookDispatcher, metrics,
+                modelPipeline, toolOrch, hookDispatcher, metrics,
                 contextWindow.getEstimator(), interventionResolver);
         SessionGate sessionGate = config.getSessionGate() != null
                 ? config.getSessionGate() : new LocalSessionGate();

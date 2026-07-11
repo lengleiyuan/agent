@@ -5,6 +5,7 @@ import cd.lan1akea.core.CoreConstants.FinishReason;
 import cd.lan1akea.core.CoreConstants.HookSource;
 import cd.lan1akea.core.CoreConstants.Intervention;
 import cd.lan1akea.core.CoreConstants.Logs;
+import cd.lan1akea.core.CoreConstants.Prompt;
 import cd.lan1akea.core.CoreConstants.UI;
 import cd.lan1akea.core.CoreConstants.Usage;
 import cd.lan1akea.core.exception.HookAbortException;
@@ -29,19 +30,15 @@ import java.util.logging.Logger;
 
 /**
  * ReAct 循环执行器。
- * 以 executePhase 状态机中枢驱动四阶段循环，流式为 canonical。
+ * 流式为 canonical 入口，通过直接线性递归驱动 Reason-Act-Observe 循环。
  *
- * <p>流程: runStream(Guard) -> executePhase(Reason) -> executePhase(Act)
- *       -> executePhase(Observe) -> executePhase(Guard -> ...)
- * <p>完成信号由 LoopDecisionEngine 通过 ctx.isComplete() 检测并产生 Stop 决策。
+ * <p>流程: runStream -> 介入恢复/中断检查/完成检查/最大迭代检查 -> executeReason
+ *       -> extractToolCalls -> executeAct -> executeObserve -> runStream (递归)
  */
 public class LoopExecutor {
 
     /** 日志记录器 */
     private static final Logger log = Logger.getLogger(LoopExecutor.class.getName());
-
-    /** 循环决策引擎，用于评估当前阶段并决定下一步行为 */
-    private final LoopDecisionEngine engine;
 
     /** 模型调用管道，负责与 LLM 交互并获取回复 */
     private final ModelCallPipeline modelPipeline;
@@ -64,7 +61,6 @@ public class LoopExecutor {
     /**
      * 构造 ReAct 循环执行器。
      *
-     * @param engine               循环决策引擎
      * @param modelPipeline        模型调用管道
      * @param toolOrchestrator     工具调用编排器
      * @param hookDispatcher       Hook 分发器
@@ -72,11 +68,10 @@ public class LoopExecutor {
      * @param tokenEstimator       Token 估算器
      * @param interventionResolver 介入恢复处理器
      */
-    public LoopExecutor(LoopDecisionEngine engine, ModelCallPipeline modelPipeline,
+    public LoopExecutor(ModelCallPipeline modelPipeline,
                          ToolCallOrchestrator toolOrchestrator, HookDispatcher hookDispatcher,
                          AgentMetrics metrics, TokenEstimator tokenEstimator,
                          InterventionResolver interventionResolver) {
-        this.engine = engine;
         this.modelPipeline = modelPipeline;
         this.toolOrchestrator = toolOrchestrator;
         this.hookDispatcher = hookDispatcher;
@@ -88,47 +83,44 @@ public class LoopExecutor {
     /**
      * 启动流式 ReAct 循环（canonical 入口）。
      *
-     * <p>每次调用首先检查是否需要从介入状态恢复，或处理中断信号；
-     * 否则通过决策引擎评估 Guard 阶段，决定停止或进入 Reason/Act 循环。
+     * <p>线性流程：介入恢复 → 中断检查 → 完成检查 → 最大迭代检查 → 推理 → 行动/观察 → 递归。
+     * 不再通过 Phase/Decision 状态机路由，直接在方法中顺序表达。
      *
      * @param ctx 循环上下文
      * @return 流式输出 chunk 序列
      */
     public Flux<ChatStreamChunk> runStream(LoopContext ctx) {
         return Flux.defer(() -> {
-            // 检查是否有已解决的介入需要恢复
             if (ctx.getInterventionState().hasPending() && !ctx.isInterrupted()) {
-                InterventionResolver.ResolvedIntervention resolved =
-                        interventionResolver.resolveForRecovery(ctx);
-                switch (resolved.getAction()) {
-                    case RE_ENTER: return runStream(ctx);
-                    case RETURN_CHUNK: return Flux.just(resolved.getChunk());
-                    case EXECUTE_AND_CONTINUE:
-                        return resolveAndContinue(ctx, resolved.getCallId(), resolved.getExecution());
-                    default: return Flux.empty();
-                }
+                return resolveInterventionEntry(ctx);
             }
             if (ctx.isInterrupted()) {
                 return handleInterruptStream(ctx);
             }
-            Decision d = engine.evaluate(Phase.guard(), ctx);
-            if (d.isStop()) {
-                return Flux.just(chunkFromResponse(d.getResponse()));
+            if (ctx.isComplete()) {
+                return finalizeStream(ctx);
             }
             if (ctx.getIteration() >= ctx.getMaxIterations()) {
-                return dispatchSummarizeHook(ctx);
+                return summarizeThenReason(ctx);
             }
-            return executePhase(d, ctx);
+            return executeReason(ctx).concatWith(Flux.defer(() -> {
+                List<ToolUseBlock> tools = extractToolCalls(ctx);
+                if (tools != null && !tools.isEmpty()) {
+                    return executeAct(ctx, tools).concatWith(executeObserve(ctx));
+                }
+                ctx.markComplete();
+                return executeObserve(ctx);
+            }));
         });
     }
 
     /**
-     * 分发 PRE_SUMMARIZE Hook 并应用内置兜底。
+     * 达到最大迭代时注入总结提示词并进入最后一轮推理。
      *
-     * <p>Hook 可通过 HookEvent.setBypassMessage() 跳过模型直接返回自定义摘要。
-     * 未设置 bypass 时应用内置兜底：禁用工具
+     * @param ctx 循环上下文
+     * @return 总结轮次的流式 chunk 序列
      */
-    private Flux<ChatStreamChunk> dispatchSummarizeHook(LoopContext ctx) {
+    private Flux<ChatStreamChunk> summarizeThenReason(LoopContext ctx) {
         HookContext hc = ctx.toHookContext();
         HookEvent event = new HookEvent(HookEventType.PRE_SUMMARIZE);
         event.setMessages(ctx.getMessages());
@@ -141,23 +133,19 @@ public class LoopExecutor {
                     if (event.getBypassMessage() != null) {
                         Msg bypass = event.getBypassMessage();
                         ctx.addMessage(bypass);
-                        return Flux.just(ChatStreamChunk.of(bypass.getTextContent(), FinishReason.STOP));
+                        return Flux.just(ChatStreamChunk.of(
+                                bypass.getTextContent(), FinishReason.STOP));
                     }
-                    applySummarizeFallback(ctx);
-                    return executePhase(Decision.continue_(Phase.reason()), ctx);
+                    ctx.addMessage(SystemMessage.of(
+                            Prompt.MAX_ITERATIONS_SUMMARY + Prompt.MAX_ITERATIONS_NO_TOOLS));
+                    GenerateOptions opts = ctx.getGenerateOptions();
+                    ctx.setGenerateOptions(GenerateOptions.builder()
+                            .temperature(opts.getTemperature())
+                            .maxTokens(opts.getMaxTokens())
+                            .toolChoice(ToolChoicePolicy.NONE)
+                            .build());
+                    return executeReason(ctx);
                 });
-    }
-
-    /**
-     * 内置兜底：禁用工具，其余保持模型配置。
-     */
-    private void applySummarizeFallback(LoopContext ctx) {
-        GenerateOptions opts = ctx.getGenerateOptions();
-        ctx.setGenerateOptions(GenerateOptions.builder()
-                .temperature(opts.getTemperature())
-                .maxTokens(opts.getMaxTokens())
-                .toolChoice(ToolChoicePolicy.NONE)
-                .build());
     }
 
     /** 找最后一条 assistant 消息的索引，-1 表示不存在 */
@@ -197,8 +185,7 @@ public class LoopExecutor {
                     ctx.getInterventionState().clear();
                     return Flux.just(ChatStreamChunk.builder()
                             .delta(displayText).type(ChatStreamChunk.TYPE_TEXT).build())
-                            .concatWith(Flux.defer(() ->
-                                    executePhase(Decision.continue_(Phase.observe()), ctx)));
+                            .concatWith(Flux.defer(() -> executeObserve(ctx)));
                 });
     }
 
@@ -208,7 +195,7 @@ public class LoopExecutor {
      *
      * <p>流式收集模型分块 → 组装 ChatResponse → 设置 lastResponse 和 token。
      * 将 assistant 消息（含 tool_use blocks）追加到 ctx。
-     * 不检查工具调用、不决定下一阶段 —— 由引擎 evaluator 负责。
+     * 工具调用检查和下一阶段路由由 runStream 的线性流程处理。
      *
      * @param ctx 循环上下文
      * @return 模型推理的流式分块
@@ -249,8 +236,8 @@ public class LoopExecutor {
      *
      * <p>记录指标（iteration 此时尚未递增，使用 +1），执行工具，
      * 只追加 tool_result 消息（assistant 消息已由 executeReason 追加），
-     * 应用 backoff。不递增 iteration、不分发 after-iteration hook、
-     * 不调用 runStream —— 由 executePhase 链式进入 Observe。
+     * 应用 backoff。不递增 iteration、不分发 after-iteration hook ——
+     * 这些由下游 executeObserve 统一处理。
      *
      * @param ctx       循环上下文
      * @param toolCalls 待执行的工具调用列表
@@ -276,60 +263,17 @@ public class LoopExecutor {
     }
 
     /**
-     * 执行观察阶段：递增迭代并分发 after-iteration Hook。
+     * 执行观察阶段并递归回 runStream。
      *
-     * <p>每次迭代恰好调用一次，由 executePhase 链式进入。
-     * 触发 AFTER_ITERATION Hook → SessionPersistenceHook 持久化。
+     * <p>递增迭代计数，分发 AFTER_ITERATION Hook，然后递归进入下一轮循环。
      *
      * @param ctx 循环上下文
-     * @return 完成信号
+     * @return 完成信号后递归
      */
     private Flux<ChatStreamChunk> executeObserve(LoopContext ctx) {
         ctx.setIteration(ctx.getIteration() + 1);
         return dispatchAfterIteration(ctx)
-                .thenMany(Flux.<ChatStreamChunk>empty());
-    }
-
-    /**
-     * 状态机路由中枢。
-     *
-     * <p>根据引擎决策执行对应阶段，阶段完成后回访引擎获取下一决策，
-     * 通过 concatWith + defer 实现订阅级递归（非调用栈递归）。
-     * Stop 时返回空 Flux 结束递归。
-     *
-     * <p>介入中断检测：Reason 阶段前检查 ctx.isInterrupted()，
-     * 中断时跳过模型调用但允许 Observe 完成持久化后再终止递归。
-     *
-     * @param decision 引擎决策
-     * @param ctx      循环上下文
-     * @return 流式输出 chunk 序列
-     */
-    private Flux<ChatStreamChunk> executePhase(Decision decision, LoopContext ctx) {
-        if (decision.isStop()) {
-            return Flux.empty();
-        }
-        Phase next = decision.getNextPhase();
-
-        // 中断时跳过推理阶段，避免不必要的模型调用
-        // Observe 不受影响，确保持久化在中断前完成
-        if (next.isReason() && ctx.isInterrupted()) {
-            return Flux.empty();
-        }
-
-        Flux<ChatStreamChunk> phaseFlux;
-        if (next.isReason()) {
-            phaseFlux = executeReason(ctx);
-        } else if (next.isAct()) {
-            phaseFlux = executeAct(ctx, next.getToolCalls());
-        } else if (next.isObserve()) {
-            phaseFlux = executeObserve(ctx);
-        } else {
-            phaseFlux = Flux.empty();
-        }
-        return phaseFlux.concatWith(Flux.defer(() -> {
-            Decision nextDecision = engine.evaluate(next, ctx);
-            return executePhase(nextDecision, ctx);
-        }));
+                .thenMany(Flux.defer(() -> runStream(ctx)));
     }
 
     /**
@@ -419,10 +363,13 @@ public class LoopExecutor {
                         ctx.clearInterrupt();
                         return runStream(ctx);
                     }
-                    Msg lastMsg = ctx.getLastResponse() != null
-                            ? ctx.getLastResponse().getMessage() : null;
-                    String reason = lastMsg != null ? lastMsg.getTextContent() : UI.INTERRUPT_EXEC;
-                    return Flux.just(ChatStreamChunk.of(reason, FinishReason.INTERRUPTED));
+                    String reason = ctx.getLastResponse() != null
+                            && ctx.getLastResponse().getMessage() != null
+                            ? ctx.getLastResponse().getMessage().getTextContent()
+                            : UI.INTERRUPT_EXEC;
+                    ChatResponse ir = buildInterruptedResponse(reason);
+                    return Flux.just(ChatStreamChunk.of(
+                            ir.getMessage().getTextContent(), FinishReason.INTERRUPTED));
                 });
     }
 
@@ -471,22 +418,70 @@ public class LoopExecutor {
     }
 
     /**
-     * 构建 Hook 分发的上下文对象。
+     * 介入恢复入口，委托给 InterventionResolver 后根据 Action 路由。
      *
      * @param ctx 循环上下文
-     * @return Hook 上下文
+     * @return 恢复后的流式 chunk 序列
      */
+    private Flux<ChatStreamChunk> resolveInterventionEntry(LoopContext ctx) {
+        InterventionResolver.ResolvedIntervention resolved =
+                interventionResolver.resolveForRecovery(ctx);
+        switch (resolved.getAction()) {
+            case RE_ENTER:
+                ctx.getInterventionState().clear();
+                return runStream(ctx);
+            case RETURN_CHUNK:
+                return Flux.just(resolved.getChunk());
+            case EXECUTE_AND_CONTINUE:
+                return resolveAndContinue(ctx, resolved.getCallId(), resolved.getExecution());
+            default:
+                return Flux.empty();
+        }
+    }
+
     /**
-     * 从 {@link ChatResponse} 构建文本类型的输出 chunk。
+     * 从 lastResponse 中提取 ToolUseBlock 列表。
      *
-     * @param resp 模型回复
-     * @return 输出 chunk
+     * @param ctx 循环上下文
+     * @return 工具调用列表，无则返回 null
      */
-    private static ChatStreamChunk chunkFromResponse(ChatResponse resp) {
-        if (resp == null || resp.getMessage() == null) return ChatStreamChunk.of("", "");
-        return ChatStreamChunk.builder()
-                .delta(resp.getMessage() != null ? resp.getMessage().getTextContent() : "")
-                .finishReason(resp.getFinishReason())
+    private List<ToolUseBlock> extractToolCalls(LoopContext ctx) {
+        ChatResponse resp = ctx.getLastResponse();
+        if (resp != null && resp.getMessage() != null) {
+            return resp.getMessage().getToolUseBlocks();
+        }
+        return null;
+    }
+
+    /**
+     * 完成流：构建 stop chunk 并返回。
+     *
+     * @param ctx 循环上下文
+     * @return stop chunk Flux
+     */
+    private Flux<ChatStreamChunk> finalizeStream(LoopContext ctx) {
+        ChatResponse lastResp = ctx.getLastResponse();
+        if (lastResp != null && lastResp.getMessage() != null) {
+            return Flux.just(ChatStreamChunk.builder()
+                    .delta(lastResp.getMessage().getTextContent())
+                    .finishReason(lastResp.getFinishReason() != null
+                            ? lastResp.getFinishReason() : FinishReason.STOP)
+                    .build());
+        }
+        return Flux.just(ChatStreamChunk.of("", FinishReason.STOP));
+    }
+
+    /**
+     * 构建中断终止响应。
+     *
+     * @param reason 中断原因
+     * @return 中断响应
+     */
+    private static ChatResponse buildInterruptedResponse(String reason) {
+        Msg msg = Msg.builder(MsgRole.ASSISTANT)
+                .addText(UI.INTERRUPT_PREFIX + reason + UI.INTERRUPT_SUFFIX)
+                .putMetadata(EventPayload.INTERRUPT_ID, reason)
                 .build();
+        return new ChatResponse(msg, new ChatUsage(0, 0), FinishReason.INTERRUPTED, "");
     }
 }

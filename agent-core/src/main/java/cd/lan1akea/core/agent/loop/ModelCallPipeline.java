@@ -1,7 +1,9 @@
 package cd.lan1akea.core.agent.loop;
 
+import cd.lan1akea.core.CoreConstants.EventPayload;
 import cd.lan1akea.core.CoreConstants.FinishReason;
 import cd.lan1akea.core.CoreConstants.HookSource;
+import cd.lan1akea.core.CoreConstants.UI;
 import cd.lan1akea.core.exception.HookAbortException;
 import cd.lan1akea.core.hook.AroundHookChain;
 import cd.lan1akea.core.hook.HookContext;
@@ -12,6 +14,7 @@ import cd.lan1akea.core.hook.HookEventType;
 import cd.lan1akea.core.message.AssistantMessage;
 import cd.lan1akea.core.message.ContentBlock;
 import cd.lan1akea.core.message.Msg;
+import cd.lan1akea.core.message.MsgRole;
 import cd.lan1akea.core.message.TextBlock;
 import cd.lan1akea.core.message.ToolUseBlock;
 import cd.lan1akea.core.metrics.AgentMetrics;
@@ -92,9 +95,17 @@ public class ModelCallPipeline {
                         return Flux.error(new HookAbortException(HookSource.HOOK, r.getAbortReason()));
                     }
                     if (r.isInterrupt()) {
-                        ChatResponse ir = LoopDecisionEngine.buildInterruptedResponse(
-                                r.getInterruptReason());
-                        return Flux.just(chunkFromMessage(ir.getMessage(), FinishReason.INTERRUPTED));
+                        Msg irMsg = Msg.builder(MsgRole.ASSISTANT)
+                                .addText(UI.INTERRUPT_PREFIX + r.getInterruptReason()
+                                        + UI.INTERRUPT_SUFFIX)
+                                .putMetadata(EventPayload.INTERRUPT_ID,
+                                        r.getInterruptReason())
+                                .build();
+                        ChatResponse ir = new ChatResponse(irMsg, new ChatUsage(0, 0),
+                                FinishReason.INTERRUPTED, "");
+                        return Flux.just(ChatStreamChunk.of(
+                                ir.getMessage().getTextContent(),
+                                FinishReason.INTERRUPTED));
                     }
                     if (pre.getBypassMessage() != null) {
                         String text = pre.getBypassMessage().getTextContent();
