@@ -8,7 +8,7 @@ import cd.lan1akea.core.hook.HookContext;
 import cd.lan1akea.core.hook.HookDispatcher;
 import cd.lan1akea.core.hook.HookEvent;
 import cd.lan1akea.core.hook.HookEventType;
-import cd.lan1akea.core.hook.ReasoningEvent;
+
 import cd.lan1akea.core.message.AssistantMessage;
 import cd.lan1akea.core.message.ContentBlock;
 import cd.lan1akea.core.message.Msg;
@@ -83,7 +83,7 @@ public class ModelCallPipeline {
      */
     public Flux<ChatStreamChunk> executeStream(LoopContext ctx) {
         HookContext hc = ctx.toHookContext();
-        ReasoningEvent pre = new ReasoningEvent(HookEventType.PRE_REASONING);
+        HookEvent pre = new HookEvent(HookEventType.PRE_REASONING);
         pre.setMessages(ctx.getMessages());
 
         return hookDispatcher.dispatch(pre, hc)
@@ -127,7 +127,7 @@ public class ModelCallPipeline {
      * @param pre  预推理事件（传递给 aroundHook）
      * @return 模型流式输出的分块序列
      */
-    private Flux<ChatStreamChunk> callModelStream(LoopContext ctx, HookContext hc, ReasoningEvent pre) {
+    private Flux<ChatStreamChunk> callModelStream(LoopContext ctx, HookContext hc, HookEvent pre) {
         List<ToolSchema> schemas = toolRegistry.getSchemas(
                 ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId());
 
@@ -177,7 +177,7 @@ public class ModelCallPipeline {
      * @return 空 Flux（不发射元素）
      */
     private Flux<ChatStreamChunk> firePostReasoningHook(HookContext hc) {
-        return hookDispatcher.dispatch(new ReasoningEvent(HookEventType.POST_REASONING), hc)
+        return hookDispatcher.dispatch(new HookEvent(HookEventType.POST_REASONING), hc)
                 .then(Mono.<ChatStreamChunk>empty()).flux();
     }
 

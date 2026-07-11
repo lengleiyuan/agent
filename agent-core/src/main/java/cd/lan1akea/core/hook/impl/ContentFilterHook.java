@@ -58,17 +58,14 @@ public class ContentFilterHook implements Hook {
      */
     @Override
     public Mono<HookResult> onEvent(HookEvent event, HookContext context) {
-        if (event instanceof ReasoningEvent) {
-            ReasoningEvent re = (ReasoningEvent) event;
-            List<Msg> messages = re.getMessages();
-            if (messages != null) {
-                for (Msg msg : messages) {
-                    String text = msg.getTextContent();
-                    for (String blocked : blockedWords) {
-                        if (text != null && text.contains(blocked)) {
-                            return Mono.just(HookResult.abort(
-                                "内容包含敏感词: " + blocked));
-                        }
+        List<Msg> messages = event.getMessages();
+        if (messages != null) {
+            for (Msg msg : messages) {
+                String text = msg.getTextContent();
+                for (String blocked : blockedWords) {
+                    if (text != null && text.contains(blocked)) {
+                        return Mono.just(HookResult.abort(
+                            "内容包含敏感词: " + blocked));
                     }
                 }
             }

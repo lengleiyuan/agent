@@ -130,7 +130,7 @@ public class LoopExecutor {
      */
     private Flux<ChatStreamChunk> dispatchSummarizeHook(LoopContext ctx) {
         HookContext hc = ctx.toHookContext();
-        ReasoningEvent event = new ReasoningEvent(HookEventType.PRE_SUMMARIZE);
+        HookEvent event = new HookEvent(HookEventType.PRE_SUMMARIZE);
         event.setMessages(ctx.getMessages());
 
         return hookDispatcher.dispatch(event, hc)

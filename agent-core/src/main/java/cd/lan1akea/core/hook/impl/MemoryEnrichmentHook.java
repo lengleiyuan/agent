@@ -75,11 +75,10 @@ public class MemoryEnrichmentHook implements Hook {
      */
     @Override
     public Mono<HookResult> onEvent(HookEvent event, HookContext context) {
-        if (!(event instanceof ReasoningEvent) || memory == null)
+        if (event.getMessages() == null || memory == null)
             return Mono.just(HookResult.continue_());
 
-        ReasoningEvent re = (ReasoningEvent) event;
-        List<Msg> messages = re.getMessages();
+        List<Msg> messages = event.getMessages();
         if (messages == null || messages.isEmpty()) return Mono.just(HookResult.continue_());
 
         // 取最后一条用户消息作为检索查询
@@ -108,7 +107,7 @@ public class MemoryEnrichmentHook implements Hook {
                 List<Msg> enriched = new ArrayList<>(messages.size() + 1);
                 enriched.add(SystemMessage.of(sb.toString()));
                 enriched.addAll(messages);
-                re.setMessages(enriched);
+                event.setMessages(enriched);
                 return Mono.just(HookResult.modify("注入了 " + entries.size() + " 条相关记忆"));
             }
         } catch (Exception ignored) {}

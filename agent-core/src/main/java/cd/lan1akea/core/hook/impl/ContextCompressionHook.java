@@ -78,8 +78,8 @@ public class ContextCompressionHook implements Hook {
      */
     @Override
     public Mono<HookResult> onEvent(HookEvent event, HookContext context) {
-        if (!(event instanceof ReasoningEvent re)) return Mono.just(HookResult.continue_());
-        List<Msg> messages = re.getMessages();
+        if (event.getMessages() == null) return Mono.just(HookResult.continue_());
+        List<Msg> messages = event.getMessages();
         if (messages == null) return Mono.just(HookResult.continue_());
 
         int estimatedTokens = contextWindow.estimateTokens(messages);
@@ -90,7 +90,7 @@ public class ContextCompressionHook implements Hook {
 
         return strategy.compact(messages, compactionContext)
             .map(compressed -> {
-                re.setMessages(compressed);
+                event.setMessages(compressed);
                 return HookResult.modify("压缩完成: " + messages.size()
                     + " → " + compressed.size() + " 条消息");
             });

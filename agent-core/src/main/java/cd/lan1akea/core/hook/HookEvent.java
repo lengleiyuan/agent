@@ -1,8 +1,12 @@
 package cd.lan1akea.core.hook;
 
 
+import cd.lan1akea.core.CoreConstants;
+import cd.lan1akea.core.message.Msg;
+
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -68,5 +72,39 @@ public class HookEvent {
      */
     public String getEventType() {
         return eventType != null ? "hook:" + eventType.name().toLowerCase() : "hook:aroundCall";
+    }
+
+    /**
+     * 设置当前消息列表。
+     *
+     * @param messages 消息列表
+     */
+    public void setMessages(List<Msg> messages) {
+        setPayload(CoreConstants.EventPayload.MESSAGES, messages);
+    }
+
+    /**
+     * @return 消息列表，可能为 null
+     */
+    @SuppressWarnings("unchecked")
+    public List<Msg> getMessages() {
+        return getPayload(CoreConstants.EventPayload.MESSAGES);
+    }
+
+    /**
+     * 设置绕过模型调用的直接回复消息。
+     * 非 null 时调用方跳过模型直接返回此消息。
+     *
+     * @param msg 直接回复消息
+     */
+    public void setBypassMessage(Msg msg) {
+        setPayload(CoreConstants.EventPayload.BYPASS_MESSAGE, msg);
+    }
+
+    /**
+     * @return 绕过消息，null 表示正常走模型
+     */
+    public Msg getBypassMessage() {
+        return getPayload(CoreConstants.EventPayload.BYPASS_MESSAGE);
     }
 }
