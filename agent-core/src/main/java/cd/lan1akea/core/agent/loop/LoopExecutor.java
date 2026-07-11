@@ -393,7 +393,7 @@ public class LoopExecutor {
     /**
      * 处理中断流：分发中断事件 Hook，根据结果决定中止或恢复。
      *
-     * <p>通过 {@link HookDispatcher} 分发 {@link InterruptEvent}，
+     * <p>通过 {@link HookDispatcher} 分发 {@link HookEvent#interrupt(String, String)}，
      * 如果 hook 返回 abort 则生成中断结束 chunk；
      * 否则注入反馈消息后恢复循环，或返回已中断原因。
      *
@@ -403,7 +403,7 @@ public class LoopExecutor {
     private Flux<ChatStreamChunk> handleInterruptStream(LoopContext ctx) {
         Msg feedback = ctx.getFeedbackMsg();
         HookContext hc = ctx.toHookContext();
-        InterruptEvent ie = new InterruptEvent(
+        HookEvent ie = HookEvent.interrupt(
                 feedback != null ? feedback.getTextContent() : UI.INTERRUPT_EXTERNAL, null);
 
         return hookDispatcher.dispatch(ie, hc)

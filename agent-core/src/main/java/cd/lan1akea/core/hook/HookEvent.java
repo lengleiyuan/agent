@@ -6,6 +6,7 @@ import cd.lan1akea.core.message.Msg;
 import cd.lan1akea.core.tool.Tool;
 import cd.lan1akea.core.tool.ToolCallContext;
 import cd.lan1akea.core.tool.ToolResult;
+import cd.lan1akea.core.util.IdGenerator;
 
 import java.util.Collections;
 import java.util.HashMap;
@@ -157,5 +158,90 @@ public class HookEvent {
      */
     public void setResult(ToolResult result) {
         setPayload(CoreConstants.EventPayload.RESULT, result);
+    }
+
+    /**
+     * @return 中断唯一标识
+     */
+    public String getInterruptId() {
+        return getPayload(CoreConstants.EventPayload.INTERRUPT_ID);
+    }
+
+    /**
+     * @return 中断原因描述
+     */
+    public String getInterruptReason() {
+        return getPayload(CoreConstants.EventPayload.INTERRUPT_REASON);
+    }
+
+    /**
+     * @return 是否已解决
+     */
+    public boolean isResolvedInterrupt() {
+        Boolean resolved = getPayload(CoreConstants.EventPayload.RESOLVED);
+        return resolved != null && resolved;
+    }
+
+    /**
+     * 标记中断为已解决。
+     *
+     * @param resolution 解决结果
+     */
+    public void resolveInterrupt(Object resolution) {
+        setPayload(CoreConstants.EventPayload.RESOLVED, true);
+        setPayload(CoreConstants.EventPayload.RESOLUTION, resolution);
+    }
+
+    /**
+     * @return 解决结果
+     */
+    public Object getResolution() {
+        return getPayload(CoreConstants.EventPayload.RESOLUTION);
+    }
+
+    /**
+     * @return 异常对象，可能为 null
+     */
+    public Throwable getError() {
+        return getPayload(CoreConstants.EventPayload.ERROR);
+    }
+
+    /**
+     * @return 异常消息，可能为 null
+     */
+    public String getErrorMessage() {
+        return getPayload(CoreConstants.EventPayload.ERROR_MESSAGE);
+    }
+
+    /**
+     * 创建中断事件。
+     *
+     * @param reason   中断原因
+     * @param toolName 触发工具名
+     * @return 中断事件
+     */
+    public static HookEvent interrupt(String reason, String toolName) {
+        HookEvent e = new HookEvent(HookEventType.ON_INTERRUPT);
+        e.setPayload(CoreConstants.EventPayload.INTERRUPT_ID, IdGenerator.nextIdStr());
+        e.setPayload(CoreConstants.EventPayload.INTERRUPT_REASON, reason);
+        e.setPayload(CoreConstants.EventPayload.TOOL_NAME, toolName);
+        e.setPayload(CoreConstants.EventPayload.RESOLVED, false);
+        return e;
+    }
+
+    /**
+     * 创建错误事件。
+     *
+     * @param error 异常对象
+     * @return 错误事件
+     */
+    public static HookEvent error(Throwable error) {
+        HookEvent e = new HookEvent(HookEventType.ON_ERROR);
+        e.setPayload(CoreConstants.EventPayload.ERROR, error);
+        if (error.getMessage() != null) {
+            e.setPayload(CoreConstants.EventPayload.ERROR_MESSAGE, error.getMessage());
+        }
+        e.setPayload(CoreConstants.EventPayload.ERROR_TYPE, error.getClass().getName());
+        return e;
     }
 }

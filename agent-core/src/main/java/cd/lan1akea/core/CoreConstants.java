@@ -47,13 +47,13 @@ public static final class RuntimeCtx {
         public static final String RESPONSE = "response";
         /** 模型调用响应（AroundHook 内传递） */
         public static final String CHAT_RESPONSE = "chat_response";
-        /** 工具调用参数（InterruptEvent） */
+        /** 工具调用参数 */
         public static final String ARGUMENTS = "arguments";
-        /** 最近消息列表（InterruptEvent） */
+        /** 最近消息列表 */
         public static final String RECENT_MESSAGES = "recentMessages";
-        /** 工具描述（InterruptEvent） */
+        /** 工具描述 */
         public static final String TOOL_DESCRIPTION = "toolDescription";
-        /** 风险等级（InterruptEvent） */
+        /** 风险等级 */
         public static final String RISK_LEVEL = "riskLevel";
         /** LoopContext 引用（AFTER_ITERATION） */
         public static final String LOOP_CONTEXT = "loopContext";
@@ -81,6 +81,18 @@ public static final class RuntimeCtx {
         public static final String CALL_PARAM = "callParam";
         /** 工具执行结果 */
         public static final String RESULT = "result";
+        /** 中断原因 */
+        public static final String INTERRUPT_REASON = "interruptReason";
+        /** 是否已解决 */
+        public static final String RESOLVED = "resolved";
+        /** 解决结果 */
+        public static final String RESOLUTION = "resolution";
+        /** 异常对象 */
+        public static final String ERROR = "error";
+        /** 异常消息 */
+        public static final String ERROR_MESSAGE = "errorMessage";
+        /** 异常类型名 */
+        public static final String ERROR_TYPE = "errorType";
 
         private EventPayload() {}
     }
