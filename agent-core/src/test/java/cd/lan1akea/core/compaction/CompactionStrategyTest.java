@@ -398,8 +398,8 @@ class CompactionStrategyTest {
         messages.add(UserMessage.of("总结一下"));
 
         // 模拟 ReActLoop 的 PRE_REASONING dispatch
-        cd.lan1akea.core.hook.ReasoningEvent event =
-            new cd.lan1akea.core.hook.ReasoningEvent(cd.lan1akea.core.hook.HookEventType.PRE_REASONING);
+        cd.lan1akea.core.hook.HookEvent event =
+            new cd.lan1akea.core.hook.HookEvent(cd.lan1akea.core.hook.HookEventType.PRE_REASONING);
         event.setMessages(messages);
 
         cd.lan1akea.core.hook.HookContext hc = new cd.lan1akea.core.hook.HookContext(

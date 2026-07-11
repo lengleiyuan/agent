@@ -24,21 +24,20 @@ class LoopExecutorTest {
 
     @Mock private ChatModel model;
     @Mock private ToolExecutor toolExecutor;
-    @Mock private HookDispatcher hookDispatcher;
-    @Mock private HookChain hookChain;
 
+    private HookDispatcher hookDispatcher;
     private ToolRegistry toolRegistry;
     private LoopExecutor executor;
 
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        when(hookDispatcher.dispatch(any(), any())).thenReturn(Mono.just(HookResult.continue_()));
 
         toolRegistry = new ToolRegistry();
         AroundHookChain aroundHooks = new AroundHookChain();
+        hookDispatcher = spy(new HookDispatcher(new HookChain()));
+        doReturn(Mono.just(HookResult.continue_())).when(hookDispatcher).dispatch(any(), any());
 
-        LoopDecisionEngine engine = new LoopDecisionEngine();
         ModelCallPipeline modelPipeline = new ModelCallPipeline(
                 model, hookDispatcher, toolRegistry, aroundHooks, AgentMetrics.NOOP);
         ToolCallOrchestrator orchestrator = new ToolCallOrchestrator(
@@ -47,7 +46,7 @@ class LoopExecutorTest {
         cd.lan1akea.core.intervention.InMemoryInterventionStore store =
                 new cd.lan1akea.core.intervention.InMemoryInterventionStore();
         InterventionResolver resolver = new InterventionResolver(store, orchestrator);
-        executor = new LoopExecutor(engine, modelPipeline, orchestrator, hookDispatcher,
+        executor = new LoopExecutor(modelPipeline, orchestrator, hookDispatcher,
                 AgentMetrics.NOOP, new Cl100kTokenEstimator(), resolver);
     }
 
@@ -202,17 +201,14 @@ class LoopExecutorTest {
     @Test
     void maxIterations_bypassMessage_shouldSkipModel() {
         // Hook sets bypassMessage → model never called
-        when(hookDispatcher.dispatch(any(HookEvent.class), any()))
-                .thenAnswer(inv -> {
+        doAnswer(inv -> {
                     HookEvent event = inv.getArgument(0);
                     if (event.getHookEventType() == HookEventType.PRE_SUMMARIZE) {
-                        if (event instanceof ReasoningEvent) {
-                            ((ReasoningEvent) event).setBypassMessage(
-                                    Msg.builder(MsgRole.ASSISTANT).addText("自定义摘要").build());
-                        }
+                        event.setBypassMessage(
+                                Msg.builder(MsgRole.ASSISTANT).addText("自定义摘要").build());
                     }
                     return Mono.just(HookResult.continue_());
-                });
+                }).when(hookDispatcher).dispatch(any(HookEvent.class), any());
 
         LoopContext ctx = LoopContext.builder()
                 .agentName("test").messages(List.of(UserMessage.of("hi")))
@@ -260,8 +256,8 @@ class LoopExecutorTest {
 
         verify(hookDispatcher, atLeastOnce()).dispatch(
                 argThat(e -> e.getHookEventType() == HookEventType.PRE_REASONING
-                        && e instanceof ReasoningEvent
-                        && !((ReasoningEvent) e).getMessages().isEmpty()),
+                        && e.getMessages() != null
+                        && !e.getMessages().isEmpty()),
                 any());
     }
 

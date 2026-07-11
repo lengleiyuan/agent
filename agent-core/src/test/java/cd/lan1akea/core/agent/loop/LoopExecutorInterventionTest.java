@@ -29,9 +29,9 @@ class LoopExecutorInterventionTest {
 
     @Mock private ChatModel model;
     @Mock private ToolExecutor toolExecutor;
-    @Mock private HookDispatcher hookDispatcher;
     @Mock private InterventionStore interventionStore;
 
+    private HookDispatcher hookDispatcher;
     private ToolRegistry toolRegistry;
     private LoopExecutor executor;
     private ToolCallContext capturedCallParam;
@@ -39,12 +39,12 @@ class LoopExecutorInterventionTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        when(hookDispatcher.dispatch(any(), any())).thenReturn(Mono.just(HookResult.continue_()));
 
         toolRegistry = new ToolRegistry();
         AroundHookChain aroundHooks = new AroundHookChain();
+        hookDispatcher = spy(new HookDispatcher(new HookChain()));
+        doReturn(Mono.just(HookResult.continue_())).when(hookDispatcher).dispatch(any(), any());
 
-        LoopDecisionEngine engine = new LoopDecisionEngine();
         ModelCallPipeline modelPipeline = new ModelCallPipeline(
                 model, hookDispatcher, toolRegistry, aroundHooks, AgentMetrics.NOOP);
         ToolCallOrchestrator orchestrator = new ToolCallOrchestrator(
@@ -52,7 +52,7 @@ class LoopExecutorInterventionTest {
 
         InterventionResolver interventionResolver =
                 new InterventionResolver(interventionStore, orchestrator);
-        executor = new LoopExecutor(engine, modelPipeline, orchestrator, hookDispatcher,
+        executor = new LoopExecutor(modelPipeline, orchestrator, hookDispatcher,
                 AgentMetrics.NOOP, new Cl100kTokenEstimator(), interventionResolver);
     }
 

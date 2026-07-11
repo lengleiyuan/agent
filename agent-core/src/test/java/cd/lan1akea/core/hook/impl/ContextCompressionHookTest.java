@@ -44,7 +44,7 @@ class ContextCompressionHookTest {
         String longText = "x".repeat(6900);
         messages.add(UserMessage.of(longText));
 
-        ReasoningEvent event = new ReasoningEvent(HookEventType.PRE_REASONING);
+        HookEvent event = new HookEvent(HookEventType.PRE_REASONING);
         event.setMessages(messages);
 
         HookResult result = hook.onEvent(event,
@@ -58,7 +58,7 @@ class ContextCompressionHookTest {
     void testSkipsWhenUnderLimit() {
         List<Msg> messages = List.of(UserMessage.of("short message"));
 
-        ReasoningEvent event = new ReasoningEvent(HookEventType.PRE_REASONING);
+        HookEvent event = new HookEvent(HookEventType.PRE_REASONING);
         event.setMessages(messages);
 
         HookResult result = hook.onEvent(event,

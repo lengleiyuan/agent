@@ -82,9 +82,7 @@ class HookThreadSafetyDemoTest {
         }
         @Override
         public Mono<HookResult> onEvent(HookEvent event, HookContext context) {
-            if (event instanceof ReasoningEvent re) {
-                re.setPayload("timing_ns", System.nanoTime());
-            }
+            event.setPayload("timing_ns", System.nanoTime());
             return Mono.just(HookResult.continue_());
         }
     }
@@ -131,9 +129,9 @@ class HookThreadSafetyDemoTest {
                         String sid = "s-" + tid;
                         HookContext ctx = new HookContext("a", "t", sid, "u", i, null, null);
                         chain.fire(HookEventType.PRE_REASONING,
-                            new ReasoningEvent(HookEventType.PRE_REASONING), ctx).block();
+                            new HookEvent(HookEventType.PRE_REASONING), ctx).block();
                         chain.fire(HookEventType.POST_REASONING,
-                            new ReasoningEvent(HookEventType.POST_REASONING), ctx).block();
+                            new HookEvent(HookEventType.POST_REASONING), ctx).block();
                     }
                 } catch (Throwable e) {
                     failures.add(e);
@@ -180,9 +178,9 @@ class HookThreadSafetyDemoTest {
                         String sid = "s-" + tid;  // 每个线程独立的 sessionId
                         HookContext ctx = new HookContext("a", "t", sid, "u", i, null, null);
                         chain.fire(HookEventType.PRE_REASONING,
-                            new ReasoningEvent(HookEventType.PRE_REASONING), ctx).block();
+                            new HookEvent(HookEventType.PRE_REASONING), ctx).block();
                         chain.fire(HookEventType.POST_REASONING,
-                            new ReasoningEvent(HookEventType.POST_REASONING), ctx).block();
+                            new HookEvent(HookEventType.POST_REASONING), ctx).block();
                     }
                 } catch (Throwable e) {
                     failures.add(e);
@@ -223,9 +221,9 @@ class HookThreadSafetyDemoTest {
                         // 所有线程用同一个 sessionId + 同一个 iteration → key 碰撞
                         HookContext ctx = new HookContext("a", "t", sharedSession, "u", i, null, null);
                         chain.fire(HookEventType.PRE_REASONING,
-                            new ReasoningEvent(HookEventType.PRE_REASONING), ctx).block();
+                            new HookEvent(HookEventType.PRE_REASONING), ctx).block();
                         chain.fire(HookEventType.POST_REASONING,
-                            new ReasoningEvent(HookEventType.POST_REASONING), ctx).block();
+                            new HookEvent(HookEventType.POST_REASONING), ctx).block();
                     }
                 } finally {
                     latch.countDown();
@@ -269,11 +267,11 @@ class HookThreadSafetyDemoTest {
                         HookContext ctx = new HookContext("a", "t", "s", "u", i, null, null);
 
                         // PRE 写入 event payload
-                        ReasoningEvent preEvent = new ReasoningEvent(HookEventType.PRE_REASONING);
+                        HookEvent preEvent = new HookEvent(HookEventType.PRE_REASONING);
                         chain.fire(HookEventType.PRE_REASONING, preEvent, ctx).block();
 
                         // POST 从 event payload 读取——手动传递
-                        ReasoningEvent postEvent = new ReasoningEvent(HookEventType.POST_REASONING);
+                        HookEvent postEvent = new HookEvent(HookEventType.POST_REASONING);
                         postEvent.setPayload("timing_ns", preEvent.getPayload("timing_ns"));
                         chain.fire(HookEventType.POST_REASONING, postEvent, ctx).block();
                     }

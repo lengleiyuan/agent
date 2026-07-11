@@ -507,15 +507,15 @@ class SdkCapabilityShowcaseTest {
             @Override public String getName() { return "Injector"; }
             @Override public Set<HookEventType> getSubscribedEventTypes() { return Set.of(HookEventType.PRE_REASONING); }
             @Override public Mono<HookResult> onEvent(HookEvent event, HookContext context) {
-                if (event instanceof ReasoningEvent re) {
-                    re.getMessages().add(SystemMessage.of("注入的额外指令"));
-                    return Mono.just(HookResult.modify(re));
+                if (event.getMessages() != null) {
+                    event.getMessages().add(SystemMessage.of("注入的额外指令"));
+                    return Mono.just(HookResult.modify(event));
                 }
                 return Mono.just(HookResult.continue_());
             }
         });
 
-        ReasoningEvent event = new ReasoningEvent(HookEventType.PRE_REASONING);
+        HookEvent event = new HookEvent(HookEventType.PRE_REASONING);
         List<Msg> messages = new ArrayList<>();
         messages.add(UserMessage.of("你好"));
         event.setMessages(messages);

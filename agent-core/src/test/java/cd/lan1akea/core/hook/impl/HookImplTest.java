@@ -91,7 +91,7 @@ class HookImplTest {
         ContentFilterHook hook = new ContentFilterHook("filter",
             List.of("badword", "secret"));
 
-        ReasoningEvent event = new ReasoningEvent(HookEventType.POST_REASONING);
+        HookEvent event = new HookEvent(HookEventType.POST_REASONING);
         event.setMessages(List.of(
             cd.lan1akea.core.message.UserMessage.of("This contains badword in it")));
 
@@ -107,7 +107,7 @@ class HookImplTest {
         ContentFilterHook hook = new ContentFilterHook("filter",
             List.of("badword"));
 
-        ReasoningEvent event = new ReasoningEvent(HookEventType.POST_REASONING);
+        HookEvent event = new HookEvent(HookEventType.POST_REASONING);
         event.setMessages(List.of(
             cd.lan1akea.core.message.UserMessage.of("This is clean content")));
 
@@ -121,7 +121,7 @@ class HookImplTest {
     void testContentFilterEmptyBlockedWords() {
         ContentFilterHook hook = new ContentFilterHook();
 
-        ReasoningEvent event = new ReasoningEvent(HookEventType.POST_REASONING);
+        HookEvent event = new HookEvent(HookEventType.POST_REASONING);
         event.setMessages(List.of(
             cd.lan1akea.core.message.UserMessage.of("anything")));
 
