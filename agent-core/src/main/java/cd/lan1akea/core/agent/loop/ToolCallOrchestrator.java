@@ -168,7 +168,6 @@ public class ToolCallOrchestrator {
                         (HookEvent e) -> toolExecutor.execute(param)
                                 .map(result -> {
                                 e.setPayload(EventPayload.TOOL_RESULT, result);
-                                    e.setResult(result);
                                     return e;
                                 }))
                 .flatMap(e -> Mono.justOrEmpty((ToolResult) e.getPayload(EventPayload.TOOL_RESULT)));
