@@ -65,13 +65,13 @@ public class ToolAccessHook implements Hook {
      */
     @Override
     public Mono<HookResult> onEvent(HookEvent event, HookContext context) {
-        if (!(event instanceof ToolCallEvent tce)) {
+        if (event.getCallParam() == null) {
             return Mono.just(HookResult.continue_());
         }
 
         String tenantId = context != null ? context.getTenantId() : null;
-        String toolName = tce.getCallParam() != null
-            ? tce.getCallParam().getToolName() : "unknown";
+        String toolName = event.getCallParam() != null
+            ? event.getCallParam().getToolName() : "unknown";
 
         if (!policy.isAllowed(tenantId, toolName)) {
             return Mono.just(HookResult.abort(

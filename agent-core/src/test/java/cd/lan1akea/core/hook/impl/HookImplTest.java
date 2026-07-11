@@ -216,7 +216,8 @@ class HookImplTest {
         // calc 在 allowlist 中
         cd.lan1akea.core.tool.ToolCallContext param =
             cd.lan1akea.core.tool.ToolCallContext.of("c1", "calc", Map.of());
-        ToolCallEvent event = new ToolCallEvent(HookEventType.PRE_TOOL_CALL, param);
+        HookEvent event = new HookEvent(HookEventType.PRE_TOOL_CALL);
+        event.setCallParam(param);
         HookResult r = hook.onEvent(event,
             new HookContext("a", "t1", null, null, 0, null, null)).block();
 
@@ -232,7 +233,8 @@ class HookImplTest {
         // weather 不在 allowlist 中
         cd.lan1akea.core.tool.ToolCallContext param =
             cd.lan1akea.core.tool.ToolCallContext.of("c1", "weather", Map.of());
-        ToolCallEvent event = new ToolCallEvent(HookEventType.PRE_TOOL_CALL, param);
+        HookEvent event = new HookEvent(HookEventType.PRE_TOOL_CALL);
+        event.setCallParam(param);
         HookResult r = hook.onEvent(event,
             new HookContext("a", "t1", null, null, 0, null, null)).block();
 
@@ -247,14 +249,14 @@ class HookImplTest {
         ToolAccessHook hook = new ToolAccessHook(policy);
 
         // safe_tool 不在 blocklist
-        ToolCallEvent event1 = new ToolCallEvent(HookEventType.PRE_TOOL_CALL,
-            cd.lan1akea.core.tool.ToolCallContext.of("c1", "safe_tool", Map.of()));
+        HookEvent event1 = new HookEvent(HookEventType.PRE_TOOL_CALL);
+        event1.setCallParam(cd.lan1akea.core.tool.ToolCallContext.of("c1", "safe_tool", Map.of()));
         assertTrue(hook.onEvent(event1,
             new HookContext("a", "t1", null, null, 0, null, null)).block().isContinue());
 
         // dangerous 在 blocklist
-        ToolCallEvent event2 = new ToolCallEvent(HookEventType.PRE_TOOL_CALL,
-            cd.lan1akea.core.tool.ToolCallContext.of("c2", "dangerous", Map.of()));
+        HookEvent event2 = new HookEvent(HookEventType.PRE_TOOL_CALL);
+        event2.setCallParam(cd.lan1akea.core.tool.ToolCallContext.of("c2", "dangerous", Map.of()));
         assertTrue(hook.onEvent(event2,
             new HookContext("a", "t1", null, null, 0, null, null)).block().isAbort());
     }
@@ -264,8 +266,8 @@ class HookImplTest {
         cd.lan1akea.core.tool.ToolAccessPolicy policy = new cd.lan1akea.core.tool.ToolAccessPolicy();
         ToolAccessHook hook = new ToolAccessHook(policy);
 
-        ToolCallEvent event = new ToolCallEvent(HookEventType.PRE_TOOL_CALL,
-            cd.lan1akea.core.tool.ToolCallContext.of("c1", "any_tool", Map.of()));
+        HookEvent event = new HookEvent(HookEventType.PRE_TOOL_CALL);
+        event.setCallParam(cd.lan1akea.core.tool.ToolCallContext.of("c1", "any_tool", Map.of()));
         HookResult r = hook.onEvent(event,
             new HookContext("a", "t1", null, null, 0, null, null)).block();
 

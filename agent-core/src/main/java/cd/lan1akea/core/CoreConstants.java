@@ -75,6 +75,12 @@ public static final class RuntimeCtx {
         public static final String MESSAGES = "messages";
         /** 绕过模型调用的直接回复消息 */
         public static final String BYPASS_MESSAGE = "bypassMessage";
+        /** 工具实例 */
+        public static final String TOOL = "tool";
+        /** 工具调用上下文 */
+        public static final String CALL_PARAM = "callParam";
+        /** 工具执行结果 */
+        public static final String RESULT = "result";
 
         private EventPayload() {}
     }

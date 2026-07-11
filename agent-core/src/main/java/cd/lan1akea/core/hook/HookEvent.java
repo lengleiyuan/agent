@@ -3,6 +3,9 @@ package cd.lan1akea.core.hook;
 
 import cd.lan1akea.core.CoreConstants;
 import cd.lan1akea.core.message.Msg;
+import cd.lan1akea.core.tool.Tool;
+import cd.lan1akea.core.tool.ToolCallContext;
+import cd.lan1akea.core.tool.ToolResult;
 
 import java.util.Collections;
 import java.util.HashMap;
@@ -106,5 +109,53 @@ public class HookEvent {
      */
     public Msg getBypassMessage() {
         return getPayload(CoreConstants.EventPayload.BYPASS_MESSAGE);
+    }
+
+    /**
+     * @return 工具实例，可能为 null
+     */
+    public Tool getTool() {
+        return getPayload(CoreConstants.EventPayload.TOOL);
+    }
+
+    /**
+     * 设置工具实例。
+     *
+     * @param tool 工具实例
+     */
+    public void setTool(Tool tool) {
+        setPayload(CoreConstants.EventPayload.TOOL, tool);
+    }
+
+    /**
+     * @return 工具调用上下文，可能为 null
+     */
+    public ToolCallContext getCallParam() {
+        return getPayload(CoreConstants.EventPayload.CALL_PARAM);
+    }
+
+    /**
+     * 设置工具调用上下文。
+     *
+     * @param callParam 工具调用上下文
+     */
+    public void setCallParam(ToolCallContext callParam) {
+        setPayload(CoreConstants.EventPayload.CALL_PARAM, callParam);
+    }
+
+    /**
+     * @return 工具执行结果，可能为 null
+     */
+    public ToolResult getResult() {
+        return getPayload(CoreConstants.EventPayload.RESULT);
+    }
+
+    /**
+     * 设置工具执行结果。
+     *
+     * @param result 工具执行结果
+     */
+    public void setResult(ToolResult result) {
+        setPayload(CoreConstants.EventPayload.RESULT, result);
     }
 }

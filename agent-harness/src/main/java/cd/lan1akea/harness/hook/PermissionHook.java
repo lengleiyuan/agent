@@ -10,7 +10,7 @@ import java.util.function.BiFunction;
 /**
  * 业务权限 Hook（门面层，可选注入）。
  * 无权限时返回 HookResult.skip(String) 跳过该工具并继续推理。
- * Tool 实例由框架自动注入到 ToolCallEvent.getTool()，无需自行注入 ToolRegistry。
+ * Tool 实例由框架自动注入到 HookEvent.getTool()，无需自行注入 ToolRegistry。
  *
  * 示例：
  *     HarnessAgent.builder()
@@ -70,11 +70,11 @@ public class PermissionHook implements Hook {
      */
     @Override
     public Mono<HookResult> onEvent(HookEvent event, HookContext context) {
-        if (!(event instanceof ToolCallEvent tce)) {
+        if (event.getTool() == null) {
             return Mono.just(HookResult.continue_());
         }
 
-        Tool tool = tce.getTool();
+        Tool tool = event.getTool();
         if (tool == null) return Mono.just(HookResult.continue_());
 
         Set<String> requiredPermissions = tool.getPermissions();

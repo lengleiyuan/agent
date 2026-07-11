@@ -61,7 +61,8 @@ public class ToolCallOrchestrator {
     public Mono<ToolResult> execute(ToolUseBlock tc, LoopContext ctx) {
         HookContext hc = ctx.toHookContext();
         ToolCallContext param = buildContext(tc, ctx);
-        ToolCallEvent event = new ToolCallEvent(HookEventType.PRE_TOOL_CALL, param);
+        HookEvent event = new HookEvent(HookEventType.PRE_TOOL_CALL);
+        event.setCallParam(param);
         event.setTool(toolRegistry.getForContext(
                 ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId(), tc.getName()));
 
@@ -92,7 +93,8 @@ public class ToolCallOrchestrator {
      */
     public Mono<ToolResult> executeDirect(ToolCallContext param, LoopContext ctx) {
         HookContext hc = ctx.toHookContext();
-        ToolCallEvent event = new ToolCallEvent(HookEventType.PRE_TOOL_CALL, param);
+        HookEvent event = new HookEvent(HookEventType.PRE_TOOL_CALL);
+        event.setCallParam(param);
         event.setTool(toolRegistry.getForContext(
                 ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId(), param.getToolName()));
 
@@ -129,7 +131,7 @@ public class ToolCallOrchestrator {
      * @param hc    Hook 上下文
      * @return 终止时返回结果 Mono，继续时返回 Mono.empty()
      */
-    private Mono<ToolResult> dispatchPreHook(ToolCallEvent event, HookContext hc) {
+    private Mono<ToolResult> dispatchPreHook(HookEvent event, HookContext hc) {
         return hookDispatcher.dispatch(event, hc)
                 .flatMap(r -> {
                     if (r.isAbort()) {
@@ -139,8 +141,9 @@ public class ToolCallOrchestrator {
                         ToolResult skipped = ToolResult.success(
                                 UI.TOOL_SKIPPED_PREFIX
                                         + (r.getSkipReason() != null ? r.getSkipReason() : UI.TOOL_SKIPPED_DEFAULT));
-                        ToolCallEvent postSkip = new ToolCallEvent(HookEventType.POST_TOOL_CALL,
-                                event.getCallParam(), skipped);
+                        HookEvent postSkip = new HookEvent(HookEventType.POST_TOOL_CALL);
+                        postSkip.setCallParam(event.getCallParam());
+                        postSkip.setResult(skipped);
                         return hookDispatcher.dispatch(postSkip, hc).thenReturn(skipped);
                     }
                     return Mono.empty(); // continue
@@ -159,13 +162,13 @@ public class ToolCallOrchestrator {
      * @param ctx   循环上下文
      * @return 工具执行结果
      */
-    private Mono<ToolResult> executeWithApproval(ToolCallContext param, ToolCallEvent event,
+    private Mono<ToolResult> executeWithApproval(ToolCallContext param, HookEvent event,
                                                    HookContext hc, LoopContext ctx) {
         return aroundHookChain.aroundToolCall(event, hc,
                         (HookEvent e) -> toolExecutor.execute(param)
                                 .map(result -> {
                                 e.setPayload(EventPayload.TOOL_RESULT, result);
-                                    ((ToolCallEvent) e).setResult(result);
+                                    e.setResult(result);
                                     return e;
                                 }))
                 .flatMap(e -> Mono.justOrEmpty((ToolResult) e.getPayload(EventPayload.TOOL_RESULT)));
@@ -182,7 +185,9 @@ public class ToolCallOrchestrator {
      * @return 原始执行结果
      */
     private Mono<ToolResult> dispatchPostHook(ToolCallContext param, ToolResult result, HookContext hc) {
-        ToolCallEvent post = new ToolCallEvent(HookEventType.POST_TOOL_CALL, param, result);
+        HookEvent post = new HookEvent(HookEventType.POST_TOOL_CALL);
+        post.setCallParam(param);
+        post.setResult(result);
         return hookDispatcher.dispatch(post, hc).thenReturn(result);
     }
 

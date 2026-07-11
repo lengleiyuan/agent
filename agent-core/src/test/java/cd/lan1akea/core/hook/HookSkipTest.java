@@ -68,7 +68,8 @@ class HookSkipTest {
         // Hook: 检查权限 → 无权限 → SKIP
         PermissionSkipHook skipHook = new PermissionSkipHook(registry);
         ToolCallContext param = ToolCallContext.of("c1", "protected", Map.of());
-        ToolCallEvent event = new ToolCallEvent(HookEventType.PRE_TOOL_CALL, param);
+        HookEvent event = new HookEvent(HookEventType.PRE_TOOL_CALL);
+        event.setCallParam(param);
 
         HookResult result = skipHook.onEvent(event,
             new HookContext("a", "t", "s", "u", 0, null, null)).block();
@@ -95,7 +96,8 @@ class HookSkipTest {
 
         PermissionSkipHook skipHook = new PermissionSkipHook(registry);
         ToolCallContext param = ToolCallContext.of("c2", "public_tool", Map.of());
-        ToolCallEvent event = new ToolCallEvent(HookEventType.PRE_TOOL_CALL, param);
+        HookEvent event = new HookEvent(HookEventType.PRE_TOOL_CALL);
+        event.setCallParam(param);
 
         HookResult result = skipHook.onEvent(event,
             new HookContext("a", null, null, null, 0, null, null)).block();
@@ -146,8 +148,8 @@ class HookSkipTest {
 
         @Override
         public Mono<HookResult> onEvent(HookEvent event, HookContext ctx) {
-            if (!(event instanceof ToolCallEvent tce)) return Mono.just(HookResult.continue_());
-            String toolName = tce.getCallParam().getToolName();
+            if (event.getCallParam() == null) return Mono.just(HookResult.continue_());
+            String toolName = event.getCallParam().getToolName();
             Tool tool = registry.get(toolName);
             if (tool == null || tool.getPermissions().isEmpty())
                 return Mono.just(HookResult.continue_());
