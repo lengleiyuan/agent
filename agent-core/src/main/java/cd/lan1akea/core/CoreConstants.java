@@ -320,6 +320,8 @@ public static final class RuntimeCtx {
         public static final String PROMPT_TOKENS = "promptTokens";
         /** 输出 token 数 */
         public static final String COMPLETION_TOKENS = "completionTokens";
+        /** 估算标记（流式估算 versus 精确计数） */
+        public static final String ESTIMATED = "estimated";
 
         private Usage() {}
     }

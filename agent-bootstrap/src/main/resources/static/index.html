@@ -466,10 +466,15 @@ async function sendMessage() {
                     } else if (eventType === 'usage') {
                         try {
                             const u = JSON.parse(delta);
-                            streamPromptTokens += u.promptTokens;
-                            streamCompletionTokens += u.completionTokens;
-                            document.getElementById('tokenBadge-' + stream.bubbleId).textContent =
-                                '↑' + streamPromptTokens + ' ↓' + streamCompletionTokens + ' tokens';
+                            if (u.estimated) {
+                                document.getElementById('tokenBadge-' + stream.bubbleId).textContent =
+                                    '↑≈' + u.promptTokens + ' ↓≈' + u.completionTokens + ' tokens';
+                            } else {
+                                streamPromptTokens += u.promptTokens;
+                                streamCompletionTokens += u.completionTokens;
+                                document.getElementById('tokenBadge-' + stream.bubbleId).textContent =
+                                    '↑' + streamPromptTokens + ' ↓' + streamCompletionTokens + ' tokens';
+                            }
                         } catch(e) {}
                     } else if (eventType === 'tool_use_start') {
                         toolCalls.push({ name: chunk.toolName || '', args: '' });

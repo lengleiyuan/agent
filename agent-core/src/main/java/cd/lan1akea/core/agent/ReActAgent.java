@@ -13,6 +13,7 @@ import cd.lan1akea.core.intervention.InterventionStore;
 import cd.lan1akea.core.message.Msg;
 import cd.lan1akea.core.hook.HookPipeline;
 import cd.lan1akea.core.hook.impl.AgentMetricsHook;
+import cd.lan1akea.core.hook.impl.StreamTokenEstimationHook;
 import cd.lan1akea.core.hook.impl.TokenEstimationHook;
 import cd.lan1akea.core.metrics.AgentMetrics;
 import cd.lan1akea.core.model.*;
@@ -105,6 +106,7 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
                 ? config.getAroundHookChain() : new AroundHookChain();
         aroundChain.register(new AgentMetricsHook("AgentMetrics", metrics,
                 model.getModelName(), model.getProvider()));
+        aroundChain.register(new StreamTokenEstimationHook());
         HookPipeline hookPipeline = new HookPipeline(hookDispatcher, aroundChain);
 
         ToolCallOrchestrator toolOrch = new ToolCallOrchestrator(
