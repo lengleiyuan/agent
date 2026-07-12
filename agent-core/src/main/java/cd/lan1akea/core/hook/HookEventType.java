@@ -30,5 +30,9 @@ public enum HookEventType {
     AFTER_ITERATION,
 
     /** 达到最大迭代，进入总结阶段前（可注入提示词或设置 bypassMessage） */
-    PRE_SUMMARIZE
+    PRE_SUMMARIZE,
+
+    /** 模型响应组装完成后（含完整 ChatResponse）。
+     * 内置 TokenEstimationHook 处理写入 ctx + token 估算。 */
+    POST_MODEL
 }
