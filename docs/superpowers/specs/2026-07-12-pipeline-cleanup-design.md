@@ -53,18 +53,28 @@ result.withMessages(enrichedMsgs)  // 替换消息，保留介入信息
 
 设计 doc `2026-07-11-loop-hook-simplification-design.md` Part B2 规划了 `HookPipeline` 门面收拢全部 Hook 分发。但 `summarizeThenReason` 和 `handleInterruptStream` 中的 dispatch 仍然裸露，且 `executeReason` 的后处理逻辑缺少 hook 扩展点。
 
-### C1: onPostModel
+### C1: POST_MODEL + TokenEstimationHook
 
 当前 `executeReason` 在 `concatWith(Flux.defer(...))` 中做了 4 件事：组装 ChatResponse、写入 ctx、token 估算、构建 usage chunk。挤在一个 lambda 里，无法扩展。
 
-方案：新增 `HookPipeline.onPostModel(ctx, response, defaultHandler)` 模板方法：
+方案：新增 `HookEventType.POST_MODEL`，由 `HookPipeline.onPostModel` 分发。
+Token 计算由系统内置 `TokenEstimationHook implements Hook` 实现，
+挂在 `POST_MODEL` 上。HookPipeline 不感知 TokenEstimator。
 
+**HookPipeline.onPostModel:**
 ```
-dispatch(POST_MODEL, response) → abort → error
-→ 默认：defaultHandler.apply(ctx, response)
+dispatch(POST_MODEL, ctx, response) → abort → error
+→ 从 event 读取 usage chunk → 返回
 ```
 
-`defaultHandler` 由 `LoopExecutor` 注入（`this::applyResponse`），执行写入 ctx + token 估算 + 构建 usage chunk。`POST_MODEL` hook 可拦截/中止此过程。
+**TokenEstimationHook (core/hook/impl/):**
+```
+supports() → [POST_MODEL]
+onEvent() → 写入 ctx（lastResponse, tokens, message）
+         → token 估算
+         → 构建 usage chunk
+         → 写入 event.payload(USAGE_CHUNK)
+```
 
 Hook 相关常量提取到 `CoreConstants`。
 
@@ -95,11 +105,14 @@ dispatch(ON_INTERRUPT) → abort → 返回中断终止 chunk
 新增 `InterruptResult` 内部类（Action: RECOVER / RETURN_CHUNK）。
 
 影响：
-- `HookPipeline` 新增 3 个模板方法
+- `HookEventType` 新增 `POST_MODEL`
+- `HookPipeline` 新增 3 个模板方法：`onPostModel` / `preSummarize` / `onInterrupt`
+- `HookPipeline` 新增 2 个结果类型：`PreSummarizeResult` / `InterruptResult`
+- 新增 `TokenEstimationHook`（系统内置 hook，迁入 TokenEstimator）
+- `LoopExecutor` 移除 `TokenEstimator` 直接依赖，移除 `applyResponse` / `buildUsageChunk`
 - `LoopExecutor.executeReason` 从 ~30 行缩减到 ~8 行
 - `LoopExecutor.summarizeThenReason` 从 ~25 行缩减到 ~6 行
 - `LoopExecutor.handleInterruptStream` 从 ~25 行缩减到 ~5 行
-- LoopExecutor 新增 private `applyResponse` + `buildUsageChunk`
 
 ## Part D: prepareAndExecute 拍平
 
@@ -139,16 +152,15 @@ private Flux<ChatStreamChunk> prepareAndExecute(RuntimeContext ctx, List<Msg> me
 | 新增 `LoopContextAssembler` | `core/agent/loop/` | +45 |
 | 删除 `LoopContextFactory` | `core/agent/loop/` | -43 |
 | `HookPipeline` 新增 3 个模板方法 + 2 个结果类型 | `core/hook/` | +80 |
+| 新增 `TokenEstimationHook` | `core/hook/impl/` | +40 |
+| `HookEventType` 新增 `POST_MODEL` | `core/hook/` | +2 |
 | `ModelCallPipeline` 移除 `assembleResponseFromChunks` | `core/agent/loop/` | -44 |
-| `LoopExecutor.executeReason` 简化 | `core/agent/loop/` | -22 |
-| `LoopExecutor.summarizeThenReason` 简化 | `core/agent/loop/` | -19 |
-| `LoopExecutor.handleInterruptStream` 简化 | `core/agent/loop/` | -20 |
-| `LoopExecutor` 新增 `applyResponse` + `buildUsageChunk` | `core/agent/loop/` | +15 |
+| `LoopExecutor` 移除 `TokenEstimator` 依赖 + 简化 | `core/agent/loop/` | -40 |
 | `RequestPipeline.prepareAndExecute` 拍平 | `core/agent/loop/` | -10 |
 | `RequestPipeline` 内部类重命名 + 简化 | `core/agent/loop/` | -5 |
-| 新增 `HookEventType.POST_MODEL` 增强 | `core/hook/` | +2 |
 
-净增 ~29 行，消除 `LoopContextFactory` 类，主链路 4 个核心方法缩减 ~60%。
+净增 ~75 行，消除 `LoopContextFactory` 类，新增 `TokenEstimationHook` 系统内置 hook，
+主链路 4 个核心方法缩减 ~60%，`LoopExecutor` 移除 `TokenEstimator` 直接依赖。
 
 ## 编码规范
 
