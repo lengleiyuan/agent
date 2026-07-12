@@ -117,6 +117,10 @@
             padding: 4px 8px; border-radius: 6px; background: rgba(99,102,241,0.1);
             display: inline-flex; align-items: center; font-size: 0.82rem;
         }
+        .step-tool-error {
+            padding: 4px 8px; border-radius: 6px; background: rgba(239,68,68,0.1);
+            display: inline-flex; align-items: center; gap: 6px; font-size: 0.82rem;
+        }
 
         /* Scrollbar */
         ::-webkit-scrollbar { width: 5px; }
@@ -202,6 +206,8 @@ let streamMode = true;
 let sessionId = sessionStorage.getItem('chatSessionId') || newSessionId();
 let abortController = null;  // 用于中断流式请求
 let lastTokenUsage = 0;      // 最后一次模型调用的 token 消耗
+let streamPromptTokens = 0;   // 流式累积 prompt tokens
+let streamCompletionTokens = 0; // 流式累积 completion tokens
 
 function newSessionId() {
     const id = crypto.randomUUID();
@@ -387,7 +393,10 @@ async function sendMessage() {
             });
         if (!resp.ok) throw new Error(`${resp.status}`);
 
+        streamPromptTokens = 0;
+        streamCompletionTokens = 0;
         const stream = createStreamingBubble();
+        stream._lastMd = 0;
         const contentEl = stream.contentEl;
         const stepsEl = stream.stepsEl;
         let accumulatedText = '';
@@ -402,12 +411,19 @@ async function sendMessage() {
             let html = '';
             // 思考过程 — 合并为一个可折叠块
             if (thinkingText) {
-                html += `<div class="step-thinking" onclick="var n=this.nextElementSibling;n.style.display=n.style.display==='none'?'block':'none'"><i class="bi bi-lightbulb" style="color:#f59e0b"></i><span style="margin-left:4px">思考过程</span></div>`;
-                html += `<div class="step-thinking-content" style="display:none">${escapeHtml(thinkingText)}</div>`;
+                html += '<div class="step-thinking" onclick="var n=this.nextElementSibling;n.style.display=n.style.display===\'none\'?\'block\':\'none\'"><i class="bi bi-lightbulb" style="color:#f59e0b"></i><span style="margin-left:4px">思考过程</span></div>';
+                html += '<div class="step-thinking-content" style="display:none">' + escapeHtml(thinkingText) + '</div>';
             }
-            // 工具调用
+            // 工具调用 — 可折叠 JSON
             for (const tc of toolCalls) {
-                html += `<div class="step-tool"><i class="bi bi-cpu" style="color:#6366f1"></i><span class="badge bg-secondary" style="margin:0 4px">${escapeHtml(tc.name)}</span><span style="color:var(--text-muted);font-size:0.75rem">${escapeHtml(tc.args)}</span></div>`;
+                const display = tc.formatted || tc.args;
+                const preview = display.length > 80 ? display.slice(0, 80) + '...' : display;
+                html += '<div class="step-tool" style="cursor:pointer" onclick="var n=this.nextElementSibling;n.style.display=n.style.display===\'none\'?\'block\':\'none\'">' +
+                    '<i class="bi bi-cpu" style="color:#6366f1"></i>' +
+                    '<span class="badge bg-secondary" style="margin:0 4px">' + escapeHtml(tc.name) + '</span>' +
+                    '<span style="color:var(--text-muted);font-size:0.75rem">' + escapeHtml(preview) + '</span>' +
+                '</div>' +
+                '<div style="display:none;background:var(--surface-2);border-radius:6px;padding:8px 12px;margin:2px 0 4px 12px;font-family:monospace;font-size:0.78rem;white-space:pre-wrap;max-height:200px;overflow-y:auto">' + escapeHtml(display) + '</div>';
             }
             stepsEl.innerHTML = html;
         }
@@ -430,9 +446,18 @@ async function sendMessage() {
                     const chunk = JSON.parse(data);
                     const eventType = sseEvent || chunk.type || 'text';
                     const delta = chunk.delta || '';
-                    if (delta && eventType !== 'tool_use_start' && eventType !== 'tool_use_delta' && eventType !== 'thinking' && eventType !== 'session' && eventType !== 'usage' && eventType !== 'intervention') {
+                    if (delta && eventType !== 'tool_use_start' && eventType !== 'tool_use_delta'
+                            && eventType !== 'tool_use_end' && eventType !== 'thinking'
+                            && eventType !== 'session' && eventType !== 'usage'
+                            && eventType !== 'intervention' && eventType !== 'tool_error') {
                         accumulatedText += delta;
                         contentEl.textContent = accumulatedText;
+                        // 增量 markdown 渲染（节流 200ms）
+                        var now = Date.now();
+                        if (now - (stream._lastMd || 0) > 200) {
+                            renderMarkdown(contentEl, accumulatedText);
+                            stream._lastMd = now;
+                        }
                     }
                     if (eventType === 'thinking') {
                         thinkingText += delta;
@@ -441,14 +466,39 @@ async function sendMessage() {
                     } else if (eventType === 'usage') {
                         try {
                             const u = JSON.parse(delta);
+                            streamPromptTokens += u.promptTokens;
+                            streamCompletionTokens += u.completionTokens;
                             document.getElementById('tokenBadge-' + stream.bubbleId).textContent =
-                                '↑' + u.promptTokens + ' ↓' + u.completionTokens + ' tokens';
+                                '↑' + streamPromptTokens + ' ↓' + streamCompletionTokens + ' tokens';
                         } catch(e) {}
                     } else if (eventType === 'tool_use_start') {
                         toolCalls.push({ name: chunk.toolName || '', args: '' });
                     } else if (eventType === 'tool_use_delta') {
                         const last = toolCalls[toolCalls.length - 1];
                         if (last) last.args += delta;
+                    } else if (eventType === 'tool_use_end') {
+                        const last = toolCalls[toolCalls.length - 1];
+                        if (last && last.args) {
+                            try { last.formatted = JSON.stringify(JSON.parse(last.args), null, 2); }
+                            catch(e) { last.formatted = last.args; }
+                        }
+                    } else if (eventType === 'tool_error') {
+                        const errDiv = document.createElement('div');
+                        errDiv.className = 'step-tool-error';
+                        errDiv.innerHTML = '<i class="bi bi-exclamation-triangle" style="color:#ef4444"></i>' +
+                            '<span style="color:#fca5a5;font-size:0.78rem;cursor:pointer" onclick="let n=this.nextElementSibling;n.style.display=n.style.display===\'none\'?\'block\':\'none\'">工具错误</span>' +
+                            '<div style="display:none;font-size:0.75rem;color:var(--text-muted);margin-top:4px;white-space:pre-wrap">' + escapeHtml(delta) + '</div>';
+                        stepsEl.appendChild(errDiv);
+                    } else if (eventType === 'intervention') {
+                        try {
+                            const intv = JSON.parse(delta);
+                            const card = document.createElement('div');
+                            card.style.cssText = 'align-self:flex-start;max-width:80%;margin:4px 0;padding:12px 16px;background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.2);border-radius:var(--radius);font-size:0.85rem';
+                            card.innerHTML = '<div style="display:flex;align-items:center;gap:6px"><i class="bi bi-shield-exclamation" style="color:#f59e0b"></i><strong>需要审批</strong><span style="font-size:0.75rem;color:#f59e0b"> ⏳ 等待中</span></div>' +
+                                '<div style="margin-top:4px;color:var(--text-muted);font-size:0.8rem">' + escapeHtml(intv.question || '') + '</div>';
+                            chatMessages.insertBefore(card, stream.wrapper.nextSibling);
+                            scrollChat();
+                        } catch(e) {}
                     }
                     renderSteps();
                     scrollChat();
@@ -722,6 +772,19 @@ loadTools();
 loadHooks();
 loadSettings();
 
+// ===================== 审批操作 =====================
+async function resolveIntervention(id, action) {
+    const comment = document.getElementById('comment-' + id)?.value || '';
+    try {
+        await fetch('/api/interventions/' + id + '/resolve', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action, comment})
+        });
+        pollApprovals();
+    } catch(e) { console.error('resolve failed:', e); }
+}
+
 // ===================== 审批轮询 =====================
 async function pollApprovals() {
     try {
@@ -751,7 +814,7 @@ async function pollApprovals() {
                 <div style="margin-bottom:4px">${esc(a.question||'')}</div>
                 ${a.toolArgs ? '<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:6px">' + Object.entries(a.toolArgs).map(([k,v]) => '<code>'+esc(k)+'</code>: '+esc(String(v))).join('&nbsp;|&nbsp;') + '</div>' : ''}
                 ${pending
-                    ? '<a href="/approvals.html" target="_blank" style="font-size:0.75rem;color:var(--accent);text-decoration:none">📋 打开审批页面（需审批人操作）</a>'
+                    ? '<div class="actions" style="margin-top:8px"><input class="comment-input" placeholder="备注（可选）" id="comment-' + a.interventionId + '" style="flex:1;padding:4px 8px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:0.8rem"><button style="padding:4px 12px;background:#22c55e;color:#000;border:none;border-radius:4px;cursor:pointer;font-weight:600;font-size:0.8rem" onclick="resolveIntervention(\'' + a.interventionId + '\',\'approve\')">批准</button><button style="padding:4px 12px;background:#ef4444;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:600;font-size:0.8rem" onclick="resolveIntervention(\'' + a.interventionId + '\',\'deny\')">拒绝</button></div>'
                     : '<div style="font-size:0.7rem;color:var(--text-muted)">'+esc(a.resolverId||'')+(a.resolution?' | '+esc(a.resolution):'')+'</div>'}
             `;
             chatMessages.appendChild(card);
