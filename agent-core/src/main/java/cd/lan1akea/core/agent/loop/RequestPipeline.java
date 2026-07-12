@@ -130,25 +130,34 @@ public class RequestPipeline {
      * @param messages 当前请求消息
      * @return 流式响应分块
      */
+    /**
+     * 加载会话、注入系统消息、构建 LoopContext 并执行。
+     *
+     * @param ctx      运行时上下文
+     * @param messages 当前请求消息
+     * @return 流式响应分块
+     */
     private Flux<ChatStreamChunk> prepareAndExecute(RuntimeContext ctx, List<Msg> messages) {
         return loadSessionAndHistory(ctx, messages)
                 .flatMap(result -> injectSystemMessage(result.messages)
-                        .map(enrichedMsgs -> new EnrichedMessages(
-                                enrichedMsgs, result.interventionId,
-                                result.interventionType, result.pausedToolArgs)))
-                .flatMapMany(em -> {
-                    LoopContext loopCtx = LoopContextFactory.create(
-                            agentName, ctx, em.messages, resolveOptions(), execConfig, true);
-                    if (em.interventionId != null) {
-                        loopCtx.getInterventionState().setInterventionId(em.interventionId);
-                        loopCtx.getInterventionState().setInterventionType(em.interventionType);
-                        loopCtx.getInterventionState().setPausedToolArgs(em.pausedToolArgs);
-                    }
-                    return Flux.using(
-                            () -> trackActive(loopCtx),
-                            lc -> withTimeoutAndGate(lc, loopExecutor.runStream(lc)),
-                            this::untrackActive);
-                });
+                        .map(result::withMessages))
+                .map(result -> LoopContextAssembler.assemble(ctx, execConfig, result))
+                .flatMapMany(this::executeWithTracking);
+    }
+
+    /**
+     * 注册活跃请求，通过 SessionGate 排队后执行流式循环。
+     *
+     * <p>使用 Flux.using 保证异常/取消路径下正确清理活跃请求记录。
+     *
+     * @param loopCtx 循环上下文
+     * @return 流式响应分块
+     */
+    private Flux<ChatStreamChunk> executeWithTracking(LoopContext loopCtx) {
+        return Flux.using(
+                () -> trackActive(loopCtx),
+                lc -> withTimeoutAndGate(lc, loopExecutor.runStream(lc)),
+                this::untrackActive);
     }
 
     /**
@@ -274,8 +283,10 @@ public class RequestPipeline {
 
     /**
      * 会话加载与系统消息注入后的聚合结果。
+     *
+     * <p>Package-private 供同包 LoopContextAssembler 引用。
      */
-    private static class EnrichedMessages {
+    static class SessionLoadResult {
         /** 合并后的消息列表 */
         final List<Msg> messages;
         /** 待解决介入 ID（无则为 null） */
@@ -285,17 +296,28 @@ public class RequestPipeline {
         /** 暂停时快照的工具参数 JSON */
         final String pausedToolArgs;
 
-        EnrichedMessages(List<Msg> messages) {
+        SessionLoadResult(List<Msg> messages) {
             this(messages, null, null, null);
         }
 
-        EnrichedMessages(List<Msg> messages, String interventionId,
+        SessionLoadResult(List<Msg> messages, String interventionId,
                          String interventionType, String pausedToolArgs) {
             this.messages = messages;
             this.interventionId = interventionId;
             this.interventionType = interventionType;
             this.pausedToolArgs = pausedToolArgs;
         }
+
+        /**
+         * 替换消息列表，保留介入信息。
+         *
+         * @param newMessages 新消息列表
+         * @return 新的 SessionLoadResult
+         */
+        SessionLoadResult withMessages(List<Msg> newMessages) {
+            return new SessionLoadResult(newMessages, interventionId, interventionType, pausedToolArgs);
+        }
+
     }
 
     /**
@@ -309,10 +331,10 @@ public class RequestPipeline {
      * @param messages 当前请求消息
      * @return 消息聚合结果（含介入信息）
      */
-    private Mono<EnrichedMessages> loadSessionAndHistory(RuntimeContext ctx, List<Msg> messages) {
+    private Mono<SessionLoadResult> loadSessionAndHistory(RuntimeContext ctx, List<Msg> messages) {
         String sessionId = ctx.getSessionId();
         if (sessionId == null || stateStore == null)
-            return Mono.just(new EnrichedMessages(messages));
+            return Mono.just(new SessionLoadResult(messages));
 
         SessionId sid = new SessionId(sessionId);
         String tenantId = ctx.getTenantId() != null ? ctx.getTenantId() : Defaults.TENANT;
@@ -321,10 +343,10 @@ public class RequestPipeline {
                 .flatMap(session -> stateStore.loadLatestCheckpoint(sessionId)
                         .flatMap(this::resolveCheckpoint)
                         .flatMap(cp -> restoreFromCheckpoint(cp, messages, sessionId))
-                        .switchIfEmpty(loadHistory(sessionId, messages).map(EnrichedMessages::new)))
+                        .switchIfEmpty(loadHistory(sessionId, messages).map(SessionLoadResult::new)))
                 .switchIfEmpty(
                         stateStore.create(new Session(sid, tenantId, agentName, SessionState.ACTIVE))
-                                .then(Mono.just(new EnrichedMessages(messages))));
+                                .then(Mono.just(new SessionLoadResult(messages))));
     }
 
     /**
@@ -349,7 +371,7 @@ public class RequestPipeline {
     }
 
     /**
-     * 从检查点恢复消息列表，构建 EnrichedMessages。
+     * 从检查点恢复消息列表，构建 SessionLoadResult。
      *
      * <p>检查点中有完整消息 → 拼接新消息 → 附带介入恢复标记。
      * 检查点中无消息 → 回退到 loadHistory。
@@ -359,17 +381,17 @@ public class RequestPipeline {
      * @param sessionId  会话标识
      * @return 消息聚合结果
      */
-    private Mono<EnrichedMessages> restoreFromCheckpoint(AgentState checkpoint,
+    private Mono<SessionLoadResult> restoreFromCheckpoint(AgentState checkpoint,
                                                            List<Msg> messages, String sessionId) {
         List<Msg> restored = checkpoint.getMessages();
         if (restored != null && !restored.isEmpty()) {
             restored.addAll(messages);
-            return Mono.just(new EnrichedMessages(restored,
+            return Mono.just(new SessionLoadResult(restored,
                     checkpoint.getPendingInterventionId(),
                     checkpoint.getInterventionType(),
                     checkpoint.getPausedToolArgsJson()));
         }
-        return loadHistory(sessionId, messages).map(EnrichedMessages::new);
+        return loadHistory(sessionId, messages).map(SessionLoadResult::new);
     }
 
     /**
@@ -433,16 +455,4 @@ public class RequestPipeline {
         return Mono.just(messages);
     }
 
-    /**
-     * 从执行配置解析生成选项。
-     *
-     * @return 生成选项（温度、最大Token、工具策略）
-     */
-    private GenerateOptions resolveOptions() {
-        return GenerateOptions.builder()
-                .temperature(execConfig.getTemperature())
-                .maxTokens(execConfig.getMaxTokens())
-                .toolChoice(execConfig.getToolChoice())
-                .build();
-    }
 }
