@@ -11,6 +11,7 @@ import cd.lan1akea.core.message.Msg;
 import cd.lan1akea.core.message.SystemMessage;
 import cd.lan1akea.core.model.*;
 import cd.lan1akea.core.session.*;
+import cd.lan1akea.core.util.ChatResponseUtil;
 import cd.lan1akea.core.state.AgentState;
 import cd.lan1akea.core.state.AgentStateStore;
 
@@ -117,7 +118,7 @@ public class RequestPipeline {
     public Mono<ChatResponse> execute(List<Msg> messages, RuntimeContext rtCtx) {
         return executeStream(messages, rtCtx)
                 .collectList()
-                .map(ModelCallPipeline::assembleResponseFromChunks);
+                .map(ChatResponseUtil::fromChunks);
     }
 
     /**

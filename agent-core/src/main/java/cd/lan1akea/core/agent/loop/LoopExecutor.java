@@ -1,31 +1,22 @@
 package cd.lan1akea.core.agent.loop;
 
 import cd.lan1akea.core.CoreConstants.EventPayload;
-import cd.lan1akea.core.CoreConstants.FinishReason;
-import cd.lan1akea.core.CoreConstants.HookSource;
 import cd.lan1akea.core.CoreConstants.Intervention;
 import cd.lan1akea.core.CoreConstants.Logs;
-import cd.lan1akea.core.CoreConstants.Prompt;
 import cd.lan1akea.core.CoreConstants.UI;
-import cd.lan1akea.core.CoreConstants.Usage;
-import cd.lan1akea.core.exception.HookAbortException;
 import cd.lan1akea.core.exception.HumanInterventionException;
 import cd.lan1akea.core.hook.*;
 import cd.lan1akea.core.message.*;
-import cd.lan1akea.core.metrics.AgentMetrics;
 import cd.lan1akea.core.model.*;
 import cd.lan1akea.core.tool.*;
-import cd.lan1akea.core.util.JsonUtils;
+import cd.lan1akea.core.util.ChatResponseUtil;
 
-import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.logging.Logger;
 
@@ -53,26 +44,20 @@ public class LoopExecutor {
     /** 人工介入恢复处理器 */
     private final InterventionResolver interventionResolver;
 
-    /** Token 估算器，用于统计每次模型调用的实际 token 消耗 */
-    private final TokenEstimator tokenEstimator;
-
     /**
      * 构造 ReAct 循环执行器。
      *
      * @param modelPipeline        模型调用管道
      * @param toolOrchestrator     工具调用编排器
      * @param hookPipeline         Hook 管线门面
-     * @param tokenEstimator       Token 估算器
      * @param interventionResolver 介入恢复处理器
      */
     public LoopExecutor(ModelCallPipeline modelPipeline,
                          ToolCallOrchestrator toolOrchestrator, HookPipeline hookPipeline,
-                         TokenEstimator tokenEstimator,
                          InterventionResolver interventionResolver) {
         this.modelPipeline = modelPipeline;
         this.toolOrchestrator = toolOrchestrator;
         this.hookPipeline = hookPipeline;
-        this.tokenEstimator = tokenEstimator;
         this.interventionResolver = interventionResolver;
     }
 
@@ -120,33 +105,16 @@ public class LoopExecutor {
     /**
      * 达到最大迭代时注入总结提示词并进入最后一轮推理。
      *
+     * <p>委托 HookPipeline.preSummarize 处理 PRE_SUMMARIZE 分发和注入逻辑。
+     *
      * @param ctx 循环上下文
      * @return 总结轮次的流式 chunk 序列
      */
     private Flux<ChatStreamChunk> summarizeThenReason(LoopContext ctx) {
-        HookEvent event = new HookEvent(HookEventType.PRE_SUMMARIZE);
-        event.setMessages(ctx.getMessages());
-        HookContext hc = ctx.toHookContext();
-
-        return hookPipeline.dispatch(event, hc)
+        return hookPipeline.preSummarize(ctx)
                 .flatMapMany(r -> {
-                    if (r.isAbort()) {
-                        return Flux.error(new HookAbortException(HookSource.HOOK, r.getAbortReason()));
-                    }
-                    if (event.getBypassMessage() != null) {
-                        Msg bypass = event.getBypassMessage();
-                        ctx.addMessage(bypass);
-                        return Flux.just(ChatStreamChunk.of(
-                                bypass.getTextContent(), FinishReason.STOP));
-                    }
-                    ctx.addMessage(SystemMessage.of(
-                            Prompt.MAX_ITERATIONS_SUMMARY + Prompt.MAX_ITERATIONS_NO_TOOLS));
-                    GenerateOptions opts = ctx.getGenerateOptions();
-                    ctx.setGenerateOptions(GenerateOptions.builder()
-                            .temperature(opts.getTemperature())
-                            .maxTokens(opts.getMaxTokens())
-                            .toolChoice(ToolChoicePolicy.NONE)
-                            .build());
+                    if (r.getAction() == HookPipeline.PreSummarizeResult.Action.RETURN_CHUNK)
+                        return Flux.just(r.getChunk());
                     return reasonThenActOrObserve(ctx);
                 });
     }
@@ -154,9 +122,8 @@ public class LoopExecutor {
     /**
      * 执行推理阶段：调用模型获取回复。
      *
-     * <p>流式收集模型分块 → 组装 ChatResponse → 设置 lastResponse 和 token。
-     * 将 assistant 消息（含 tool_use blocks）追加到 ctx。
-     * 工具调用检查和下一阶段路由由 runStream 的线性流程处理。
+     * <p>流式收集模型分块 → ChatResponseUtil.fromChunks 组装 → HookPipeline.onPostModel 后处理。
+     * 后处理（写入 ctx + token 估算 + usage chunk）由 TokenEstimationHook 默认执行。
      *
      * @param ctx 循环上下文
      * @return 模型推理的流式分块
@@ -166,29 +133,10 @@ public class LoopExecutor {
         return modelPipeline.executeStream(ctx)
                 .doOnNext(buffer::add)
                 .concatWith(Flux.defer(() -> {
-                    ChatResponse resp = ModelCallPipeline.assembleResponseFromChunks(buffer);
-                    if (resp == null) return Flux.empty();
-
-                    ctx.setLastResponse(resp);
-                    if (resp.getUsage() != null) {
-                        ctx.addTokens(resp.getUsage().getTotalTokens());
-                    }
-                    Msg assistantMsg = resp.getMessage();
-                    if (assistantMsg != null) {
-                        ctx.addMessage(assistantMsg);
-                    }
-
-                    // 统计真实 token 用量，作为 usage chunk 下发前端
-                    int promptTokens = tokenEstimator.estimate(ctx.getMessages());
-                    int completionTokens = assistantMsg != null
-                            ? tokenEstimator.estimate(assistantMsg) : 0;
-                    Map<String, Object> usage = new LinkedHashMap<>();
-                    usage.put(Usage.PROMPT_TOKENS, promptTokens);
-                    usage.put(Usage.COMPLETION_TOKENS, completionTokens);
-                    return Flux.just(ChatStreamChunk.builder()
-                            .delta(JsonUtils.toCompactJson(usage))
-                            .type(Usage.CHUNK_TYPE)
-                            .build());
+                    ChatResponse resp = ChatResponseUtil.fromChunks(buffer);
+                    return resp != null
+                            ? hookPipeline.onPostModel(ctx, resp)
+                            : Flux.empty();
                 }));
     }
 
@@ -294,39 +242,17 @@ public class LoopExecutor {
     /**
      * 处理中断流：分发中断事件 Hook，根据结果决定中止或恢复。
      *
-     * <p>通过 {@link HookDispatcher} 分发 {@link HookEvent#interrupt(String, String)}，
-     * 如果 hook 返回 abort 则生成中断结束 chunk；
-     * 否则注入反馈消息后恢复循环，或返回已中断原因。
+     * <p>委托 HookPipeline.onInterrupt 处理 ON_INTERRUPT 分发和分支逻辑。
      *
      * @param ctx 循环上下文
      * @return 中断处理后的流式 chunk 序列
      */
     private Flux<ChatStreamChunk> handleInterruptStream(LoopContext ctx) {
-        Msg feedback = ctx.getFeedbackMsg();
-        HookEvent ie = HookEvent.interrupt(
-                feedback != null ? feedback.getTextContent() : UI.INTERRUPT_EXTERNAL, null);
-        HookContext hc = ctx.toHookContext();
-
-        return hookPipeline.dispatch(ie, hc)
+        return hookPipeline.onInterrupt(ctx)
                 .flatMapMany(r -> {
-                    if (r.isAbort()) {
-                        return Flux.just(ChatStreamChunk.of(
-                                UI.INTERRUPT_STREAM_PREFIX + r.getAbortReason()
-                                        + UI.INTERRUPT_SUFFIX,
-                                FinishReason.INTERRUPTED));
-                    }
-                    if (feedback != null) {
-                        ctx.addMessage(feedback);
-                        ctx.clearInterrupt();
+                    if (r.getAction() == HookPipeline.InterruptResult.Action.RECOVER)
                         return runStream(ctx);
-                    }
-                    String reason = ctx.getLastResponse() != null
-                            && ctx.getLastResponse().getMessage() != null
-                            ? ctx.getLastResponse().getMessage().getTextContent()
-                            : UI.INTERRUPT_EXEC;
-                    ChatResponse ir = buildInterruptedResponse(reason);
-                    return Flux.just(ChatStreamChunk.of(
-                            ir.getMessage().getTextContent(), FinishReason.INTERRUPTED));
+                    return Flux.just(r.getChunk());
                 });
     }
 
@@ -388,17 +314,4 @@ public class LoopExecutor {
         return null;
     }
 
-    /**
-     * 构建中断终止响应。
-     *
-     * @param reason 中断原因
-     * @return 中断响应
-     */
-    private static ChatResponse buildInterruptedResponse(String reason) {
-        Msg msg = Msg.builder(MsgRole.ASSISTANT)
-                .addText(UI.INTERRUPT_PREFIX + reason + UI.INTERRUPT_SUFFIX)
-                .putMetadata(EventPayload.INTERRUPT_ID, reason)
-                .build();
-        return new ChatResponse(msg, new ChatUsage(0, 0), FinishReason.INTERRUPTED, "");
-    }
 }

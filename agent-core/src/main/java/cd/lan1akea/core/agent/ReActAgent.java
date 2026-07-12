@@ -116,7 +116,7 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
                 interventionStore, toolOrch);
         LoopExecutor loopExecutor = new LoopExecutor(
                 modelPipeline, toolOrch, hookPipeline,
-                contextWindow.getEstimator(), interventionResolver);
+                interventionResolver);
         SessionGate sessionGate = config.getSessionGate() != null
                 ? config.getSessionGate() : new LocalSessionGate();
         this.pipeline = new RequestPipeline(
