@@ -344,6 +344,20 @@ public static final class RuntimeCtx {
         public static final String PARAMETERS = "parameters";
         /** 通用 type 字段 */
         public static final String TYPE = "type";
+        /** 请求体 messages 数组 key */
+        public static final String MESSAGES = "messages";
+        /** 请求体 tools 数组 key */
+        public static final String TOOLS = "tools";
+        /** 请求体 tool_choice key */
+        public static final String TOOL_CHOICE = "tool_choice";
+        /** tool_choice 自动模式 */
+        public static final String TOOL_CHOICE_AUTO = "auto";
+        /** 请求体 stream key */
+        public static final String STREAM = "stream";
+        /** 消息 role key */
+        public static final String ROLE = "role";
+        /** 消息 content key */
+        public static final String CONTENT = "content";
 
         private ApiFormat() {}
     }

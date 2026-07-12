@@ -5,6 +5,7 @@ import cd.lan1akea.core.CoreConstants.Usage;
 import cd.lan1akea.core.hook.AroundHook;
 import cd.lan1akea.core.hook.HookContext;
 import cd.lan1akea.core.hook.HookEvent;
+import cd.lan1akea.core.message.Msg;
 import cd.lan1akea.core.model.ChatStreamChunk;
 import cd.lan1akea.core.model.ChatUsage;
 import cd.lan1akea.core.model.TokenEstimator;
@@ -49,15 +50,14 @@ public class StreamTokenEstimationHook implements AroundHook {
     @Override
     public Flux<ChatStreamChunk> aroundReasoningStream(HookEvent event, HookContext ctx,
                                                         Function<HookEvent, Flux<ChatStreamChunk>> next) {
-        int estimatedPrompt = estimator.estimate(event.getMessages())
-                + estimateSchemas(event.getToolSchemas());
+        int estimatedPrompt = estimatePrompt(event.getMessages(), event.getToolSchemas());
         StringBuilder buffer = new StringBuilder();
         int[] lastEstimated = {0};
 
         return next.apply(event)
                 .concatMap(chunk -> {
                     if (ChatStreamChunk.TYPE_TEXT.equals(chunk.getType())
-                            && chunk.getDelta() != null) {
+                        && chunk.getDelta() != null) {
                         buffer.append(chunk.getDelta());
                         int estimated = estimator.estimate(buffer.toString());
                         if (estimated != lastEstimated[0]) {
@@ -76,11 +76,40 @@ public class StreamTokenEstimationHook implements AroundHook {
     }
 
     /**
-     * 估算工具 Schema 的 token 数，使用与 API buildToolArray 一致的 JSON 格式。
+     * 估算完整 API 请求体的 token 数，结构与 buildCommonRequestBody 对齐。
      */
-    private int estimateSchemas(List<ToolSchema> schemas) {
-        if (schemas == null || schemas.isEmpty()) return 0;
+    private int estimatePrompt(List<Msg> messages, List<ToolSchema> schemas) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put(ApiFormat.MESSAGES, buildMessageArray(messages));
+        if (schemas != null && !schemas.isEmpty()) {
+            body.put(ApiFormat.TOOLS, buildToolArray(schemas));
+            body.put(ApiFormat.TOOL_CHOICE, ApiFormat.TOOL_CHOICE_AUTO);
+        }
+        body.put(ApiFormat.STREAM, true);
+        return estimator.estimate(JsonUtils.toCompactJson(body));
+    }
+
+    /**
+     * 构建消息 JSON 数组（模拟 API 格式）。
+     */
+    private List<Map<String, Object>> buildMessageArray(List<Msg> messages) {
+        List<Map<String, Object>> arr = new ArrayList<>();
+        if (messages == null) return arr;
+        for (Msg m : messages) {
+            Map<String, Object> msg = new LinkedHashMap<>();
+            msg.put(ApiFormat.ROLE, m.getRole().name().toLowerCase());
+            msg.put(ApiFormat.CONTENT, m.getTextContent());
+            arr.add(msg);
+        }
+        return arr;
+    }
+
+    /**
+     * 构建工具 Schema JSON 数组，与 API buildToolArray 一致。
+     */
+    private List<Map<String, Object>> buildToolArray(List<ToolSchema> schemas) {
         List<Map<String, Object>> tools = new ArrayList<>();
+        if (schemas == null) return tools;
         for (ToolSchema s : schemas) {
             Map<String, Object> func = new LinkedHashMap<>();
             func.put(ApiFormat.NAME, s.getName());
@@ -91,7 +120,7 @@ public class StreamTokenEstimationHook implements AroundHook {
             tool.put(ApiFormat.FUNCTION, func);
             tools.add(tool);
         }
-        return estimator.estimate(JsonUtils.toCompactJson(tools));
+        return tools;
     }
 
     /**

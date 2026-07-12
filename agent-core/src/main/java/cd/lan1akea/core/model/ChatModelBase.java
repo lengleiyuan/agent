@@ -100,7 +100,7 @@ public abstract class ChatModelBase implements ChatModel {
                                             boolean stream) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", modelName);
-        body.put("messages", messages);
+        body.put(ApiFormat.MESSAGES, messages);
 
         if (options != null) {
             if (options.getTemperature() != null) body.put("temperature", options.getTemperature());
@@ -109,13 +109,13 @@ public abstract class ChatModelBase implements ChatModel {
         }
 
         if (toolSchemas != null && !toolSchemas.isEmpty()) {
-            body.put("tools", buildToolArray(toolSchemas));
+            body.put(ApiFormat.TOOLS, buildToolArray(toolSchemas));
             if (options != null && options.getToolChoice() != null) {
-                body.put("tool_choice", convertToolChoice(options.getToolChoice()));
+                body.put(ApiFormat.TOOL_CHOICE, convertToolChoice(options.getToolChoice()));
             }
         }
 
-        if (stream) body.put("stream", true);
+        if (stream) body.put(ApiFormat.STREAM, true);
         return JsonUtils.toCompactJson(body);
     }
 
