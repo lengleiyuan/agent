@@ -43,18 +43,10 @@ class LoopExecutorTest {
         ToolCallOrchestrator orchestrator = new ToolCallOrchestrator(
                 toolExecutor, toolRegistry, hookPipeline);
 
-        // POST_MODEL: simulate TokenEstimationHook behaviour
+        // POST_MODEL: simulate TokenEstimationHook usage chunk
         doAnswer(inv -> {
             HookEvent event = inv.getArgument(0);
             if (event.getHookEventType() == HookEventType.POST_MODEL) {
-                LoopContext lc = event.getPayload("loopContext");
-                ChatResponse resp = event.getPayload("response");
-                if (lc != null && resp != null) {
-                    lc.setLastResponse(resp);
-                    if (resp.getUsage() != null) lc.addTokens(resp.getUsage().getTotalTokens());
-                    Msg msg = resp.getMessage();
-                    if (msg != null) lc.addMessage(msg);
-                }
                 event.setPayload("usageChunk",
                         ChatStreamChunk.builder().delta("{}").type("usage").build());
             }

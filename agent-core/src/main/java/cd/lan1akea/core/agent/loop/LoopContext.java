@@ -137,6 +137,17 @@ public class LoopContext {
      */
     public void addMessage(Msg msg) { messages.add(msg); }
     /**
+     * 应用模型响应，写入 lastResponse + 累加 token + 追加 assistant 消息。
+     *
+     * @param resp 模型响应
+     */
+    public void applyResponse(ChatResponse resp) {
+        this.lastResponse = resp;
+        if (resp.getUsage() != null) this.totalTokens += resp.getUsage().getTotalTokens();
+        Msg msg = resp.getMessage();
+        if (msg != null) this.messages.add(msg);
+    }
+    /**
      * 向上下文添加多条消息。
      *
      * @param msgs 要添加的消息列表

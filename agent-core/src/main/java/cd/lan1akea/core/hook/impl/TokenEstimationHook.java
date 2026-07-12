@@ -61,11 +61,7 @@ public class TokenEstimationHook implements Hook {
         ChatResponse resp = event.getPayload(EventPayload.RESPONSE);
         if (loopCtx == null || resp == null) return Mono.just(HookResult.continue_());
 
-        loopCtx.setLastResponse(resp);
-        if (resp.getUsage() != null) loopCtx.addTokens(resp.getUsage().getTotalTokens());
         Msg msg = resp.getMessage();
-        if (msg != null) loopCtx.addMessage(msg);
-
         int promptTokens = tokenEstimator.estimate(loopCtx.getMessages());
         int completionTokens = msg != null ? tokenEstimator.estimate(msg) : 0;
         Map<String, Object> usage = new LinkedHashMap<>();

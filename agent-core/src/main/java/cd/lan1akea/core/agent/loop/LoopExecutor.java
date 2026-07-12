@@ -131,9 +131,9 @@ public class LoopExecutor {
                 .doOnNext(buffer::add)
                 .concatWith(Flux.defer(() -> {
                     ChatResponse resp = ChatResponseUtil.fromChunks(buffer);
-                    return resp != null
-                            ? hookPipeline.onPostModel(ctx, resp)
-                            : Flux.empty();
+                    if (resp == null) return Flux.empty();
+                    ctx.applyResponse(resp);
+                    return hookPipeline.onPostModel(ctx, resp);
                 }));
     }
 
@@ -216,7 +216,8 @@ public class LoopExecutor {
                 : UI.TOOL_ERROR_PREFIX + result.getErrorMessage();
         return ChatStreamChunk.builder()
                 .delta(content)
-                .type(result.isSuccess() ? ChatStreamChunk.TYPE_TEXT : ChatStreamChunk.TYPE_TOOL_ERROR)
+                .type(result.isSuccess() ? ChatStreamChunk.TYPE_TEXT
+                    : ChatStreamChunk.TYPE_TOOL_ERROR)
                 .build();
     }
 
