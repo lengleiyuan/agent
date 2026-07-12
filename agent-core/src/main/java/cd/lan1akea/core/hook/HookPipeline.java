@@ -9,7 +9,12 @@ import cd.lan1akea.core.context.RuntimeContext;
 import cd.lan1akea.core.exception.HookAbortException;
 import cd.lan1akea.core.message.Msg;
 import cd.lan1akea.core.message.MsgRole;
+import cd.lan1akea.core.CoreConstants.Prompt;
+import cd.lan1akea.core.message.SystemMessage;
+import cd.lan1akea.core.model.ChatResponse;
 import cd.lan1akea.core.model.ChatStreamChunk;
+import cd.lan1akea.core.model.GenerateOptions;
+import cd.lan1akea.core.model.ToolChoicePolicy;
 import cd.lan1akea.core.tool.ToolCallContext;
 import cd.lan1akea.core.tool.ToolResult;
 
@@ -204,6 +209,119 @@ public class HookPipeline {
     }
 
     // ============================================================
+    // 模型响应后管线
+    // ============================================================
+
+    /**
+     * 模型响应后处理管线。
+     *
+     * <p>dispatch(POST_MODEL) → abort → error → 从 event 读取 usage chunk → 返回。
+     * 默认行为由系统内置 TokenEstimationHook 提供（写入 ctx + token 估算 + 构建 usage chunk）。
+     *
+     * @param ctx      循环上下文
+     * @param response 组装后的 ChatResponse
+     * @return usage chunk 的 Mono
+     */
+    public Mono<ChatStreamChunk> onPostModel(LoopContext ctx, ChatResponse response) {
+        HookEvent event = new HookEvent(HookEventType.POST_MODEL);
+        event.setPayload(EventPayload.LOOP_CONTEXT, ctx);
+        event.setPayload(EventPayload.RESPONSE, response);
+        HookContext hc = ctx.toHookContext();
+        return dispatch(event, hc)
+                .flatMap(r -> {
+                    if (r.isAbort())
+                        return Mono.error(new HookAbortException(
+                                HookSource.HOOK, r.getAbortReason()));
+                    return Mono.justOrEmpty(
+                            (ChatStreamChunk) event.getPayload(EventPayload.USAGE_CHUNK));
+                });
+    }
+
+    // ============================================================
+    // 总结管线
+    // ============================================================
+
+    /**
+     * 总结前管线。
+     *
+     * <p>dispatch(PRE_SUMMARIZE) → abort → error
+     * → bypass → 注入 bypass 消息 + 返回 bypass chunk
+     * → 默认 → 注入总结提示词 + 禁用工具，返回 continueLoop
+     *
+     * @param ctx 循环上下文
+     * @return PreSummarizeResult
+     */
+    public Mono<PreSummarizeResult> preSummarize(LoopContext ctx) {
+        HookEvent event = new HookEvent(HookEventType.PRE_SUMMARIZE);
+        event.setMessages(ctx.getMessages());
+        HookContext hc = ctx.toHookContext();
+        return dispatch(event, hc)
+                .flatMap(r -> {
+                    if (r.isAbort())
+                        return Mono.error(new HookAbortException(
+                                HookSource.HOOK, r.getAbortReason()));
+                    if (event.getBypassMessage() != null) {
+                        Msg bypass = event.getBypassMessage();
+                        ctx.addMessage(bypass);
+                        return Mono.just(PreSummarizeResult.chunk(
+                                ChatStreamChunk.of(
+                                        bypass.getTextContent(), FinishReason.STOP)));
+                    }
+                    ctx.addMessage(SystemMessage.of(
+                            Prompt.MAX_ITERATIONS_SUMMARY + Prompt.MAX_ITERATIONS_NO_TOOLS));
+                    GenerateOptions opts = ctx.getGenerateOptions();
+                    ctx.setGenerateOptions(GenerateOptions.builder()
+                            .temperature(opts.getTemperature())
+                            .maxTokens(opts.getMaxTokens())
+                            .toolChoice(ToolChoicePolicy.NONE)
+                            .build());
+                    return Mono.just(PreSummarizeResult.continueLoop());
+                });
+    }
+
+    // ============================================================
+    // 中断管线
+    // ============================================================
+
+    /**
+     * 中断处理管线。
+     *
+     * <p>dispatch(ON_INTERRUPT) → abort → 返回中断终止 chunk
+     * → 有 feedback → 注入 feedback + 清除中断 → 返回 recover
+     * → 默认 → 返回中断终止 chunk
+     *
+     * @param ctx 循环上下文
+     * @return InterruptResult
+     */
+    public Mono<InterruptResult> onInterrupt(LoopContext ctx) {
+        Msg feedback = ctx.getFeedbackMsg();
+        HookEvent event = HookEvent.interrupt(
+                feedback != null ? feedback.getTextContent() : UI.INTERRUPT_EXTERNAL, null);
+        HookContext hc = ctx.toHookContext();
+        return dispatch(event, hc)
+                .flatMap(r -> {
+                    if (r.isAbort())
+                        return Mono.just(InterruptResult.chunk(
+                                ChatStreamChunk.of(
+                                        UI.INTERRUPT_STREAM_PREFIX + r.getAbortReason()
+                                                + UI.INTERRUPT_SUFFIX,
+                                        FinishReason.INTERRUPTED)));
+                    if (feedback != null) {
+                        ctx.addMessage(feedback);
+                        ctx.clearInterrupt();
+                        return Mono.just(InterruptResult.recover());
+                    }
+                    String reason = ctx.getLastResponse() != null
+                            && ctx.getLastResponse().getMessage() != null
+                            ? ctx.getLastResponse().getMessage().getTextContent()
+                            : UI.INTERRUPT_EXEC;
+                    return Mono.just(InterruptResult.chunk(
+                            ChatStreamChunk.of(
+                                    buildInterruptText(reason), FinishReason.INTERRUPTED)));
+                });
+    }
+
+    // ============================================================
     // private helpers
     // ============================================================
 
@@ -220,5 +338,117 @@ public class HookPipeline {
                 .build();
         return Flux.just(ChatStreamChunk.of(
                 irMsg.getTextContent(), FinishReason.INTERRUPTED));
+    }
+
+    private String buildInterruptText(String reason) {
+        return UI.INTERRUPT_PREFIX + reason + UI.INTERRUPT_SUFFIX;
+    }
+
+    // ============================================================
+    // 结果类型
+    // ============================================================
+
+    /**
+     * PRE_SUMMARIZE Hook 处理结果。
+     */
+    public static class PreSummarizeResult {
+
+        /**
+         * 结果动作类型。
+         */
+        public enum Action {
+            /**
+             * 继续循环（默认：已注入总结提示词 + 禁用工具）
+             */
+            CONTINUE,
+            /**
+             * 返回 chunk 给调用方下发（bypass / abort 后）
+             */
+            RETURN_CHUNK
+        }
+
+        private final Action action;
+        private final ChatStreamChunk chunk;
+
+        private PreSummarizeResult(Action action, ChatStreamChunk chunk) {
+            this.action = action;
+            this.chunk = chunk;
+        }
+
+        /**
+         * 返回 chunk 给调用方（bypass 分支）。
+         */
+        public static PreSummarizeResult chunk(ChatStreamChunk c) {
+            return new PreSummarizeResult(Action.RETURN_CHUNK, c);
+        }
+
+        /**
+         * 继续循环（默认分支）。
+         */
+        public static PreSummarizeResult continueLoop() {
+            return new PreSummarizeResult(Action.CONTINUE, null);
+        }
+
+        /**
+         * @return 结果动作类型
+         */
+        public Action getAction() { return action; }
+
+        /**
+         * @return chunk（RETURN_CHUNK 时有效）
+         */
+        public ChatStreamChunk getChunk() { return chunk; }
+    }
+
+    /**
+     * ON_INTERRUPT Hook 处理结果。
+     */
+    public static class InterruptResult {
+
+        /**
+         * 结果动作类型。
+         */
+        public enum Action {
+            /**
+             * 恢复循环（有 feedback 消息已注入）
+             */
+            RECOVER,
+            /**
+             * 返回中断终止 chunk
+             */
+            RETURN_CHUNK
+        }
+
+        private final Action action;
+        private final ChatStreamChunk chunk;
+
+        private InterruptResult(Action action, ChatStreamChunk chunk) {
+            this.action = action;
+            this.chunk = chunk;
+        }
+
+        /**
+         * 恢复循环。
+         */
+        public static InterruptResult recover() {
+            return new InterruptResult(Action.RECOVER, null);
+        }
+
+        /**
+         * 返回中断终止 chunk。
+         */
+        public static InterruptResult chunk(ChatStreamChunk c) {
+            return new InterruptResult(Action.RETURN_CHUNK, c);
+        }
+
+        /**
+         * @return 结果动作类型
+         */
+        public Action getAction() { return action; }
+
+        /**
+         * @return chunk（RETURN_CHUNK 时有效）
+         */
+        public ChatStreamChunk getChunk() { return chunk; }
     }
 }
