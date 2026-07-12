@@ -81,7 +81,8 @@ public class StreamTokenEstimationHook implements AroundHook {
         StringBuilder sb = new StringBuilder();
         for (ToolSchema s : schemas) {
             sb.append(s.getName()).append('\n')
-                    .append(s.getDescription()).append('\n');
+                    .append(s.getDescription()).append('\n')
+                    .append(JsonUtils.toCompactJson(s.getParametersSchema())).append('\n');
         }
         return estimator.estimate(sb.toString());
     }
