@@ -13,6 +13,7 @@ import cd.lan1akea.core.intervention.InterventionStore;
 import cd.lan1akea.core.message.Msg;
 import cd.lan1akea.core.hook.HookPipeline;
 import cd.lan1akea.core.hook.impl.AgentMetricsHook;
+import cd.lan1akea.core.hook.impl.TokenEstimationHook;
 import cd.lan1akea.core.metrics.AgentMetrics;
 import cd.lan1akea.core.model.*;
 import cd.lan1akea.core.state.AgentStateStore;
@@ -90,20 +91,21 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
                 ? config.getToolRegistry() : new ToolRegistry();
         ToolExecutor toolExecutor = new ToolExecutor(toolRegistry);
 
+        this.stateStore = config.getStateStore();
+        int maxInput = model.getMaxInputTokens();
+        this.contextWindow = new ModelContextWindow(model.getModelName(), maxInput, maxInput / 2);
+
         HookChain hookChain = config.getHookChain() != null
                 ? config.getHookChain() : new HookChain();
         hookChain.register(new AgentMetricsHook("AgentMetrics", metrics,
                 model.getModelName(), model.getProvider()));
+        hookChain.register(new TokenEstimationHook(contextWindow.getEstimator()));
         this.hookDispatcher = new HookDispatcher(hookChain);
         AroundHookChain aroundChain = config.getAroundHookChain() != null
                 ? config.getAroundHookChain() : new AroundHookChain();
         aroundChain.register(new AgentMetricsHook("AgentMetrics", metrics,
                 model.getModelName(), model.getProvider()));
         HookPipeline hookPipeline = new HookPipeline(hookDispatcher, aroundChain);
-
-        this.stateStore = config.getStateStore();
-        int maxInput = model.getMaxInputTokens();
-        this.contextWindow = new ModelContextWindow(model.getModelName(), maxInput, maxInput / 2);
 
         ToolCallOrchestrator toolOrch = new ToolCallOrchestrator(
                 toolExecutor, toolRegistry, hookPipeline);
