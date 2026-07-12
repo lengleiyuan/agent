@@ -311,10 +311,9 @@ public class HookPipeline {
                         ctx.clearInterrupt();
                         return Mono.just(InterruptResult.recover());
                     }
-                    String reason = ctx.getLastResponse() != null
-                            && ctx.getLastResponse().getMessage() != null
-                            ? ctx.getLastResponse().getMessage().getTextContent()
-                            : UI.INTERRUPT_EXEC;
+                    String reason = firstNonEmpty(
+                            ctx.getInterventionState().getPausedReason(),
+                            UI.INTERRUPT_EXEC);
                     return Mono.just(InterruptResult.chunk(
                             ChatStreamChunk.of(
                                     buildInterruptText(reason), FinishReason.INTERRUPTED)));
@@ -324,6 +323,14 @@ public class HookPipeline {
     // ============================================================
     // private helpers
     // ============================================================
+
+    /** 返回第一个非空字符串 */
+    private static String firstNonEmpty(String... values) {
+        for (String v : values) {
+            if (v != null && !v.isEmpty()) return v;
+        }
+        return "";
+    }
 
     /** fire-and-forget 模式分发 Hook */
     private <T> Flux<T> fireAndForget(HookEventType type, HookContext ctx) {

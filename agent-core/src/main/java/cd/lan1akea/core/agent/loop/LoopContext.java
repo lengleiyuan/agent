@@ -281,6 +281,8 @@ public class LoopContext {
         private volatile String interventionType;
         /** 暂停时快照的工具参数 JSON */
         private volatile String pausedToolArgs;
+        /** 暂停原因（工具自定义描述） */
+        private volatile String pausedReason;
 
         /** @return 待解决的介入请求 ID */
         public String getInterventionId() { return interventionId; }
@@ -294,12 +296,17 @@ public class LoopContext {
         public String getPausedToolArgs() { return pausedToolArgs; }
         /** 设置暂停时快照的工具参数 JSON */
         public void setPausedToolArgs(String v) { this.pausedToolArgs = v; }
+        /** @return 暂停原因（工具自定义描述） */
+        public String getPausedReason() { return pausedReason; }
+        /** 设置暂停原因（工具自定义描述） */
+        public void setPausedReason(String v) { this.pausedReason = v; }
 
         /** 清除所有介入状态 */
         public void clear() {
             this.interventionId = null;
             this.interventionType = null;
             this.pausedToolArgs = null;
+            this.pausedReason = null;
         }
 
         /** @return 是否有待解决的介入 */

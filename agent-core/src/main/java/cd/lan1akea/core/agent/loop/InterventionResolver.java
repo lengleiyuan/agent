@@ -204,6 +204,7 @@ public class InterventionResolver {
 
         ctx.getInterventionState().setInterventionId(id);
         ctx.getInterventionState().setInterventionType(e.getType().name());
+        ctx.getInterventionState().setPausedReason(e.getReason());
         if (e.getCallParam() != null) {
             ctx.getInterventionState().setPausedToolArgs(
                     JsonUtils.toCompactJson(e.getCallParam().getArgumentsMap()));
