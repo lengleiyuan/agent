@@ -3,6 +3,7 @@ package cd.lan1akea.core.hook;
 
 import cd.lan1akea.core.CoreConstants;
 import cd.lan1akea.core.message.Msg;
+import cd.lan1akea.core.model.ToolSchema;
 import cd.lan1akea.core.tool.Tool;
 import cd.lan1akea.core.tool.ToolCallContext;
 import cd.lan1akea.core.tool.ToolResult;
@@ -98,7 +99,7 @@ public class HookEvent {
     /**
      * 设置工具 Schema 列表。
      */
-    public void setToolSchemas(java.util.List<cd.lan1akea.core.model.ToolSchema> schemas) {
+    public void setToolSchemas(List<ToolSchema> schemas) {
         setPayload(CoreConstants.EventPayload.TOOL_SCHEMAS, schemas);
     }
 
@@ -106,7 +107,7 @@ public class HookEvent {
      * @return 工具 Schema 列表，可能为 null
      */
     @SuppressWarnings("unchecked")
-    public java.util.List<cd.lan1akea.core.model.ToolSchema> getToolSchemas() {
+    public List<ToolSchema> getToolSchemas() {
         return getPayload(CoreConstants.EventPayload.TOOL_SCHEMAS);
     }
 

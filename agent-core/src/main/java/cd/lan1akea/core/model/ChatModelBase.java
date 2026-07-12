@@ -1,5 +1,6 @@
 package cd.lan1akea.core.model;
 
+import cd.lan1akea.core.CoreConstants.ApiFormat;
 import cd.lan1akea.core.exception.ModelCallException;
 import cd.lan1akea.core.formatter.MessageFormatter;
 import cd.lan1akea.core.message.Msg;
@@ -125,12 +126,12 @@ public abstract class ChatModelBase implements ChatModel {
         List<Map<String, Object>> tools = new ArrayList<>();
         for (ToolSchema schema : schemas) {
             Map<String, Object> tool = new LinkedHashMap<>();
-            tool.put("type", "function");
+            tool.put(ApiFormat.TYPE, ApiFormat.TYPE_FUNCTION);
             Map<String, Object> func = new LinkedHashMap<>();
-            func.put("name", schema.getName());
-            func.put("description", schema.getDescription());
-            func.put("parameters", schema.getParametersSchema());
-            tool.put("function", func);
+            func.put(ApiFormat.NAME, schema.getName());
+            func.put(ApiFormat.DESCRIPTION, schema.getDescription());
+            func.put(ApiFormat.PARAMETERS, schema.getParametersSchema());
+            tool.put(ApiFormat.FUNCTION, func);
             tools.add(tool);
         }
         return tools;

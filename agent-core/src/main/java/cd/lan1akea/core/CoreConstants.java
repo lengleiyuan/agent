@@ -329,6 +329,26 @@ public static final class RuntimeCtx {
     }
 
     /**
+     * OpenAI 兼容 API JSON 格式常量。
+     */
+    public static final class ApiFormat {
+        /** 工具类型 */
+        public static final String TYPE_FUNCTION = "function";
+        /** 工具定义嵌套 key */
+        public static final String FUNCTION = "function";
+        /** 工具名称 */
+        public static final String NAME = "name";
+        /** 工具描述 */
+        public static final String DESCRIPTION = "description";
+        /** 工具参数 */
+        public static final String PARAMETERS = "parameters";
+        /** 通用 type 字段 */
+        public static final String TYPE = "type";
+
+        private ApiFormat() {}
+    }
+
+    /**
      * 参数校验相关常量。
      */
     public static final class Validation {

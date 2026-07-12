@@ -1,5 +1,6 @@
 package cd.lan1akea.core.hook.impl;
 
+import cd.lan1akea.core.CoreConstants.ApiFormat;
 import cd.lan1akea.core.CoreConstants.Usage;
 import cd.lan1akea.core.hook.AroundHook;
 import cd.lan1akea.core.hook.HookContext;
@@ -12,6 +13,7 @@ import cd.lan1akea.core.util.JsonUtils;
 
 import reactor.core.publisher.Flux;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -74,17 +76,22 @@ public class StreamTokenEstimationHook implements AroundHook {
     }
 
     /**
-     * 估算工具 Schema 的 token 数。
+     * 估算工具 Schema 的 token 数，使用与 API buildToolArray 一致的 JSON 格式。
      */
     private int estimateSchemas(List<ToolSchema> schemas) {
         if (schemas == null || schemas.isEmpty()) return 0;
-        StringBuilder sb = new StringBuilder();
+        List<Map<String, Object>> tools = new ArrayList<>();
         for (ToolSchema s : schemas) {
-            sb.append(s.getName()).append('\n')
-                    .append(s.getDescription()).append('\n')
-                    .append(JsonUtils.toCompactJson(s.getParametersSchema())).append('\n');
+            Map<String, Object> func = new LinkedHashMap<>();
+            func.put(ApiFormat.NAME, s.getName());
+            func.put(ApiFormat.DESCRIPTION, s.getDescription());
+            func.put(ApiFormat.PARAMETERS, s.getParametersSchema());
+            Map<String, Object> tool = new LinkedHashMap<>();
+            tool.put(ApiFormat.TYPE, ApiFormat.TYPE_FUNCTION);
+            tool.put(ApiFormat.FUNCTION, func);
+            tools.add(tool);
         }
-        return estimator.estimate(sb.toString());
+        return estimator.estimate(JsonUtils.toCompactJson(tools));
     }
 
     /**
