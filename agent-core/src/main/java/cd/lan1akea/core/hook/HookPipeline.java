@@ -11,16 +11,14 @@ import cd.lan1akea.core.message.Msg;
 import cd.lan1akea.core.message.MsgRole;
 import cd.lan1akea.core.CoreConstants.Prompt;
 import cd.lan1akea.core.message.SystemMessage;
-import cd.lan1akea.core.model.ChatResponse;
-import cd.lan1akea.core.model.ChatStreamChunk;
-import cd.lan1akea.core.model.GenerateOptions;
-import cd.lan1akea.core.model.ToolChoicePolicy;
+import cd.lan1akea.core.model.*;
 import cd.lan1akea.core.tool.ToolCallContext;
 import cd.lan1akea.core.tool.ToolResult;
 
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.util.List;
 import java.util.function.Function;
 
 /**
@@ -91,10 +89,12 @@ public class HookPipeline {
      * @return 模型流式输出
      */
     public Flux<ChatStreamChunk> aroundReasoning(LoopContext ctx,
+                                                  List<ToolSchema> toolSchemas,
                                                   Function<HookEvent, Flux<ChatStreamChunk>> modelCall) {
         HookContext hc = ctx.toHookContext();
         HookEvent preReasoning = new HookEvent(HookEventType.PRE_REASONING);
         preReasoning.setMessages(ctx.getMessages());
+        preReasoning.setToolSchemas(toolSchemas);
 
         return dispatch(preReasoning, hc)
                 .flatMapMany(r -> {

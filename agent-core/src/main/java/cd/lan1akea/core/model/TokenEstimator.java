@@ -27,6 +27,14 @@ public interface TokenEstimator {
     int estimate(Msg message);
 
     /**
+     * 估算原始文本的 Token 数。
+     *
+     * @param text 原始文本
+     * @return 估算 Token 数
+     */
+    int estimate(String text);
+
+    /**
      * 基于字符数/比率的估算器。
      */
     static TokenEstimator charBased(double charsPerToken) {

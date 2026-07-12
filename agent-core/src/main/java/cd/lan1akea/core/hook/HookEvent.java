@@ -96,6 +96,21 @@ public class HookEvent {
     }
 
     /**
+     * 设置工具 Schema 列表。
+     */
+    public void setToolSchemas(java.util.List<cd.lan1akea.core.model.ToolSchema> schemas) {
+        setPayload(CoreConstants.EventPayload.TOOL_SCHEMAS, schemas);
+    }
+
+    /**
+     * @return 工具 Schema 列表，可能为 null
+     */
+    @SuppressWarnings("unchecked")
+    public java.util.List<cd.lan1akea.core.model.ToolSchema> getToolSchemas() {
+        return getPayload(CoreConstants.EventPayload.TOOL_SCHEMAS);
+    }
+
+    /**
      * 设置绕过模型调用的直接回复消息。
      * 非 null 时调用方跳过模型直接返回此消息。
      *

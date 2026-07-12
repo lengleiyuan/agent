@@ -4,15 +4,16 @@ import cd.lan1akea.core.CoreConstants.Usage;
 import cd.lan1akea.core.hook.AroundHook;
 import cd.lan1akea.core.hook.HookContext;
 import cd.lan1akea.core.hook.HookEvent;
-import cd.lan1akea.core.message.UserMessage;
 import cd.lan1akea.core.model.ChatStreamChunk;
 import cd.lan1akea.core.model.ChatUsage;
 import cd.lan1akea.core.model.TokenEstimator;
+import cd.lan1akea.core.model.ToolSchema;
 import cd.lan1akea.core.util.JsonUtils;
 
 import reactor.core.publisher.Flux;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 
@@ -46,7 +47,8 @@ public class StreamTokenEstimationHook implements AroundHook {
     @Override
     public Flux<ChatStreamChunk> aroundReasoningStream(HookEvent event, HookContext ctx,
                                                         Function<HookEvent, Flux<ChatStreamChunk>> next) {
-        int estimatedPrompt = estimator.estimate(event.getMessages());
+        int estimatedPrompt = estimator.estimate(event.getMessages())
+                + estimateSchemas(event.getToolSchemas());
         StringBuilder buffer = new StringBuilder();
         int[] lastEstimated = {0};
 
@@ -55,7 +57,7 @@ public class StreamTokenEstimationHook implements AroundHook {
                     if (ChatStreamChunk.TYPE_TEXT.equals(chunk.getType())
                             && chunk.getDelta() != null) {
                         buffer.append(chunk.getDelta());
-                        int estimated = estimator.estimate(UserMessage.of(buffer.toString()));
+                        int estimated = estimator.estimate(buffer.toString());
                         if (estimated != lastEstimated[0]) {
                             lastEstimated[0] = estimated;
                             return Flux.just(chunk, buildUsageChunk(estimatedPrompt, estimated, true));
@@ -69,6 +71,19 @@ public class StreamTokenEstimationHook implements AroundHook {
                     }
                     return Flux.just(chunk);
                 });
+    }
+
+    /**
+     * 估算工具 Schema 的 token 数。
+     */
+    private int estimateSchemas(List<ToolSchema> schemas) {
+        if (schemas == null || schemas.isEmpty()) return 0;
+        StringBuilder sb = new StringBuilder();
+        for (ToolSchema s : schemas) {
+            sb.append(s.getName()).append('\n')
+                    .append(s.getDescription()).append('\n');
+        }
+        return estimator.estimate(sb.toString());
     }
 
     /**

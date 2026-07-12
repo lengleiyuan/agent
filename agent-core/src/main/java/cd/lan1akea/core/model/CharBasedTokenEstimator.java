@@ -24,6 +24,12 @@ class CharBasedTokenEstimator implements TokenEstimator {
     }
 
     @Override
+    public int estimate(String text) {
+        if (text == null || text.isEmpty()) return 0;
+        return (int) Math.ceil(text.length() / charsPerToken);
+    }
+
+    @Override
     public int estimate(List<Msg> messages) {
         int total = 0;
         for (Msg msg : messages) {

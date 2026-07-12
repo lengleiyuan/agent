@@ -56,6 +56,12 @@ public class Cl100kTokenEstimator implements TokenEstimator {
     }
 
     @Override
+    public int estimate(String text) {
+        if (text == null || text.isEmpty()) return 0;
+        return encoding.countTokens(text);
+    }
+
+    @Override
     public int estimate(List<Msg> messages) {
         int total = 0;
         for (Msg msg : messages) {

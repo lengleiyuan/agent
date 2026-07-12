@@ -109,7 +109,6 @@ public class RequestPipeline {
      * 非流式执行 —— 从流式派生。
      *
      * <p>直接调用 {@link #executeStream}，通过 collectList 收集全部分块后
-     * 调用 {@link ModelCallPipeline#assembleResponseFromChunks} 组装为单个 ChatResponse。
      *
      * @param messages 用户消息列表
      * @param rtCtx    运行时上下文

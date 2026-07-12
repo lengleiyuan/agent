@@ -93,6 +93,8 @@ public static final class RuntimeCtx {
         public static final String ERROR_MESSAGE = "errorMessage";
         /** 异常类型名 */
         public static final String ERROR_TYPE = "errorType";
+        /** 工具 Schema 列表（流式 token 估算用） */
+        public static final String TOOL_SCHEMAS = "toolSchemas";
         /** usage chunk（TokenEstimationHook → onPostModel 返回） */
         public static final String USAGE_CHUNK = "usageChunk";
 
