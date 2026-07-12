@@ -29,9 +29,6 @@ import java.util.logging.Logger;
  */
 public class LoopExecutor {
 
-    /** 日志记录器 */
-    private static final Logger log = Logger.getLogger(LoopExecutor.class.getName());
-
     /** 模型调用管道，负责与 LLM 交互并获取回复 */
     private final ModelCallPipeline modelPipeline;
 
@@ -218,7 +215,9 @@ public class LoopExecutor {
                 ? result.getContent()
                 : UI.TOOL_ERROR_PREFIX + result.getErrorMessage();
         return ChatStreamChunk.builder()
-                .delta(content).type(ChatStreamChunk.TYPE_TEXT).build();
+                .delta(content)
+                .type(result.isSuccess() ? ChatStreamChunk.TYPE_TEXT : ChatStreamChunk.TYPE_TOOL_ERROR)
+                .build();
     }
 
     /**
@@ -292,11 +291,7 @@ public class LoopExecutor {
         event.setPayload(EventPayload.LOOP_CONTEXT, ctx);
         HookContext hc = ctx.toHookContext();
         return hookPipeline.dispatch(event, hc)
-                .onErrorResume(e -> {
-                    log.warning(Logs.AFTER_ITERATION_FAILED
-                            + ctx.getRequestId() + Logs.ERR_DETAIL + e.getMessage());
-                    return Mono.empty();
-                })
+                .onErrorResume(e -> Mono.empty())
                 .then();
     }
 

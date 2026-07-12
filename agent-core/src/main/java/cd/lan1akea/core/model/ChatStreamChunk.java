@@ -100,6 +100,10 @@ public class ChatStreamChunk {
      * 工具调用结束块类型常量
      */
     public static final String TYPE_TOOL_USE_END = "tool_use_end";
+    /**
+     * 工具执行错误块类型常量
+     */
+    public static final String TYPE_TOOL_ERROR = "tool_error";
 
     public static Builder builder() { return new Builder(); }
 
