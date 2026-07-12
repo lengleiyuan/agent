@@ -14,7 +14,6 @@ import cd.lan1akea.core.message.Msg;
 import cd.lan1akea.core.hook.HookPipeline;
 import cd.lan1akea.core.hook.impl.AgentMetricsHook;
 import cd.lan1akea.core.hook.impl.StreamTokenEstimationHook;
-import cd.lan1akea.core.hook.impl.TokenEstimationHook;
 import cd.lan1akea.core.metrics.AgentMetrics;
 import cd.lan1akea.core.model.*;
 import cd.lan1akea.core.state.AgentStateStore;
@@ -100,7 +99,6 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
                 ? config.getHookChain() : new HookChain();
         hookChain.register(new AgentMetricsHook("AgentMetrics", metrics,
                 model.getModelName(), model.getProvider()));
-        hookChain.register(new TokenEstimationHook(contextWindow.getEstimator()));
         this.hookDispatcher = new HookDispatcher(hookChain);
         AroundHookChain aroundChain = config.getAroundHookChain() != null
                 ? config.getAroundHookChain() : new AroundHookChain();
