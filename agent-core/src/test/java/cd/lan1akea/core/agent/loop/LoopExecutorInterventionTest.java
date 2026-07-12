@@ -45,6 +45,25 @@ class LoopExecutorInterventionTest {
         hookDispatcher = spy(new HookDispatcher(new HookChain()));
         doReturn(Mono.just(HookResult.continue_())).when(hookDispatcher).dispatch(any(), any());
 
+        // POST_MODEL: simulate TokenEstimationHook behaviour
+        doAnswer(inv -> {
+            HookEvent event = inv.getArgument(0);
+            if (event.getHookEventType() == HookEventType.POST_MODEL) {
+                LoopContext lc = event.getPayload("loopContext");
+                ChatResponse resp = event.getPayload("response");
+                if (lc != null && resp != null) {
+                    lc.setLastResponse(resp);
+                    if (resp.getUsage() != null) lc.addTokens(resp.getUsage().getTotalTokens());
+                    Msg msg = resp.getMessage();
+                    if (msg != null) lc.addMessage(msg);
+                }
+                event.setPayload("usageChunk",
+                        ChatStreamChunk.builder().delta("{}").type("usage").build());
+            }
+            return Mono.just(HookResult.continue_());
+        }).when(hookDispatcher).dispatch(
+                argThat(e -> e.getHookEventType() == HookEventType.POST_MODEL), any());
+
         HookPipeline hookPipeline = new HookPipeline(hookDispatcher, aroundHooks);
         ModelCallPipeline modelPipeline = new ModelCallPipeline(
                 model, hookPipeline, toolRegistry);
@@ -54,7 +73,7 @@ class LoopExecutorInterventionTest {
         InterventionResolver interventionResolver =
                 new InterventionResolver(interventionStore, orchestrator);
         executor = new LoopExecutor(modelPipeline, orchestrator, hookPipeline,
-                new Cl100kTokenEstimator(), interventionResolver);
+                interventionResolver);
     }
 
     // ===========================================================

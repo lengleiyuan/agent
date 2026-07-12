@@ -3,6 +3,7 @@ package cd.lan1akea.core.agent.loop;
 import cd.lan1akea.core.CoreConstants.FinishReason;
 import cd.lan1akea.core.model.ChatResponse;
 import cd.lan1akea.core.model.ChatStreamChunk;
+import cd.lan1akea.core.util.ChatResponseUtil;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -16,7 +17,7 @@ class ModelCallPipelineTest {
         List<ChatStreamChunk> chunks = List.of(
                 ChatStreamChunk.builder().delta("hello").type(ChatStreamChunk.TYPE_TEXT).build()
         );
-        ChatResponse resp = ModelCallPipeline.assembleResponseFromChunks(chunks);
+        ChatResponse resp = ChatResponseUtil.fromChunks(chunks);
         assertNotNull(resp);
         assertEquals(FinishReason.COMPLETED, resp.getFinishReason());
     }

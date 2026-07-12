@@ -3,7 +3,6 @@ package cd.lan1akea.core.agent.loop;
 import cd.lan1akea.core.CoreConstants.FinishReason;
 import cd.lan1akea.core.hook.*;
 import cd.lan1akea.core.message.*;
-import cd.lan1akea.core.metrics.AgentMetrics;
 import cd.lan1akea.core.model.*;
 import cd.lan1akea.core.tool.*;
 import org.junit.jupiter.api.BeforeEach;
@@ -44,11 +43,29 @@ class LoopExecutorTest {
         ToolCallOrchestrator orchestrator = new ToolCallOrchestrator(
                 toolExecutor, toolRegistry, hookPipeline);
 
+        // POST_MODEL: simulate TokenEstimationHook behaviour
+        doAnswer(inv -> {
+            HookEvent event = inv.getArgument(0);
+            if (event.getHookEventType() == HookEventType.POST_MODEL) {
+                LoopContext lc = event.getPayload("loopContext");
+                ChatResponse resp = event.getPayload("response");
+                if (lc != null && resp != null) {
+                    lc.setLastResponse(resp);
+                    if (resp.getUsage() != null) lc.addTokens(resp.getUsage().getTotalTokens());
+                    Msg msg = resp.getMessage();
+                    if (msg != null) lc.addMessage(msg);
+                }
+                event.setPayload("usageChunk",
+                        ChatStreamChunk.builder().delta("{}").type("usage").build());
+            }
+            return Mono.just(HookResult.continue_());
+        }).when(hookDispatcher).dispatch(
+                argThat(e -> e.getHookEventType() == HookEventType.POST_MODEL), any());
+
         cd.lan1akea.core.intervention.InMemoryInterventionStore store =
                 new cd.lan1akea.core.intervention.InMemoryInterventionStore();
         InterventionResolver resolver = new InterventionResolver(store, orchestrator);
-        executor = new LoopExecutor(modelPipeline, orchestrator, hookPipeline,
-                new Cl100kTokenEstimator(), resolver);
+        executor = new LoopExecutor(modelPipeline, orchestrator, hookPipeline, resolver);
     }
 
     // ============================================================
