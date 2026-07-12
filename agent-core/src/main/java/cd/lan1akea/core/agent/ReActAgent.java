@@ -106,7 +106,7 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
                 ? config.getAroundHookChain() : new AroundHookChain();
         aroundChain.register(new AgentMetricsHook("AgentMetrics", metrics,
                 model.getModelName(), model.getProvider()));
-        aroundChain.register(new StreamTokenEstimationHook());
+        aroundChain.register(new StreamTokenEstimationHook(contextWindow.getEstimator()));
         HookPipeline hookPipeline = new HookPipeline(hookDispatcher, aroundChain);
 
         ToolCallOrchestrator toolOrch = new ToolCallOrchestrator(

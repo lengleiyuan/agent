@@ -5,26 +5,37 @@ import cd.lan1akea.core.hook.AroundHook;
 import cd.lan1akea.core.hook.HookContext;
 import cd.lan1akea.core.hook.HookEvent;
 import cd.lan1akea.core.message.Msg;
+import cd.lan1akea.core.message.SystemMessage;
+import cd.lan1akea.core.message.UserMessage;
 import cd.lan1akea.core.model.ChatStreamChunk;
+import cd.lan1akea.core.model.TokenEstimator;
 import cd.lan1akea.core.util.JsonUtils;
 
 import reactor.core.publisher.Flux;
 
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 
 /**
  * 流式 Token 估算 Hook。
  *
- * <p>包裹模型推理流，在每个 text chunk 后跟一个估算 usage chunk，
- * 前端可实时显示 token 消耗，无需等到 POST_MODEL 的精确计数。
- *
- * <p>估算逻辑：字符数 / 4 ≈ token 数，仅在被估算值变化时发送。
- * usage chunk type 为 "usage"，payload 同 TokenEstimationHook 格式。
+ * <p>包裹模型推理流，用 {@link TokenEstimator} 实时估算 token 用量，
+ * 每个 text chunk 后跟一个估算 usage chunk。前端可实时显示，
+ * 无需等到 POST_MODEL 的精确计数。
  */
 public class StreamTokenEstimationHook implements AroundHook {
+
+    private final TokenEstimator estimator;
+
+    /**
+     * 构建流式 Token 估算 Hook。
+     *
+     * @param estimator Token 估算器
+     */
+    public StreamTokenEstimationHook(TokenEstimator estimator) {
+        this.estimator = estimator;
+    }
 
     @Override
     public String getName() {
@@ -34,16 +45,16 @@ public class StreamTokenEstimationHook implements AroundHook {
     @Override
     public Flux<ChatStreamChunk> aroundReasoningStream(HookEvent event, HookContext ctx,
                                                         Function<HookEvent, Flux<ChatStreamChunk>> next) {
-        int estimatedPrompt = estimatePromptTokens(event.getMessages());
-        int[] totalChars = {0};
+        int estimatedPrompt = estimator.estimate(event.getMessages());
+        StringBuilder buffer = new StringBuilder();
         int[] lastEstimated = {0};
 
         return next.apply(event)
                 .concatMap(chunk -> {
                     if (ChatStreamChunk.TYPE_TEXT.equals(chunk.getType())
                             && chunk.getDelta() != null) {
-                        totalChars[0] += chunk.getDelta().length();
-                        int estimated = Math.max(1, totalChars[0] / 4);
+                        buffer.append(chunk.getDelta());
+                        int estimated = estimator.estimate(UserMessage.of(buffer.toString()));
                         if (estimated != lastEstimated[0]) {
                             lastEstimated[0] = estimated;
                             return Flux.just(chunk, buildUsageChunk(estimatedPrompt, estimated));
@@ -51,19 +62,6 @@ public class StreamTokenEstimationHook implements AroundHook {
                     }
                     return Flux.just(chunk);
                 });
-    }
-
-    /**
-     * 从消息列表估算 prompt token 数。
-     */
-    private int estimatePromptTokens(List<Msg> messages) {
-        if (messages == null || messages.isEmpty()) return 0;
-        int chars = 0;
-        for (Msg m : messages) {
-            String text = m.getTextContent();
-            if (text != null) chars += text.length();
-        }
-        return Math.max(1, chars / 4);
     }
 
     /**
