@@ -1,20 +1,19 @@
 package cd.lan1akea.core.hook.impl;
 
-import cd.lan1akea.core.CoreConstants.ApiFormat;
 import cd.lan1akea.core.CoreConstants.Usage;
 import cd.lan1akea.core.hook.AroundHook;
+import cd.lan1akea.core.message.Msg;
 import cd.lan1akea.core.hook.HookContext;
 import cd.lan1akea.core.hook.HookEvent;
-import cd.lan1akea.core.message.Msg;
 import cd.lan1akea.core.model.ChatStreamChunk;
 import cd.lan1akea.core.model.ChatUsage;
 import cd.lan1akea.core.model.TokenEstimator;
 import cd.lan1akea.core.model.ToolSchema;
+import cd.lan1akea.core.util.ApiRequestUtil;
 import cd.lan1akea.core.util.JsonUtils;
 
 import reactor.core.publisher.Flux;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -76,51 +75,11 @@ public class StreamTokenEstimationHook implements AroundHook {
     }
 
     /**
-     * 估算完整 API 请求体的 token 数，结构与 buildCommonRequestBody 对齐。
+     * 估算完整 API 请求体的 token 数，与 ApiRequestUtil 同一来源。
      */
     private int estimatePrompt(List<Msg> messages, List<ToolSchema> schemas) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put(ApiFormat.MESSAGES, buildMessageArray(messages));
-        if (schemas != null && !schemas.isEmpty()) {
-            body.put(ApiFormat.TOOLS, buildToolArray(schemas));
-            body.put(ApiFormat.TOOL_CHOICE, ApiFormat.TOOL_CHOICE_AUTO);
-        }
-        body.put(ApiFormat.STREAM, true);
-        return estimator.estimate(JsonUtils.toCompactJson(body));
-    }
-
-    /**
-     * 构建消息 JSON 数组（模拟 API 格式）。
-     */
-    private List<Map<String, Object>> buildMessageArray(List<Msg> messages) {
-        List<Map<String, Object>> arr = new ArrayList<>();
-        if (messages == null) return arr;
-        for (Msg m : messages) {
-            Map<String, Object> msg = new LinkedHashMap<>();
-            msg.put(ApiFormat.ROLE, m.getRole().name().toLowerCase());
-            msg.put(ApiFormat.CONTENT, m.getTextContent());
-            arr.add(msg);
-        }
-        return arr;
-    }
-
-    /**
-     * 构建工具 Schema JSON 数组，与 API buildToolArray 一致。
-     */
-    private List<Map<String, Object>> buildToolArray(List<ToolSchema> schemas) {
-        List<Map<String, Object>> tools = new ArrayList<>();
-        if (schemas == null) return tools;
-        for (ToolSchema s : schemas) {
-            Map<String, Object> func = new LinkedHashMap<>();
-            func.put(ApiFormat.NAME, s.getName());
-            func.put(ApiFormat.DESCRIPTION, s.getDescription());
-            func.put(ApiFormat.PARAMETERS, s.getParametersSchema());
-            Map<String, Object> tool = new LinkedHashMap<>();
-            tool.put(ApiFormat.TYPE, ApiFormat.TYPE_FUNCTION);
-            tool.put(ApiFormat.FUNCTION, func);
-            tools.add(tool);
-        }
-        return tools;
+        return estimator.estimate(ApiRequestUtil.buildRequestBodyJson(
+                ApiRequestUtil.buildMessageArray(messages), schemas));
     }
 
     /**

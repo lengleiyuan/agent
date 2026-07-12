@@ -9,6 +9,7 @@ import cd.lan1akea.core.message.AssistantMessage;
 import cd.lan1akea.core.model.transport.HttpClientAdapter;
 import cd.lan1akea.core.model.transport.ReactorHttpClientAdapter;
 import cd.lan1akea.core.model.transport.SseEventParser;
+import cd.lan1akea.core.util.ApiRequestUtil;
 import cd.lan1akea.core.util.JsonUtils;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -123,18 +124,7 @@ public abstract class ChatModelBase implements ChatModel {
      * 构建工具数组（OpenAI 兼容格式）。
      */
     protected List<Map<String, Object>> buildToolArray(List<ToolSchema> schemas) {
-        List<Map<String, Object>> tools = new ArrayList<>();
-        for (ToolSchema schema : schemas) {
-            Map<String, Object> tool = new LinkedHashMap<>();
-            tool.put(ApiFormat.TYPE, ApiFormat.TYPE_FUNCTION);
-            Map<String, Object> func = new LinkedHashMap<>();
-            func.put(ApiFormat.NAME, schema.getName());
-            func.put(ApiFormat.DESCRIPTION, schema.getDescription());
-            func.put(ApiFormat.PARAMETERS, schema.getParametersSchema());
-            tool.put(ApiFormat.FUNCTION, func);
-            tools.add(tool);
-        }
-        return tools;
+        return ApiRequestUtil.buildToolArray(schemas);
     }
 
     /**
