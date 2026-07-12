@@ -1,6 +1,7 @@
 package cd.lan1akea.core.model.transport;
 
 import cd.lan1akea.core.model.ChatStreamChunk;
+import cd.lan1akea.core.model.ChatUsage;
 import cd.lan1akea.core.util.JsonUtils;
 import reactor.core.publisher.Flux;
 
@@ -37,6 +38,8 @@ public class SseEventParser {
             Map<String, Object> map = JsonUtils.fromJson(json, Map.class);
             if (map == null) return List.of();
 
+            ChatUsage usage = extractUsage((Map<String, Object>) map.get("usage"));
+
             List<ChatStreamChunk> chunks = new ArrayList<>();
             java.util.List<Map<String, Object>> choices =
                 (java.util.List<Map<String, Object>>) map.get("choices");
@@ -47,7 +50,7 @@ public class SseEventParser {
             Map<String, Object> delta = (Map<String, Object>) choice.get("delta");
             if (delta == null) {
                 if (finishReason != null)
-                    chunks.add(ChatStreamChunk.builder().finishReason(finishReason).build());
+                    chunks.add(ChatStreamChunk.builder().finishReason(finishReason).usage(usage).build());
                 return chunks;
             }
 
@@ -57,11 +60,11 @@ public class SseEventParser {
             if (reasoningContent != null && !reasoningContent.toString().isEmpty()) {
                 chunks.add(ChatStreamChunk.builder()
                     .delta(reasoningContent.toString()).type(ChatStreamChunk.TYPE_THINKING)
-                    .finishReason(finishReason).build());
+                    .finishReason(finishReason).usage(usage).build());
             } else if (content != null && !content.toString().isEmpty()) {
                 chunks.add(ChatStreamChunk.builder()
                     .delta(content.toString()).type(ChatStreamChunk.TYPE_TEXT)
-                    .finishReason(finishReason).build());
+                    .finishReason(finishReason).usage(usage).build());
             }
 
             // 工具调用 — index 映射 id，适配 OpenAI/DeepSeek 等多种协议
@@ -88,22 +91,32 @@ public class SseEventParser {
                         chunks.add(ChatStreamChunk.builder()
                             .type(ChatStreamChunk.TYPE_TOOL_USE_START)
                             .toolUseId(tcId).toolName(fName).index(index)
-                            .finishReason(finishReason).build());
+                            .finishReason(finishReason).usage(usage).build());
                     }
                     if (hasArgs) {
                         chunks.add(ChatStreamChunk.builder()
                             .type(ChatStreamChunk.TYPE_TOOL_USE_DELTA)
                             .toolUseId(tcId).delta(fArgs).index(index)
-                            .finishReason(finishReason).build());
+                            .finishReason(finishReason).usage(usage).build());
                     }
                 }
             }
 
             if (chunks.isEmpty() && finishReason != null)
-                chunks.add(ChatStreamChunk.builder().finishReason(finishReason).build());
+                chunks.add(ChatStreamChunk.builder().finishReason(finishReason).usage(usage).build());
             return chunks;
         } catch (Exception e) {
             return List.of();
         }
+    }
+
+    /**
+     * 从 usage JSON 提取 ChatUsage。
+     */
+    private ChatUsage extractUsage(Map<String, Object> usageMap) {
+        if (usageMap == null) return null;
+        int pt = ((Number) usageMap.getOrDefault("prompt_tokens", 0)).intValue();
+        int ct = ((Number) usageMap.getOrDefault("completion_tokens", 0)).intValue();
+        return new ChatUsage(pt, ct);
     }
 }

@@ -37,6 +37,11 @@ public class ChatStreamChunk {
     private final int index;
 
     /**
+     * 模型 API 返回的 token 用量（仅最后一个 chunk 有效）
+     */
+    private final ChatUsage usage;
+
+    /**
      * 通过建造者创建流式响应块。
      *
      * @param builder 已配置字段的建造者
@@ -48,6 +53,7 @@ public class ChatStreamChunk {
         this.toolName = builder.toolName;
         this.finishReason = builder.finishReason;
         this.index = builder.index;
+        this.usage = builder.usage;
     }
 
     /**
@@ -79,6 +85,11 @@ public class ChatStreamChunk {
      * @return 索引
      */
     public int getIndex() { return index; }
+
+    /**
+     * @return 模型 API 返回的 token 用量（可能为 null）
+     */
+    public ChatUsage getUsage() { return usage; }
 
     /**
      * 纯文本增量块类型常量
@@ -125,6 +136,7 @@ public class ChatStreamChunk {
         private String toolName;
         private String finishReason;
         private int index;
+        private ChatUsage usage;
 
         public Builder delta(String delta) { this.delta = delta; return this; }
         public Builder type(String type) { this.type = type; return this; }
@@ -132,6 +144,7 @@ public class ChatStreamChunk {
         public Builder toolName(String toolName) { this.toolName = toolName; return this; }
         public Builder finishReason(String finishReason) { this.finishReason = finishReason; return this; }
         public Builder index(int index) { this.index = index; return this; }
+        public Builder usage(ChatUsage usage) { this.usage = usage; return this; }
 
         public ChatStreamChunk build() { return new ChatStreamChunk(this); }
     }

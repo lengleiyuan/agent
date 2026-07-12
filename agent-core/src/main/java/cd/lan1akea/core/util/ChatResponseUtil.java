@@ -75,7 +75,20 @@ public final class ChatResponseUtil {
                     JsonUtils.repairJson(e.getValue())));
         }
 
+        ChatUsage usage = findUsage(chunks);
+
         Msg msg = new AssistantMessage(blocks, null);
-        return new ChatResponse(msg, new ChatUsage(0, 0), finishReason, null);
+        return new ChatResponse(msg, usage, finishReason, null);
+    }
+
+    /**
+     * 从 chunks 中查找 API 返回的 usage（最后一个有值的 chunk）。
+     */
+    private static ChatUsage findUsage(List<ChatStreamChunk> chunks) {
+        for (int i = chunks.size() - 1; i >= 0; i--) {
+            ChatUsage u = chunks.get(i).getUsage();
+            if (u != null) return u;
+        }
+        return new ChatUsage(0, 0);
     }
 }
