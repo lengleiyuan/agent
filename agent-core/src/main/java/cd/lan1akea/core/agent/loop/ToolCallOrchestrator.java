@@ -7,7 +7,6 @@ import cd.lan1akea.core.hook.HookPipeline;
 import cd.lan1akea.core.message.ToolUseBlock;
 import cd.lan1akea.core.tool.ToolCallContext;
 import cd.lan1akea.core.tool.ToolExecutor;
-import cd.lan1akea.core.tool.ToolRegistry;
 import cd.lan1akea.core.tool.ToolResult;
 
 import reactor.core.publisher.Mono;
@@ -22,8 +21,6 @@ public class ToolCallOrchestrator {
 
     /** 工具执行器 */
     private final ToolExecutor toolExecutor;
-    /** 工具注册表 */
-    private final ToolRegistry toolRegistry;
     /** Hook 管线门面 */
     private final HookPipeline hookPipeline;
 
@@ -31,13 +28,10 @@ public class ToolCallOrchestrator {
      * 构建工具调用编排器。
      *
      * @param toolExecutor  工具执行器
-     * @param toolRegistry  工具注册表
      * @param hookPipeline  Hook 管线门面
      */
-    public ToolCallOrchestrator(ToolExecutor toolExecutor, ToolRegistry toolRegistry,
-                                 HookPipeline hookPipeline) {
+    public ToolCallOrchestrator(ToolExecutor toolExecutor, HookPipeline hookPipeline) {
         this.toolExecutor = toolExecutor;
-        this.toolRegistry = toolRegistry;
         this.hookPipeline = hookPipeline;
     }
 
@@ -84,7 +78,7 @@ public class ToolCallOrchestrator {
     private HookEvent buildPreEvent(ToolUseBlock tc, ToolCallContext param, LoopContext ctx) {
         HookEvent event = new HookEvent(HookEventType.PRE_TOOL_CALL);
         event.setCallParam(param);
-        event.setTool(toolRegistry.getForContext(
+        event.setTool(toolExecutor.getRegistry().getForContext(
                 ctx.getTenantId(), ctx.getUserId(), ctx.getSessionId(), tc.getName()));
         return event;
     }

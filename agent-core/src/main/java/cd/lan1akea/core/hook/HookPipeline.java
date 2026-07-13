@@ -7,6 +7,7 @@ import cd.lan1akea.core.CoreConstants.UI;
 import cd.lan1akea.core.agent.loop.LoopContext;
 import cd.lan1akea.core.context.RuntimeContext;
 import cd.lan1akea.core.exception.HookAbortException;
+import cd.lan1akea.core.hook.recorder.HookRecorder;
 import cd.lan1akea.core.message.Msg;
 import cd.lan1akea.core.message.MsgRole;
 import cd.lan1akea.core.CoreConstants.Prompt;
@@ -24,7 +25,7 @@ import java.util.function.Function;
 /**
  * Hook 管线门面。
  *
- * <p>职责：编排 {@link HookDispatcher} + {@link AroundHookChain}，对外暴露两类入口：
+ * <p>职责：编排 {@link HookChain} + {@link AroundHookChain}，对外暴露两类入口：
  * <ul>
  *   <li><b>简单分发</b> — {@link #dispatch(HookEvent, HookContext)}：透传，结果由调用方自行处理</li>
  *   <li><b>完整管线</b> — {@link #aroundReasoning} / {@link #aroundToolCall} / {@link #aroundCall}：
@@ -36,19 +37,21 @@ import java.util.function.Function;
  */
 public class HookPipeline {
 
-    /** Hook 分发器 */
-    private final HookDispatcher dispatcher;
+    /** Hook 链 */
+    private final HookChain hookChain;
     /** AroundHook 洋葱链 */
     private final AroundHookChain aroundChain;
+    /** Hook 记录器（可选） */
+    private HookRecorder recorder;
 
     /**
      * 构建 Hook 管线门面。
      *
-     * @param dispatcher  Hook 分发器
+     * @param hookChain   Hook 链
      * @param aroundChain AroundHook 链
      */
-    public HookPipeline(HookDispatcher dispatcher, AroundHookChain aroundChain) {
-        this.dispatcher = dispatcher;
+    public HookPipeline(HookChain hookChain, AroundHookChain aroundChain) {
+        this.hookChain = hookChain;
         this.aroundChain = aroundChain;
     }
 
@@ -67,8 +70,22 @@ public class HookPipeline {
      * @return Hook 处理结果
      */
     public Mono<HookResult> dispatch(HookEvent event, HookContext ctx) {
-        return dispatcher.dispatch(event, ctx);
+        if (hookChain.size() == 0) {
+            return Mono.just(HookResult.continue_());
+        }
+        return hookChain.fire(event.getHookEventType(), event, ctx)
+                .doOnNext(result -> {
+                    if (recorder != null) {
+                        recorder.record("pipeline", event, result);
+                    }
+                });
     }
+
+    /** @return 关联的 Hook 链 */
+    public HookChain getHookChain() { return hookChain; }
+
+    /** 设置 Hook 记录器 */
+    public void setRecorder(HookRecorder r) { this.recorder = r; }
 
     // ============================================================
     // 推理管线

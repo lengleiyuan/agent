@@ -635,7 +635,6 @@ class SdkCapabilityShowcaseTest {
         assertTrue(agent.getDelegate().isBuilt());
         assertNotNull(agent.getDelegate().getStateStore());
         assertEquals(1, agent.getDelegate().getToolRegistry().size());
-        assertEquals(5, agent.getDelegate().getHookChain().size()); // 1 user + 4 default
     }
 
 

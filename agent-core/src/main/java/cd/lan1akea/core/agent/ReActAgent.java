@@ -6,19 +6,11 @@ import cd.lan1akea.core.CoreConstants;
 import cd.lan1akea.core.CoreConstants.UI;
 import cd.lan1akea.core.context.RuntimeContext;
 import cd.lan1akea.core.exception.AgentConfigurationException;
-import cd.lan1akea.core.hook.*;
-import cd.lan1akea.core.hook.recorder.HookRecorder;
-import cd.lan1akea.core.intervention.InMemoryInterventionStore;
-import cd.lan1akea.core.intervention.InterventionStore;
 import cd.lan1akea.core.message.Msg;
-import cd.lan1akea.core.hook.HookPipeline;
-import cd.lan1akea.core.hook.impl.AgentMetricsHook;
-import cd.lan1akea.core.hook.impl.StreamTokenEstimationHook;
 import cd.lan1akea.core.metrics.AgentMetrics;
 import cd.lan1akea.core.model.*;
 import cd.lan1akea.core.state.AgentStateStore;
 import cd.lan1akea.core.tool.*;
-import cd.lan1akea.core.util.IdGenerator;
 import cd.lan1akea.core.util.ValidationUtils;
 
 import reactor.core.publisher.Flux;
@@ -46,35 +38,45 @@ import java.util.List;
  */
 public class ReActAgent implements StreamableAgent, CallableAgent {
 
-    /** Agent 唯一标识 */
-    final String id;
-    /** Agent 名称 */
-    final String name;
-    /** Agent 配置 */
-    final AgentConfig config;
-    /** 请求管线，封装预处理流水线 */
-    final RequestPipeline pipeline;
-    /** Hook 分发器 */
-    final HookDispatcher hookDispatcher;
 
-    /** 状态存储（可选） */
-    final AgentStateStore stateStore;
-    /** 上下文窗口配置 */
-    final ModelContextWindow contextWindow;
-    /** Hook 记录器（可选，用于审计/回放） */
-    HookRecorder hookRecorder;
-    /** 指标收集器（可选，默认 NOOP） */
+    /**
+     * Agent 唯一标识
+     */
+    final String id;
+    /**
+     * Agent 名称
+     */
+    final String name;
+    /**
+     * Agent 配置
+     */
+    final AgentConfig config;
+    /**
+     * 请求管线，封装预处理流水线
+     */
+    final RequestPipeline pipeline;
+    /**
+     * 状态存储接口
+     */
+    final AgentStateStore  stateStore;
+    /**
+     * 指标收集器（可选，默认 NOOP）
+     */
     AgentMetrics metrics = AgentMetrics.NOOP;
-    /** 系统提示消息 */
+    /**
+     * 系统提示消息
+     */
     String systemMessage;
-    /** 是否已通过 build() 初始化 */
+    /**
+     * 是否已通过 build() 初始化
+     **/
     private volatile boolean built;
+
 
     /**
      * 使用指定配置创建 ReActAgent。
      *
-     * <p>构造函数中组装全部内部组件：ToolCallOrchestrator、
-     * ModelCallPipeline、LoopExecutor、RequestPipeline。InterventionStore 若未配置则默认内存实现。
+     * <p>内部组件装配委托给 {@link ReActAssembler}。
      *
      * @param config Agent 配置，必须包含 ChatModel
      */
@@ -82,48 +84,15 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
         ValidationUtils.notNull(config, CoreConstants.Validation.PARAM_AGENT_CONFIG);
         ValidationUtils.notNull(config.getModel(), CoreConstants.Validation.PARAM_CHAT_MODEL);
 
+        ReActAssembler.AssembledComponents comps =
+                ReActAssembler.assemble(config);
+
         this.config = config;
-        this.id = IdGenerator.nextIdStr();
         this.name = config.getName();
+        this.id = comps.id();
+        this.pipeline = comps.pipeline();
+        this.stateStore = comps.stateStore();
 
-        ChatModel model = config.getModel();
-        ToolRegistry toolRegistry = config.getToolRegistry() != null
-                ? config.getToolRegistry() : new ToolRegistry();
-        ToolExecutor toolExecutor = new ToolExecutor(toolRegistry);
-
-        this.stateStore = config.getStateStore();
-        int maxInput = model.getMaxInputTokens();
-        this.contextWindow = new ModelContextWindow(model.getModelName(), maxInput, maxInput / 2);
-
-        HookChain hookChain = config.getHookChain() != null
-                ? config.getHookChain() : new HookChain();
-        hookChain.register(new AgentMetricsHook("AgentMetrics", metrics,
-                model.getModelName(), model.getProvider()));
-        this.hookDispatcher = new HookDispatcher(hookChain);
-        AroundHookChain aroundChain = config.getAroundHookChain() != null
-                ? config.getAroundHookChain() : new AroundHookChain();
-        aroundChain.register(new AgentMetricsHook("AgentMetrics", metrics,
-                model.getModelName(), model.getProvider()));
-        aroundChain.register(new StreamTokenEstimationHook(contextWindow.getEstimator()));
-        HookPipeline hookPipeline = new HookPipeline(hookDispatcher, aroundChain);
-
-        ToolCallOrchestrator toolOrch = new ToolCallOrchestrator(
-                toolExecutor, toolRegistry, hookPipeline);
-        ModelCallPipeline modelPipeline = new ModelCallPipeline(
-                model, hookPipeline, toolRegistry);
-        InterventionStore interventionStore = config.getInterventionStore() != null
-                ? config.getInterventionStore()
-                : new InMemoryInterventionStore();
-        InterventionResolver interventionResolver = new InterventionResolver(
-                interventionStore, toolOrch);
-        LoopExecutor loopExecutor = new LoopExecutor(
-                modelPipeline, toolOrch, hookPipeline,
-                interventionResolver);
-        SessionGate sessionGate = config.getSessionGate() != null
-                ? config.getSessionGate() : new LocalSessionGate();
-        this.pipeline = new RequestPipeline(
-                loopExecutor, stateStore, hookPipeline,
-                config.getExecutionConfig(), name, systemMessage, interventionStore, sessionGate);
     }
 
     /**
@@ -279,14 +248,9 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
     public ChatModel getModel() { return config.getModel(); }
     /** @return 工具注册表 */
     public ToolRegistry getToolRegistry() { return config.getToolRegistry(); }
-    /** @return Hook 链 */
-    public HookChain getHookChain() { return hookDispatcher.getHookChain(); }
     /** @return 状态存储 */
     public AgentStateStore getStateStore() { return stateStore; }
     /** @return 上下文窗口 */
-    public ModelContextWindow getContextWindow() { return contextWindow; }
-    /** @return Hook 记录器 */
-    public HookRecorder getHookRecorder() { return hookRecorder; }
     /** @return 指标收集器 */
     public AgentMetrics getMetrics() { return metrics; }
     /** @return 是否已构建 */
@@ -296,11 +260,6 @@ public class ReActAgent implements StreamableAgent, CallableAgent {
 
     /** 设置系统提示消息 */
     public void setSystemMessage(String msg) { this.systemMessage = msg; }
-    /** 设置 Hook 记录器 */
-    public void setHookRecorder(HookRecorder v) {
-        this.hookRecorder = v;
-        if (this.hookDispatcher != null) this.hookDispatcher.setRecorder(v);
-    }
     /** 设置指标收集器 */
     public void setMetrics(AgentMetrics v) { this.metrics = v != null ? v : AgentMetrics.NOOP; }
 }

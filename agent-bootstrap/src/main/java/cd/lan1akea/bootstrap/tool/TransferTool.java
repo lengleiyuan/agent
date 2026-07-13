@@ -34,7 +34,7 @@ public class TransferTool extends ToolBase {
 
         if (!params.isApproved() && amount != null && amount.longValue() > MAX_AUTO_AMOUNT) {
             throw HumanInterventionException.approval("transfer",
-                "转账金额 " + amount + " 超过 " + MAX_AUTO_AMOUNT + " 上限，是否继续？",
+                "转账金额 " + amount + " 超过 " + MAX_AUTO_AMOUNT + " 上限，正在审批中，请等待。",
                 params).withTtlMinutes(2);
         }
 

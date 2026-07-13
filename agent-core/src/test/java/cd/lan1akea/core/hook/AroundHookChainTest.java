@@ -240,16 +240,15 @@ class AroundHookChainTest {
                 return Mono.just(HookResult.continue_());
             }
         });
-        HookDispatcher dispatcher = new HookDispatcher(hookChain);
-
         AroundHookChain aroundChain = new AroundHookChain();
         aroundChain.register(new TimingHook());
+        HookPipeline pipeline = new HookPipeline(hookChain, aroundChain);
 
         HookContext hc = new HookContext("a", "t", "s", "u", 0, null, null);
         HookEvent event = new HookEvent(HookEventType.PRE_REASONING);
 
         // PRE chain
-        HookResult pre = dispatcher.dispatch(event, hc).block();
+        HookResult pre = pipeline.dispatch(event, hc).block();
         assertTrue(pre.isContinue());
 
         // AroundHook
@@ -260,7 +259,7 @@ class AroundHookChainTest {
 
         // POST chain（使用 POST_REASONING 类型才能匹配 post-filter hook）
         HookEvent postEvent = new HookEvent(HookEventType.POST_REASONING, after.getPayload());
-        HookResult post = dispatcher.dispatch(postEvent, hc).block();
+        HookResult post = pipeline.dispatch(postEvent, hc).block();
         assertTrue(post.isContinue());
 
         assertEquals("done", after.<String>getPayload("chain_pre"));

@@ -31,7 +31,7 @@ class InterventionResolverTest {
     @Mock private ToolExecutor toolExecutor;
     private ToolRegistry toolRegistry;
     private AroundHookChain aroundHooks;
-    private HookDispatcher hookDispatcher;
+    private HookPipeline hookPipeline;
     private ToolCallOrchestrator toolOrchestrator;
     private InterventionResolver resolver;
 
@@ -40,10 +40,9 @@ class InterventionResolverTest {
         MockitoAnnotations.openMocks(this);
         toolRegistry = new ToolRegistry();
         aroundHooks = new AroundHookChain();
-        hookDispatcher = new HookDispatcher(new HookChain());
-        HookPipeline hookPipeline = new HookPipeline(hookDispatcher, aroundHooks);
+        hookPipeline = new HookPipeline(new HookChain(), aroundHooks);
         toolOrchestrator = new ToolCallOrchestrator(
-                toolExecutor, toolRegistry, hookPipeline);
+                toolExecutor, hookPipeline);
         resolver = new InterventionResolver(interventionStore, toolOrchestrator);
     }
 

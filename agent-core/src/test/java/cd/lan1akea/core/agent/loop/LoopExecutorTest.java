@@ -24,7 +24,7 @@ class LoopExecutorTest {
     @Mock private ChatModel model;
     @Mock private ToolExecutor toolExecutor;
 
-    private HookDispatcher hookDispatcher;
+    private HookPipeline hookPipeline;
     private ToolRegistry toolRegistry;
     private LoopExecutor executor;
 
@@ -34,14 +34,13 @@ class LoopExecutorTest {
 
         toolRegistry = new ToolRegistry();
         AroundHookChain aroundHooks = new AroundHookChain();
-        hookDispatcher = spy(new HookDispatcher(new HookChain()));
-        doReturn(Mono.just(HookResult.continue_())).when(hookDispatcher).dispatch(any(), any());
+        hookPipeline = spy(new HookPipeline(new HookChain(), aroundHooks));
+        doReturn(Mono.just(HookResult.continue_())).when(hookPipeline).dispatch(any(), any());
 
-        HookPipeline hookPipeline = new HookPipeline(hookDispatcher, aroundHooks);
         ModelCallPipeline modelPipeline = new ModelCallPipeline(
                 model, hookPipeline, toolRegistry);
         ToolCallOrchestrator orchestrator = new ToolCallOrchestrator(
-                toolExecutor, toolRegistry, hookPipeline);
+                toolExecutor, hookPipeline);
 
         // POST_MODEL: simulate TokenEstimationHook usage chunk
         doAnswer(inv -> {
@@ -51,7 +50,7 @@ class LoopExecutorTest {
                         ChatStreamChunk.builder().delta("{}").type("usage").build());
             }
             return Mono.just(HookResult.continue_());
-        }).when(hookDispatcher).dispatch(
+        }).when(hookPipeline).dispatch(
                 argThat(e -> e.getHookEventType() == HookEventType.POST_MODEL), any());
 
         cd.lan1akea.core.intervention.InMemoryInterventionStore store =
@@ -201,7 +200,7 @@ class LoopExecutorTest {
                 .verifyComplete();
 
         // Verify PRE_SUMMARIZE hook was dispatched
-        verify(hookDispatcher, atLeastOnce()).dispatch(
+        verify(hookPipeline, atLeastOnce()).dispatch(
                 argThat(e -> e.getHookEventType() == HookEventType.PRE_SUMMARIZE),
                 any());
         // Tools should be disabled after fallback
@@ -218,7 +217,7 @@ class LoopExecutorTest {
                                 Msg.builder(MsgRole.ASSISTANT).addText("自定义摘要").build());
                     }
                     return Mono.just(HookResult.continue_());
-                }).when(hookDispatcher).dispatch(any(HookEvent.class), any());
+                }).when(hookPipeline).dispatch(any(HookEvent.class), any());
 
         LoopContext ctx = LoopContext.builder()
                 .agentName("test").messages(List.of(UserMessage.of("hi")))
@@ -264,7 +263,7 @@ class LoopExecutorTest {
 
         executor.runStream(ctx).collectList().block();
 
-        verify(hookDispatcher, atLeastOnce()).dispatch(
+        verify(hookPipeline, atLeastOnce()).dispatch(
                 argThat(e -> e.getHookEventType() == HookEventType.PRE_REASONING
                         && e.getMessages() != null
                         && !e.getMessages().isEmpty()),
@@ -310,7 +309,7 @@ class LoopExecutorTest {
                 .verifyComplete();
 
         // AFTER_ITERATION 通过 Observe 阶段触发
-        verify(hookDispatcher, atLeastOnce()).dispatch(
+        verify(hookPipeline, atLeastOnce()).dispatch(
                 argThat(e -> e.getHookEventType() == HookEventType.AFTER_ITERATION),
                 any());
         // iteration 由 Observe 递增
@@ -346,7 +345,7 @@ class LoopExecutorTest {
         executor.runStream(ctx).collectList().block();
 
         // AFTER_ITERATION 至少触发 2 次：Act 后 Observe，无工具 Reason 后 Observe
-        verify(hookDispatcher, atLeast(2)).dispatch(
+        verify(hookPipeline, atLeast(2)).dispatch(
                 argThat(e -> e.getHookEventType() == HookEventType.AFTER_ITERATION),
                 any());
         assertEquals(2, ctx.getIteration());

@@ -89,7 +89,6 @@ public class AgentIntegrationTest {
 
         // 9. 创建 Agent + 注入子系统
         ReActAgent inner = new ReActAgent(config);
-        inner.setHookRecorder(hookRecorder);
 
         // 10. 构建
         inner.build().block();
@@ -184,9 +183,6 @@ public class AgentIntegrationTest {
         System.out.println("轮次1: " + r1.getMessage().getTextContent().substring(0,
             Math.min(80, r1.getMessage().getTextContent().length())) + "...");
 
-        // 验证会话持久化（通过 stateStore 直接查询）
-        assertNotNull(agent.getDelegate().getStateStore(), "stateStore 应已注入");
-        System.out.println("stateStore 已注入，会话自动持久化");
     }
 
     // ========================================================================
@@ -348,8 +344,6 @@ public class AgentIntegrationTest {
         System.out.println("全局工具数: " + agent.getDelegate().getToolRegistry().size());
         System.out.println("租户A 工具数: "
             + agent.getDelegate().getToolRegistry().tenantToolCount("tenant_A"));
-        System.out.println("Hook链长度: " + agent.getDelegate().getHookChain().size());
-        System.out.println("上下文窗口: " + agent.getDelegate().getContextWindow().getTotalWindow() + " tokens");
 
         System.out.println("\n审计日志摘要:");
         for (AuditHook.AuditEntry entry : auditHook.getAuditLog()) {

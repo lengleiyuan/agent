@@ -31,7 +31,7 @@ class LoopExecutorInterventionTest {
     @Mock private ToolExecutor toolExecutor;
     @Mock private InterventionStore interventionStore;
 
-    private HookDispatcher hookDispatcher;
+    private HookPipeline hookPipeline;
     private ToolRegistry toolRegistry;
     private LoopExecutor executor;
     private ToolCallContext capturedCallParam;
@@ -42,8 +42,8 @@ class LoopExecutorInterventionTest {
 
         toolRegistry = new ToolRegistry();
         AroundHookChain aroundHooks = new AroundHookChain();
-        hookDispatcher = spy(new HookDispatcher(new HookChain()));
-        doReturn(Mono.just(HookResult.continue_())).when(hookDispatcher).dispatch(any(), any());
+        hookPipeline = spy(new HookPipeline(new HookChain(), aroundHooks));
+        doReturn(Mono.just(HookResult.continue_())).when(hookPipeline).dispatch(any(), any());
 
         // POST_MODEL: simulate TokenEstimationHook usage chunk
         doAnswer(inv -> {
@@ -53,14 +53,13 @@ class LoopExecutorInterventionTest {
                         ChatStreamChunk.builder().delta("{}").type("usage").build());
             }
             return Mono.just(HookResult.continue_());
-        }).when(hookDispatcher).dispatch(
+        }).when(hookPipeline).dispatch(
                 argThat(e -> e.getHookEventType() == HookEventType.POST_MODEL), any());
 
-        HookPipeline hookPipeline = new HookPipeline(hookDispatcher, aroundHooks);
         ModelCallPipeline modelPipeline = new ModelCallPipeline(
                 model, hookPipeline, toolRegistry);
         ToolCallOrchestrator orchestrator = new ToolCallOrchestrator(
-                toolExecutor, toolRegistry, hookPipeline);
+                toolExecutor, hookPipeline);
 
         InterventionResolver interventionResolver =
                 new InterventionResolver(interventionStore, orchestrator);
@@ -243,7 +242,7 @@ class LoopExecutorInterventionTest {
         executor.runStream(ctx).collectList().block();
 
         // AFTER_ITERATION 被触发（介入恢复后走 Observe）
-        verify(hookDispatcher, atLeastOnce()).dispatch(
+        verify(hookPipeline, atLeastOnce()).dispatch(
                 argThat(e -> e.getHookEventType() == HookEventType.AFTER_ITERATION),
                 any());
         assertEquals(2, ctx.getIteration());
