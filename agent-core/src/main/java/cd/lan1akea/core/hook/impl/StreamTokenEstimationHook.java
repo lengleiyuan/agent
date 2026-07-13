@@ -1,5 +1,6 @@
 package cd.lan1akea.core.hook.impl;
 
+import cd.lan1akea.core.CoreConstants.TokenRatio;
 import cd.lan1akea.core.CoreConstants.Usage;
 import cd.lan1akea.core.hook.AroundHook;
 import cd.lan1akea.core.message.Msg;
@@ -58,7 +59,7 @@ public class StreamTokenEstimationHook implements AroundHook {
                     if (ChatStreamChunk.TYPE_TEXT.equals(chunk.getType())
                         && chunk.getDelta() != null) {
                         buffer.append(chunk.getDelta());
-                        int estimated = estimator.estimate(buffer.toString());
+                        int estimated = estimateCompletion(buffer.toString());
                         if (estimated != lastEstimated[0]) {
                             lastEstimated[0] = estimated;
                             return Flux.just(chunk, buildUsageChunk(estimatedPrompt, estimated, true));
@@ -80,6 +81,25 @@ public class StreamTokenEstimationHook implements AroundHook {
     private int estimatePrompt(List<Msg> messages, List<ToolSchema> schemas) {
         return estimator.estimate(ApiRequestUtil.buildRequestBodyJson(
                 ApiRequestUtil.buildMessageArray(messages), schemas));
+    }
+
+    /**
+     * 按 CJK/ASCII 混合估算 completion token。
+     */
+    private int estimateCompletion(String text) {
+        if (text == null || text.isEmpty()) return 0;
+        int cjk = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (Character.isIdeographic(c)
+                    || (c >= 0x3000 && c <= 0x303F)
+                    || (c >= 0xFF00 && c <= 0xFFEF)) {
+                cjk++;
+            }
+        }
+        int ascii = text.length() - cjk;
+        return Math.max(1, (cjk / TokenRatio.CJK_CHARS_PER_TOKEN)
+                + (ascii / TokenRatio.ASCII_CHARS_PER_TOKEN));
     }
 
     /**

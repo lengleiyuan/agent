@@ -363,6 +363,18 @@ public static final class RuntimeCtx {
     }
 
     /**
+     * Token 估算比率常量。
+     */
+    public static final class TokenRatio {
+        /** CJK 字符每 token */
+        public static final int CJK_CHARS_PER_TOKEN = 3;
+        /** ASCII 字符每 token */
+        public static final int ASCII_CHARS_PER_TOKEN = 4;
+
+        private TokenRatio() {}
+    }
+
+    /**
      * 参数校验相关常量。
      */
     public static final class Validation {
